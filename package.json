@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "node scripts/dev.mjs",
+    "start": "node server/server.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "playwright test",
+    "test:server": "node --test server/*.test.mjs",
     "export": "node scripts/export-standalone.mjs",
     "test:offline": "npm run export && node scripts/verify-standalone.mjs"
   },

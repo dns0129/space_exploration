@@ -74,6 +74,8 @@ const noise = /* glsl */ `
 const planetFragment = /* glsl */ `
   uniform vec3 sunDirection;
   uniform vec3 planetAxis;
+  uniform vec3 planetCenter;
+  uniform float bodyRadius;
   uniform float uTime;
   uniform float ringsEnabled;
   varying vec2 vUv;
@@ -151,8 +153,9 @@ const planetFragment = /* glsl */ `
     #if BODY_KIND == 4
       float planeAngle = dot(sunDirection,planetAxis);
       if(abs(planeAngle)>0.001) {
-        float t = -dot(vWorldPosition,planetAxis)/planeAngle;
-        float r = length(vWorldPosition+sunDirection*t);
+        vec3 relative = (vWorldPosition-planetCenter)/bodyRadius;
+        float t = -dot(relative,planetAxis)/planeAngle;
+        float r = length(relative+sunDirection*t);
         if(t>0.0 && r>1.12 && r<2.3) diffuse *= 1.0-ringDensity(r,0.0)*ringsEnabled*0.88;
       }
     #endif
@@ -165,6 +168,8 @@ const planetFragment = /* glsl */ `
 const atmosphereFragment = /* glsl */ `
   uniform vec3 sunDirection;
   uniform vec3 atmosphereColor;
+  uniform vec3 planetCenter;
+  uniform float bodyRadius;
   uniform float strength;
   uniform float uTime;
   varying vec3 vWorldPosition;
@@ -177,7 +182,7 @@ const atmosphereFragment = /* glsl */ `
     float sun = smoothstep(-0.35,0.8,dot(normal,sunDirection));
     #ifdef SOLAR_CORONA
       float streamers = 0.65+noise3(normal*14.0+uTime*0.006)*0.6;
-      float impact = length(cross(cameraPosition,normalize(vWorldPosition-cameraPosition)));
+      float impact = length(cross(cameraPosition-planetCenter,normalize(vWorldPosition-cameraPosition)))/bodyRadius;
       float envelope = exp(-max(impact-1.0,0.0)*18.0)*(1.0-smoothstep(1.08,1.2,impact));
       gl_FragColor = vec4(atmosphereColor*1.6,envelope*strength*streamers*0.68);
     #else
@@ -215,6 +220,8 @@ const cloudsFragment = /* glsl */ `
 const ringFragment = /* glsl */ `
   uniform vec3 sunDirection;
   uniform vec3 planetAxis;
+  uniform vec3 planetCenter;
+  uniform float bodyRadius;
   varying vec3 vWorldPosition;
   varying vec3 vLocalPosition;
   ${noise}
@@ -226,10 +233,11 @@ const ringFragment = /* glsl */ `
     float light = 0.35+abs(dot(sunDirection,planetAxis))*0.8;
     // Analytic ellipsoid intersection casts Saturn's shadow onto the rings.
     float scale = 1.0/(0.902*0.902)-1.0;
-    float py = dot(vWorldPosition,planetAxis), dy = dot(sunDirection,planetAxis);
+    vec3 relative = (vWorldPosition-planetCenter)/bodyRadius;
+    float py = dot(relative,planetAxis), dy = dot(sunDirection,planetAxis);
     float a = 1.0+scale*dy*dy;
-    float b = 2.0*(dot(vWorldPosition,sunDirection)+scale*py*dy);
-    float c = dot(vWorldPosition,vWorldPosition)+scale*py*py-1.0;
+    float b = 2.0*(dot(relative,sunDirection)+scale*py*dy);
+    float c = dot(relative,relative)+scale*py*py-1.0;
     float discriminant = b*b-4.0*a*c;
     if(discriminant>0.0 && (-b-sqrt(discriminant))/(2.0*a)>0.0) light *= 0.16;
     gl_FragColor = vec4(color*light,density*0.95);
@@ -241,6 +249,7 @@ const ringFragment = /* glsl */ `
 export function createPlanetModel(
   body: CelestialBody,
   sunDirection: THREE.Vector3,
+  placement = { center: new THREE.Vector3(), radius: 1 },
 ): PlanetModel {
   const kinds = {
     mercury: 0,
@@ -271,6 +280,8 @@ export function createPlanetModel(
       uniforms: {
         sunDirection: { value: sunDirection },
         planetAxis: { value: axis },
+        planetCenter: { value: placement.center },
+        bodyRadius: { value: placement.radius },
         uTime,
         ringsEnabled,
       },
@@ -298,6 +309,8 @@ export function createPlanetModel(
         defines: solar ? { SOLAR_CORONA: 1 } : {},
         uniforms: {
           sunDirection: { value: sunDirection },
+          planetCenter: { value: placement.center },
+          bodyRadius: { value: placement.radius },
           atmosphereColor: {
             value: new THREE.Color(solar ? "#ff8f2c" : body.atmosphereColor!),
           },
@@ -342,6 +355,8 @@ export function createPlanetModel(
         uniforms: {
           sunDirection: { value: sunDirection },
           planetAxis: { value: axis },
+          planetCenter: { value: placement.center },
+          bodyRadius: { value: placement.radius },
         },
         side: THREE.DoubleSide,
         transparent: true,

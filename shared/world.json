@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "unitsKm": 6371,
+  "acceleration": 3,
+  "boostAcceleration": 18,
+  "cruiseSpeed": 12,
+  "boostSpeed": 60,
+  "bodies": [
+    { "id": "sun", "radius": 8, "position": [0, 0, 0] },
+    { "id": "mercury", "radius": 0.4, "position": [14, 0, 13] },
+    { "id": "venus", "radius": 0.95, "position": [-28, 1, 4] },
+    { "id": "earth", "radius": 1, "position": [0, 0, 42] },
+    { "id": "mars", "radius": 0.58, "position": [41, 1, -38] },
+    { "id": "jupiter", "radius": 5.4, "position": [-79, -3, -47] },
+    { "id": "saturn", "radius": 4.6, "position": [78, 4, 96] },
+    { "id": "uranus", "radius": 2.5, "position": [-147, 5, 65] },
+    { "id": "neptune", "radius": 2.45, "position": [80, -4, -180] }
+  ]
+}

@@ -5,7 +5,7 @@ import { deflateRawSync } from "node:zlib";
 import { build } from "vite";
 
 const project = fileURLToPath(new URL("../", import.meta.url));
-const filename = "voyager-solar-system.html";
+const filename = "voyager-flight.html";
 const textures = {};
 for (const file of [
   "earth-day.jpg",
@@ -88,25 +88,35 @@ html = html.replace(
     `<link rel="icon" href="data:image/svg+xml;base64,${favicon.toString("base64")}">`,
 );
 
-const instructions = `远航 VOYAGER · 太阳系观测站（阶段 02）
+const instructions = `远航 VOYAGER · 自由航行（阶段 03）
 
-1. 解压本 ZIP 文件。
-2. 将 ${filename} 拖入 Chrome 或 Edge，或用浏览器打开这个 HTML。
-3. 点击天体导航切换太阳、水星、金星、地球、火星、木星、土星、天王星、海王星。
+立即驾驶：解压后将 voyager-flight.html 拖入 Chrome 或 Edge。
+点击顶部“自由航行”，从当前行星附近出发。
+W/S 推力，A/D 平移，R/F 升降，Q/E 翻滚，方向键或拖动转向。
+Shift 加速，空格刹车，C 切换座舱/外部视角。手机使用触屏驾驶按钮。
+点击天体导航选择目的地；“对准目标”调整航向，“跃迁至目标”快速抵达。
+可以暂停航行、保存与恢复；无需服务器的独立 HTML 使用本机存档。
 
-全部程序、样式和地球高清贴图已内嵌；其他天体使用程序化材质，无需服务器或联网。
-拖动环绕，滚轮缩放；空格暂停自转，R 重置，H 打开操作指南。
-手机上使用单指环绕、双指缩放，并点击“观测设置”调整画质和图层。
-如设备性能有限，可切换标准画质。浏览器需支持 WebGL 2 并启用图形加速。
+后端模式（服务端存档）：
+安装 Node.js 24 LTS，然后在本目录运行：
+node server/server.mjs --standalone
+Windows 可双击“启动航行.bat”；macOS/Linux 可执行 bash 启动航行.sh。
+服务启动后在浏览器访问 http://127.0.0.1:3000/
+后端和游戏全部随包提供，不需要 npm 安装依赖。
+航行存档保存在 data/ 中，浏览器用自己的会话识别存档。
+不要删除浏览器会话 Cookie；重新启动服务器后仍可恢复同一浏览器的存档。
 
-本阶段优先建设星球画面。各天体按单独展示比例呈现，自转为加速演示；尚未模拟飞船与轨道力学。
-地球影像来源见游戏中的“操作指南 → 影像与素材来源”及仓库 ASSETS.md。
-其余天体为艺术化程序材质，并非实测影像。
-
-源码与后续更新：https://github.com/dns0129/space_exploration
+全部 4K 地球贴图、程序和样式已内嵌。浏览器需要 WebGL 2 与图形加速；性能不足时选择标准画质。
+天体尺寸与距离经过压缩，采用简化惯性、驾驶辅助与防撞护盾，不模拟真实轨道力学。
+地球使用影像贴图，其余天体是程序化艺术材质。
+源码与素材来源：https://github.com/dns0129/space_exploration
 `;
+const windowsStart =
+  '@echo off\r\nchcp 65001 >nul\r\ncd /d "%~dp0"\r\nwhere node >nul 2>nul\r\nif errorlevel 1 (echo 请先安装 Node.js 24 LTS & pause & exit /b 1)\r\necho 浏览器打开 http://127.0.0.1:3000/\r\nnode server/server.mjs --standalone\r\npause\r\n';
+const unixStart =
+  '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\necho "Open http://127.0.0.1:3000/ after the server starts."\nexec node server/server.mjs --standalone\n';
 
-// Two small-entry ZIP records keep export portable without Python or an archiver.
+// ZIP records keep export portable without Python or an archiver.
 function crc32(bytes) {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -160,8 +170,16 @@ await writeFile(join(project, "dist-standalone", filename), html);
 const zip = archive([
   [filename, html],
   ["中文打开说明.txt", instructions],
+  ["启动航行.bat", windowsStart],
+  ["启动航行.sh", unixStart],
+  ["server/server.mjs", await readFile(join(project, "server/server.mjs"))],
+  [
+    "shared/flight-state.mjs",
+    await readFile(join(project, "shared/flight-state.mjs")),
+  ],
+  ["shared/world.json", await readFile(join(project, "shared/world.json"))],
 ]);
-await writeFile(join(project, "downloads/voyager-solar-system.zip"), zip);
+await writeFile(join(project, "downloads/voyager-flight.zip"), zip);
 console.log(
-  `Exported ${filename} (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MiB) and downloads/voyager-solar-system.zip (${(zip.length / 1024 / 1024).toFixed(1)} MiB).`,
+  `Exported ${filename} (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MiB) and downloads/voyager-flight.zip (${(zip.length / 1024 / 1024).toFixed(1)} MiB).`,
 );

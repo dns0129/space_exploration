@@ -4,11 +4,30 @@ import { EARTH, getBody } from "./solar-system";
 import type { BodyId, Layer } from "./solar-system";
 import { createPlanetModel } from "./planet-models";
 import type { PlanetModel } from "./planet-models";
+import { ShipDynamics } from "./ship-dynamics";
+import { FlightControls } from "./flight-controls";
+import { createShip } from "./ship-model";
+import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
 
 export type View = "overview" | "close" | "night";
 export interface SceneStats {
   altitudeKm: number;
   fps: number;
+}
+
+export interface FlightStats {
+  speedKm: number;
+  altitudeKm: number;
+  nearest: BodyId;
+  distanceKm: number;
+  target: BodyId;
+  heading: number;
+  elapsed: number;
+  boosting: boolean;
+  collision: BodyId | null;
+  targetX: number;
+  targetY: number;
+  inView: boolean;
 }
 
 const surfaceVertex = /* glsl */ `
@@ -94,6 +113,17 @@ export class SolarScene {
   private readonly planet = new THREE.Group();
   private readonly stars = new THREE.Group();
   private currentModel?: PlanetModel;
+  private readonly flightRoot = new THREE.Group();
+  private readonly flightSun = new THREE.PointLight(0xfff3e5, 2.5, 0, 0);
+  private readonly observeSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
+  private readonly ship = createShip();
+  private flightModels: PlanetModel[] = [];
+  private dynamics?: ShipDynamics;
+  private flightControls?: FlightControls;
+  private flying = false;
+  private flightPaused = false;
+  private flightMetrics = 0;
+  private flightHandler?: (stats: FlightStats) => void;
   private readonly models = new Map<BodyId, PlanetModel>();
   private readonly sunDirection = new THREE.Vector3(-3, 1.8, 4).normalize();
   private readonly textures = new Set<THREE.Texture>();
@@ -158,9 +188,19 @@ export class SolarScene {
     this.scene.add(this.planet);
     this.createStars();
     this.scene.add(this.stars);
-    const sun = new THREE.DirectionalLight(0xfff3e5, 2.5);
-    sun.position.set(-3, 1.8, 4);
-    this.scene.add(sun, new THREE.AmbientLight(0x9dbde8, 0.09));
+    this.observeSun.position.set(-3, 1.8, 4);
+    this.flightRoot.visible = false;
+    this.flightSun.visible = false;
+    this.flightRoot.add(
+      this.ship.group,
+      new THREE.HemisphereLight(0xc1e6ee, 0x233643, 1.2),
+    );
+    this.scene.add(
+      this.observeSun,
+      this.flightSun,
+      this.flightRoot,
+      new THREE.AmbientLight(0x9dbde8, 0.09),
+    );
     this.resizeObserver = new ResizeObserver(this.resize);
     this.resizeObserver.observe(container);
     document.addEventListener("visibilitychange", this.visibilityHandler);
@@ -171,6 +211,7 @@ export class SolarScene {
     id: BodyId,
     onProgress: (percent: number) => void,
   ): Promise<boolean> {
+    this.leaveFlight();
     const version = ++this.selectionVersion;
     const maps =
       id === "earth" ? await this.loadEarthTextures(onProgress) : undefined;
@@ -258,11 +299,13 @@ export class SolarScene {
     return this.earthPromise;
   }
 
-  private createEarthModel(maps: THREE.Texture[]): PlanetModel {
+  private createEarthModel(
+    maps: THREE.Texture[],
+    sunDirection = this.sunDirection,
+  ): PlanetModel {
     maps[0].colorSpace = THREE.SRGBColorSpace;
     maps[1].colorSpace = THREE.SRGBColorSpace;
     maps[4].colorSpace = THREE.SRGBColorSpace;
-    const sunDirection = this.sunDirection;
     const group = new THREE.Group();
     group.rotation.z = THREE.MathUtils.degToRad(EARTH.axialTiltDeg);
     const geometry = new THREE.SphereGeometry(1, 192, 128);
@@ -391,6 +434,11 @@ export class SolarScene {
       ? Math.min((time - this.lastTime) / 1000, 0.05)
       : 0;
     this.lastTime = time;
+    if (this.flying) {
+      this.animateFlight(delta, time);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
     if (!this.paused && this.currentModel) {
       for (const { object, rate } of this.currentModel.spinning)
         object.rotation.y += delta * rate * this.speed;
@@ -433,6 +481,219 @@ export class SolarScene {
       this.frames = 0;
     }
   };
+
+  async enterFlight(
+    id: BodyId,
+    config: WorldConfig,
+    onProgress: (percent: number) => void,
+  ): Promise<boolean> {
+    const version = ++this.selectionVersion;
+    const maps = await this.loadEarthTextures(onProgress);
+    if (this.destroyed || version !== this.selectionVersion) return false;
+    if (!this.flightModels.length) {
+      for (const body of config.bodies) {
+        const center = new THREE.Vector3().fromArray(body.position);
+        const light =
+          body.id === "sun"
+            ? this.sunDirection
+            : center.clone().negate().normalize();
+        const model =
+          body.id === "earth"
+            ? this.createEarthModel(maps, light)
+            : createPlanetModel(getBody(body.id), light, {
+                center,
+                radius: body.radius,
+              });
+        model.group.position.copy(center);
+        model.group.scale.setScalar(body.radius);
+        this.flightRoot.add(model.group);
+        this.flightModels.push(model);
+      }
+    }
+    this.dynamics = new ShipDynamics(config);
+    this.dynamics.jump(id);
+    this.flightPaused = false;
+    this.flying = true;
+    this.planet.visible = false;
+    this.flightRoot.visible = true;
+    this.observeSun.visible = false;
+    this.flightSun.visible = true;
+    this.controls.enabled = false;
+    this.targetPosition = null;
+    this.camera.fov = 58;
+    this.camera.far = 3000;
+    this.camera.updateProjectionMatrix();
+    this.stars.visible = true;
+    this.stars.scale.setScalar(10);
+    this.stars.children.forEach((object) => {
+      if (object instanceof THREE.Points) object.material.size *= 10;
+    });
+    this.flightControls?.dispose();
+    this.flightControls = new FlightControls(this.renderer.domElement);
+    this.renderer.domElement.setAttribute(
+      "aria-label",
+      "自由驾驶飞船：W/S 推力，拖动或方向键转向，空格刹车",
+    );
+    this.updateFlightCamera(1);
+    this.renderer.compile(this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera);
+    onProgress(100);
+    if (!this.frame) this.animate(0);
+    return true;
+  }
+  leaveFlight() {
+    if (!this.flying) return;
+    this.flying = false;
+    this.flightControls?.dispose();
+    this.flightControls = undefined;
+    this.planet.visible = true;
+    this.flightRoot.visible = false;
+    this.observeSun.visible = true;
+    this.flightSun.visible = false;
+    this.controls.enabled = true;
+    this.stars.position.set(0, 0, 0);
+    this.stars.scale.setScalar(1);
+    this.stars.children.forEach((object) => {
+      if (object instanceof THREE.Points) object.material.size /= 10;
+    });
+    this.camera.up.set(0, 1, 0);
+    this.camera.fov = 40;
+    this.camera.far = 200;
+    this.camera.updateProjectionMatrix();
+  }
+  setFlightHandler(handler: (stats: FlightStats) => void) {
+    this.flightHandler = handler;
+  }
+  setFlightPaused(paused: boolean) {
+    this.flightPaused = paused;
+    this.flightControls?.clear();
+  }
+  flightState(): FlightState | null {
+    return this.dynamics?.snapshot() ?? null;
+  }
+  restoreFlight(state: unknown) {
+    const restored = this.dynamics?.restore(state) ?? false;
+    if (restored) this.updateFlightCamera(1);
+    return restored;
+  }
+  setDestination(id: BodyId) {
+    if (this.dynamics) this.dynamics.target = id;
+  }
+  alignFlight() {
+    this.dynamics?.align();
+    this.flightControls?.clear();
+  }
+  jumpFlight() {
+    if (this.dynamics) {
+      this.dynamics.jump(this.dynamics.target);
+      this.flightControls?.clear();
+      this.updateFlightCamera(1);
+    }
+  }
+  setFlightCamera(view: "cockpit" | "chase") {
+    if (this.dynamics) {
+      this.dynamics.camera = view;
+      this.updateFlightCamera(1);
+    }
+  }
+  setFlightAssist(assist: boolean) {
+    if (this.dynamics) this.dynamics.assist = assist;
+  }
+  private updateFlightCamera(blend: number) {
+    const ship = this.dynamics!;
+    this.ship.group.position.copy(ship.position);
+    this.ship.group.quaternion.copy(ship.orientation);
+    this.ship.group.visible = ship.camera === "chase";
+    const offset = new THREE.Vector3(
+      0,
+      ship.camera === "chase" ? 0.65 : 0.07,
+      ship.camera === "chase" ? 2.4 : -0.1,
+    ).applyQuaternion(ship.orientation);
+    const destination = ship.position.clone().add(offset);
+    if (ship.camera === "chase") {
+      for (const b of ship.config.bodies) {
+        const center = new THREE.Vector3().fromArray(b.position),
+          radius = b.radius * 1.04 + 0.1;
+        const relative = destination.clone().sub(center);
+        if (relative.length() < radius)
+          destination
+            .copy(center)
+            .addScaledVector(relative.normalize(), radius);
+      }
+      this.camera.position.lerp(destination, blend);
+      this.camera.up.set(0, 1, 0).applyQuaternion(ship.orientation);
+      this.camera.lookAt(
+        ship.position
+          .clone()
+          .add(new THREE.Vector3(0, 0, -5).applyQuaternion(ship.orientation)),
+      );
+    } else {
+      this.camera.position.copy(destination);
+      this.camera.quaternion.copy(ship.orientation);
+    }
+    this.stars.position.copy(this.camera.position);
+  }
+  private animateFlight(delta: number, time: number) {
+    const ship = this.dynamics!;
+    const input = this.flightControls!.read();
+    if (!this.flightPaused) {
+      ship.step(delta, input);
+      if (!this.paused)
+        for (const model of this.flightModels) {
+          for (const { object, rate } of model.spinning)
+            object.rotation.y += rate * delta;
+          for (const uniform of model.timeUniforms) uniform.value += delta;
+        }
+    }
+    this.ship.exhaust.scale.z = input.boost
+      ? 2.4
+      : input.throttle > 0
+        ? 1
+        : 0.22;
+    this.updateFlightCamera(1 - Math.exp(-delta * 9));
+    if (time - this.flightMetrics < 150) return;
+    this.flightMetrics = time;
+    let nearest = ship.config.bodies[0],
+      altitude = Infinity;
+    for (const body of ship.config.bodies) {
+      const height =
+        ship.position.distanceTo(new THREE.Vector3().fromArray(body.position)) -
+        body.radius;
+      if (height < altitude) {
+        nearest = body;
+        altitude = height;
+      }
+    }
+    const target = ship.config.bodies.find((b) => b.id === ship.target)!;
+    const center = new THREE.Vector3().fromArray(target.position);
+    const direction = center.clone().sub(this.camera.position).normalize();
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(
+      this.camera.quaternion,
+    );
+    const projected = center.clone().project(this.camera);
+    const inView =
+      forward.dot(direction) > 0 &&
+      Math.abs(projected.x) < 1 &&
+      Math.abs(projected.y) < 1;
+    this.flightHandler?.({
+      speedKm: ship.velocity.length() * ship.config.unitsKm,
+      altitudeKm: Math.max(0, altitude) * ship.config.unitsKm,
+      nearest: nearest.id,
+      distanceKm:
+        Math.max(0, ship.position.distanceTo(center) - target.radius) *
+        ship.config.unitsKm,
+      target: ship.target,
+      heading:
+        (THREE.MathUtils.radToDeg(Math.atan2(forward.x, -forward.z)) + 360) %
+        360,
+      elapsed: ship.elapsed,
+      boosting: input.boost,
+      collision: ship.collision,
+      targetX: (Math.max(-0.85, Math.min(0.85, projected.x)) + 1) * 50,
+      targetY: (1 - Math.max(-0.7, Math.min(0.7, projected.y))) * 50,
+      inView,
+    });
+  }
 
   private viewPosition(view: View): THREE.Vector3 {
     if (this.currentModel?.body.id === "saturn") {
@@ -512,6 +773,7 @@ export class SolarScene {
       "webglcontextlost",
       this.contextLost,
     );
+    this.flightControls?.dispose();
     this.controls.dispose();
     const geometries = new Set<THREE.BufferGeometry>();
     const materials = new Set<THREE.Material>();

@@ -1525,3 +1525,521 @@ dialog h2 {
     display: none;
   }
 }
+
+/* Flight mode keeps the universe continuous behind a compact cockpit HUD. */
+.main-nav button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: #657588;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+.main-nav button.nav-active {
+  color: #e0eff8;
+  border-bottom-color: var(--accent);
+}
+.flight-mode .planet-info,
+.flight-mode .control-panel,
+.flight-mode .viewport-tools,
+.flight-mode .altitude,
+.flight-mode .interaction-hint,
+.flight-mode .mobile-settings,
+.flight-mode .scene-coordinate,
+.flight-mode .sun-label,
+.flight-mode .reticle {
+  display: none;
+}
+.flight-mode .space-stage {
+  left: 0;
+  bottom: 0;
+}
+.flight-mode canvas {
+  cursor: crosshair;
+}
+.flight-ui {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: #c3dce9;
+  overflow: hidden;
+}
+.flight-title {
+  position: absolute;
+  top: 32px;
+  left: 34px;
+}
+.flight-title h2 {
+  font-size: 30px;
+  letter-spacing: 5px;
+  margin: 8px 0;
+  font-weight: 300;
+}
+.flight-title h2 b {
+  font-size: 14px;
+  font-weight: 400;
+  color: #84bbc9;
+}
+.flight-title #flight-status {
+  font-size: 11px;
+  color: #77c2cc;
+}
+.flight-toolbar {
+  position: absolute;
+  top: 30px;
+  right: 30px;
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 580px;
+}
+.flight-ui button,
+.flight-ui select {
+  pointer-events: auto;
+  border: 1px solid #7fb8ca32;
+  background: #091620e8;
+  color: #bbd6e3;
+  border-radius: 4px;
+  padding: 9px 12px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.flight-ui button:hover,
+.flight-ui button[aria-pressed="true"],
+.flight-ui button.held {
+  border-color: #8ad9df88;
+  background: #123849e8;
+}
+.flight-ui button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.flight-ui kbd {
+  font-size: 9px;
+  font-family: inherit;
+  color: #74afc0;
+}
+.flight-navigation {
+  position: absolute;
+  left: 34px;
+  top: 178px;
+  padding: 20px;
+  width: 235px;
+  background: linear-gradient(110deg, #0b1825d9, #0b182500);
+  border-left: 1px solid #70bdcf50;
+}
+.flight-navigation h3 {
+  font-size: 25px;
+  font-weight: 300;
+  margin: 14px 0 8px;
+  letter-spacing: 4px;
+}
+.flight-navigation p {
+  margin: 0 0 18px;
+}
+.flight-navigation strong {
+  font-size: 20px;
+  font-weight: 300;
+  letter-spacing: 1px;
+}
+.flight-navigation small {
+  font-size: 10px;
+  color: #6b8d9e;
+}
+.flight-navigation > div {
+  display: flex;
+  gap: 8px;
+}
+.flight-nav-note {
+  display: block;
+  margin-top: 15px;
+  line-height: 1.7;
+}
+.flight-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  opacity: 0.55;
+  border: 1px solid #a5e9ec4a;
+  border-radius: 50%;
+}
+.flight-crosshair:before,
+.flight-crosshair:after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: #bcf0ed;
+  transform: translate(-50%, -50%);
+}
+.flight-crosshair:before {
+  width: 17px;
+  height: 1px;
+}
+.flight-crosshair:after {
+  width: 1px;
+  height: 17px;
+}
+.flight-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 9px;
+  color: #a5e5e1;
+  text-align: center;
+}
+.flight-marker i {
+  display: block;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #b3f0e382;
+  transform: rotate(45deg);
+  margin: 0 auto 18px;
+}
+.flight-marker.offscreen {
+  opacity: 0.4;
+}
+.flight-marker.offscreen i {
+  width: 12px;
+  height: 12px;
+  margin-bottom: 10px;
+}
+.cockpit-frame {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.cockpit-left,
+.cockpit-right {
+  position: absolute;
+  width: 120px;
+  height: 125%;
+  top: 0;
+  background: linear-gradient(90deg, #070c13, #0e1d2cee);
+  border: 1px solid #b9dfef22;
+  box-shadow: 0 0 25px #0008;
+}
+.cockpit-left {
+  left: -130px;
+  transform: rotate(-16deg);
+  transform-origin: top right;
+}
+.cockpit-right {
+  right: -130px;
+  transform: rotate(16deg);
+  transform-origin: top left;
+}
+.cockpit-dashboard {
+  position: absolute;
+  left: -3%;
+  right: -3%;
+  bottom: -5%;
+  height: 18%;
+  background: linear-gradient(180deg, #101f2ebd, #040a10);
+  border-top: 1px solid #92d3e242;
+  transform: perspective(500px) rotateX(18deg);
+}
+.flight-instruments {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: 65px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 22px;
+}
+.flight-instruments > div {
+  border-top: 1px solid #84bfd54d;
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.flight-instruments span {
+  font-size: 9px;
+  color: #7198ac;
+  letter-spacing: 1px;
+}
+.flight-instruments strong {
+  font-size: 27px;
+  font-weight: 300;
+  letter-spacing: 1px;
+}
+.flight-instruments small {
+  font-size: 10px;
+  color: #769dac;
+}
+.flight-instruments .flight-save-info strong {
+  font-size: 15px;
+  line-height: 32px;
+}
+.flight-key-guide {
+  position: absolute;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
+  color: #678b9e;
+}
+.flight-key-guide kbd {
+  margin-left: 15px;
+}
+.flight-touch {
+  display: none;
+}
+@media (max-width: 1100px) {
+  .flight-toolbar {
+    max-width: 400px;
+  }
+  .flight-title h2 {
+    font-size: 22px;
+  }
+  .flight-navigation {
+    width: 200px;
+  }
+  .flight-instruments {
+    left: 7%;
+    right: 7%;
+  }
+  .flight-key-guide {
+    font-size: 9px;
+  }
+  .flight-key-guide kbd {
+    margin-left: 7px;
+  }
+}
+@media (max-width: 800px) {
+  .main-nav {
+    display: flex;
+    gap: 15px;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 10px;
+    margin-left: 0;
+    height: 54px;
+  }
+  .main-nav button {
+    font-size: 10px;
+    padding: 0;
+  }
+  .header .brand span {
+    font-size: 14px;
+  }
+  .header .brand b {
+    display: none;
+  }
+  .header-tools .connection {
+    display: none;
+  }
+  .flight-title {
+    left: 20px;
+    top: 18px;
+  }
+  .flight-title h2 {
+    font-size: 18px;
+    letter-spacing: 3px;
+  }
+  .flight-title .eyebrow {
+    font-size: 8px;
+  }
+  .flight-title #flight-status {
+    font-size: 9px;
+  }
+  .flight-toolbar {
+    top: 20px;
+    right: 14px;
+    max-width: 180px;
+    gap: 4px;
+  }
+  .flight-ui button,
+  .flight-ui select {
+    font-size: 9px;
+    padding: 7px 8px;
+  }
+  .flight-toolbar kbd {
+    display: none;
+  }
+  .flight-navigation {
+    top: 122px;
+    left: 20px;
+    width: 180px;
+    padding: 10px 12px;
+  }
+  .flight-navigation .eyebrow {
+    font-size: 8px;
+  }
+  .flight-navigation h3 {
+    font-size: 20px;
+    margin: 8px 0;
+  }
+  .flight-navigation strong {
+    font-size: 16px;
+  }
+  .flight-navigation p {
+    margin-bottom: 9px;
+  }
+  .flight-nav-note {
+    display: none;
+  }
+  .flight-instruments {
+    left: 20px;
+    right: 20px;
+    bottom: 20px;
+    gap: 12px;
+    grid-template-columns: 1.1fr 1.1fr 1fr;
+  }
+  .flight-instruments strong {
+    font-size: 19px;
+  }
+  .flight-instruments span {
+    font-size: 7px;
+    letter-spacing: 0;
+  }
+  .flight-instruments small {
+    font-size: 8px;
+  }
+  .flight-save-info {
+    display: none !important;
+  }
+  .cockpit-left,
+  .cockpit-right {
+    display: none;
+  }
+  .cockpit-dashboard {
+    height: 16%;
+  }
+  .flight-key-guide {
+    display: none;
+  }
+  .flight-touch {
+    display: flex;
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 112px;
+    justify-content: space-between;
+    align-items: end;
+    pointer-events: none;
+  }
+  .flight-thrust-pad {
+    display: grid;
+    grid-template-columns: repeat(3, 40px);
+    gap: 4px;
+  }
+  .flight-touch button {
+    width: 40px;
+    height: 34px;
+    padding: 3px;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    background: #0c2333d9;
+    border-color: #7bb5c24a;
+  }
+  .flight-steer-pad {
+    display: grid;
+    grid-template-columns: repeat(3, 38px);
+    gap: 4px;
+  }
+  .flight-steer-pad button {
+    width: 38px;
+  }
+  .flight-steer-pad button:first-child {
+    grid-column: 2;
+  }
+  .flight-steer-pad button:nth-child(2) {
+    grid-row: 2;
+  }
+  .flight-steer-pad button:nth-child(5) {
+    grid-column: 2;
+  }
+}
+@media (max-width: 380px) {
+  .flight-title h2 {
+    font-size: 15px;
+  }
+  .flight-toolbar {
+    max-width: 153px;
+    right: 8px;
+  }
+  .flight-title {
+    left: 12px;
+  }
+  .flight-instruments {
+    left: 12px;
+    right: 12px;
+  }
+  .flight-navigation {
+    left: 12px;
+  }
+  .flight-touch {
+    left: 8px;
+    right: 8px;
+  }
+  .flight-thrust-pad {
+    grid-template-columns: repeat(3, 35px);
+  }
+  .flight-thrust-pad button {
+    width: 35px;
+  }
+}
+@media (max-height: 620px) and (min-width: 801px) {
+  .flight-navigation {
+    top: 135px;
+    padding: 10px;
+  }
+  .flight-instruments {
+    bottom: 40px;
+  }
+  .flight-title {
+    top: 15px;
+  }
+  .flight-toolbar {
+    top: 15px;
+  }
+}
+
+.flight-title,
+.flight-toolbar,
+.flight-navigation,
+.flight-instruments,
+.flight-touch,
+.flight-key-guide {
+  z-index: 2;
+}
+.flight-crosshair,
+.flight-marker {
+  z-index: 1;
+}
+@media (max-width: 800px) {
+  .flight-steer-pad button:first-child {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  .flight-steer-pad button:nth-child(2) {
+    grid-row: 2;
+    grid-column: 1;
+  }
+  .flight-steer-pad button:nth-child(3) {
+    grid-row: 2;
+    grid-column: 2;
+  }
+  .flight-steer-pad button:nth-child(4) {
+    grid-row: 2;
+    grid-column: 3;
+  }
+  .flight-steer-pad button:nth-child(5) {
+    grid-row: 3;
+    grid-column: 2;
+  }
+}

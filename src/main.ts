@@ -1,4 +1,5 @@
 import "./style.css";
+import { FlightInterface } from "./flight-ui";
 import { SolarScene } from "./planet-scene";
 import type { View } from "./planet-scene";
 import { SOLAR_SYSTEM, getBody, isBodyId } from "./solar-system";
@@ -31,7 +32,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div class="observatory">
     <header class="header">
       <a class="brand" href="#planet=earth" aria-label="远航首页">${icon("orbit")}<span>远航 <b>VOYAGER</b></span></a>
-      <nav class="main-nav" aria-label="主导航"><span class="nav-active">行星观测</span><span class="nav-planned">航行模拟 <small>即将启航</small></span></nav>
+      <nav class="main-nav" aria-label="主导航"><button id="mode-observe" class="nav-active" aria-pressed="true">行星观测</button><button id="mode-flight" class="scene-control" aria-pressed="false" disabled>自由航行</button></nav>
       <div class="header-tools"><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
     </header>
 
@@ -75,10 +76,10 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       </section>
     </main>
 
-    <footer class="footer"><span><i></i><span id="render-status">准备观测系统</span></span><span class="footer-center">探索，始于仰望。</span><span>太阳系观测 · 阶段 02 <b>V 0.2</b></span></footer>
+    <footer class="footer"><span><i></i><span id="render-status">准备观测系统</span></span><span class="footer-center">探索，始于仰望。</span><span>自由航行 · 阶段 03 <b>V 0.3</b></span></footer>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">从太阳出发，探索八颗行星。点击天体导航切换模型，环绕观察地表、云带、风暴与土星光环。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳和八颗行星均可观测。单天体以各自的展示比例呈现；地球使用影像贴图，其余天体为程序化艺术材质。自转为加速演示，观测高度按当前天体半径换算，尚未模拟航天动力学。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。其余天体的地表、云带、环系和太阳材质由程序生成。完整来源见项目 ASSETS.md。</p></details></dialog>
+    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">观测太阳和八颗行星，或切换到自由航行驾驶飞船。航行时点击天体导航选择目标，用“对准目标”确定航向，再按 W 出发；也可使用跃迁快速抵达。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳和八颗行星均可观测。点击顶部“自由航行”驾驶飞船：W/S 推力，A/D 平移，R/F 升降，Q/E 翻滚，方向键或拖动转向，Shift 加速，空格刹车，C 切换视角。航行距离和天体大小经过压缩，支持简化惯性与防撞护盾；保存与恢复使用服务端或本机存档。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。其余天体的地表、云带、环系和太阳材质由程序生成。完整来源见项目 ASSETS.md。</p></details></dialog>
   </div>
 `;
 
@@ -91,6 +92,7 @@ const readBodyHash = (): BodyId => {
 };
 const state = {
   ready: false,
+  mode: "observe" as "observe" | "flight",
   body: readBodyHash(),
   paused: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   view: "overview" as View,
@@ -105,6 +107,24 @@ const toast = (message: string) => {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => $("#toast").classList.remove("visible"), 2400);
 };
+
+const flight = new FlightInterface(toast, (active, target) => {
+  state.mode = active ? "flight" : "observe";
+  if (target) {
+    state.body = target;
+    updateBodyInfo(target);
+  }
+  $(".observatory").classList.toggle("flight-mode", active);
+  $("#mode-flight").classList.toggle("nav-active", active);
+  $("#mode-observe").classList.toggle("nav-active", !active);
+  $("#mode-flight").setAttribute("aria-pressed", String(active));
+  $("#mode-observe").setAttribute("aria-pressed", String(!active));
+  $("#canvas-host").dataset.mode = state.mode;
+  if (active) {
+    $("#connection-text").textContent = "远航号 · 驾驶在线";
+    $("#render-status").textContent = "自由航行 · 连续太阳系场景";
+  }
+});
 
 function updatePause() {
   const button = $("#pause");
@@ -222,6 +242,7 @@ function updateBodyInfo(id: BodyId) {
 }
 
 function showError(message: string) {
+  flight.stop();
   ++requestVersion;
   setControlsReady(false);
   delete $("#canvas-host").dataset.ready;
@@ -236,6 +257,7 @@ function showError(message: string) {
 }
 
 async function start(id: BodyId = state.body) {
+  flight.stop();
   const version = ++requestVersion;
   state.body = id;
   state.view = "overview";
@@ -303,12 +325,24 @@ document
   .forEach((button) =>
     button.addEventListener("click", () => {
       const id = button.dataset.body as BodyId;
+      if (state.mode === "flight") {
+        state.body = id;
+        updateBodyInfo(id);
+        flight.target(id);
+        return;
+      }
       if (id === state.body && state.ready) selectView("overview");
       else void start(id);
     }),
   );
 $(".brand").addEventListener("click", (event) => {
   event.preventDefault();
+  if (state.mode === "flight") {
+    flight.target("earth");
+    state.body = "earth";
+    updateBodyInfo("earth");
+    return;
+  }
   if (state.body === "earth" && state.ready) selectView("overview");
   else void start("earth");
 });
@@ -336,9 +370,10 @@ $("#zoom-in").addEventListener("click", () => scene?.zoom(0.85));
 $("#zoom-out").addEventListener("click", () => scene?.zoom(1.15));
 $("#reset").addEventListener("click", () => selectView("overview"));
 $("#retry").addEventListener("click", () => void start());
-$("#help").addEventListener("click", () =>
-  $<HTMLDialogElement>("#help-dialog").showModal(),
-);
+$("#help").addEventListener("click", () => {
+  if (flight.active) flight.pause(true);
+  $<HTMLDialogElement>("#help-dialog").showModal();
+});
 $("#help-dialog").addEventListener("click", (event) => {
   if (event.target === event.currentTarget)
     $<HTMLDialogElement>("#help-dialog").close();
@@ -358,6 +393,21 @@ $("#mobile-settings").addEventListener("click", () => {
   $("#control-panel").classList.toggle("mobile-open", expanded);
 });
 document.addEventListener("keydown", (event) => {
+  if (state.mode === "flight") {
+    if (
+      event.code === "KeyH" &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !(
+        event.target instanceof Element &&
+        event.target.closest("input,select,textarea,dialog")
+      )
+    ) {
+      flight.pause(true);
+      $<HTMLDialogElement>("#help-dialog").showModal();
+    }
+    return;
+  }
   if (
     event.target instanceof Element &&
     event.target.closest("button, input, select, textarea, a, dialog")
@@ -395,12 +445,39 @@ window.addEventListener("hashchange", () => {
   if (id !== state.body) void start(id);
 });
 window.addEventListener("pagehide", () => {
+  flight.stop();
   scene?.dispose();
   scene = undefined;
   clearTimeout(toastTimer);
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) void start();
+});
+$("#mode-flight").addEventListener("click", async () => {
+  if (!state.ready || !scene || flight.active) return;
+  const version = ++requestVersion;
+  setControlsReady(false);
+  $("#loading-overlay").hidden = false;
+  $("#loading-overlay small").textContent = "准备飞船与太阳系航区";
+  try {
+    const ready = await flight.launch(scene, state.body, (p) => {
+      $("#loading-text").textContent = `正在准备航行 · ${p}%`;
+      $("#loading-progress").style.width = `${p}%`;
+    });
+    if (!ready || version !== requestVersion) return;
+    setControlsReady(true);
+    $("#loading-overlay").hidden = true;
+    $("#canvas-host").dataset.ready = "true";
+    toast("驾驶已就绪：按 W 出发，拖动或方向键转向");
+  } catch (error) {
+    if (version === requestVersion)
+      showError(
+        error instanceof Error ? error.message : "航区未能加载，请重试",
+      );
+  }
+});
+$("#mode-observe").addEventListener("click", () => {
+  if (flight.active) void start(state.body);
 });
 updatePause();
 void start();
