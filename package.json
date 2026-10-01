@@ -7,7 +7,9 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "playwright test"
+    "test": "playwright test",
+    "export": "node scripts/export-standalone.mjs",
+    "test:offline": "npm run export && node scripts/verify-standalone.mjs"
   },
   "dependencies": {
     "three": "0.180.0"

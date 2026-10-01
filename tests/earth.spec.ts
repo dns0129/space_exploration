@@ -19,8 +19,8 @@ test("地球实际渲染，观察控制和图层工作正常", async ({ page }, 
     page.getByRole("navigation", { name: "太阳系天体" }).getByRole("button"),
   ).toHaveCount(9);
   await expect(
-    page.getByRole("button", { name: "火星，后续建设" }),
-  ).toBeDisabled();
+    page.getByRole("button", { name: "火星，切换观测" }),
+  ).toBeEnabled();
 
   // Inspect rendered pixels, so a successful DOM with a blank/failed WebGL scene cannot pass.
   const screenshot = PNG.sync.read(await page.locator("canvas").screenshot());

@@ -1,7 +1,8 @@
 import "./style.css";
-import { EarthScene } from "./earth-scene";
-import type { Layer, View } from "./earth-scene";
-import { SOLAR_SYSTEM } from "./solar-system";
+import { SolarScene } from "./planet-scene";
+import type { View } from "./planet-scene";
+import { SOLAR_SYSTEM, getBody, isBodyId } from "./solar-system";
+import type { BodyId, Layer } from "./solar-system";
 
 const icons: Record<string, string> = {
   orbit:
@@ -29,15 +30,15 @@ const icon = (name: string) =>
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div class="observatory">
     <header class="header">
-      <a class="brand" href="./" aria-label="远航首页">${icon("orbit")}<span>远航 <b>VOYAGER</b></span></a>
+      <a class="brand" href="#planet=earth" aria-label="远航首页">${icon("orbit")}<span>远航 <b>VOYAGER</b></span></a>
       <nav class="main-nav" aria-label="主导航"><span class="nav-active">行星观测</span><span class="nav-planned">航行模拟 <small>即将启航</small></span></nav>
       <div class="header-tools"><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
     </header>
 
     <nav class="planet-rail" aria-label="太阳系天体">
       <span class="rail-label">SOLAR<br>SYSTEM</span>
-      ${SOLAR_SYSTEM.map((planet, index) => `<button class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" ${planet.id === "earth" ? 'aria-current="page" aria-label="地球，当前观测天体"' : `disabled aria-label="${planet.name}，后续建设" title="${planet.name} · 后续建设"`}><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
-      <span class="rail-progress"><b>01</b> / 09</span>
+      ${SOLAR_SYSTEM.map((planet, index) => `<button data-body="${planet.id}" class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" aria-label="${planet.name}，${planet.id === "earth" ? "当前观测天体" : "切换观测"}" ${planet.id === "earth" ? 'aria-current="page"' : ""} title="${planet.name} · ${planet.english}"><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
+      <span class="rail-progress"><b>09</b> / 09</span>
     </nav>
 
     <main class="main">
@@ -68,28 +69,35 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
       <section class="control-panel" id="control-panel" aria-label="观测设置">
         <div class="control-group views"><span class="control-label">观测视角 <small>VIEWPOINT</small></span><div class="segmented"><button class="scene-control selected" data-view="overview" aria-pressed="true" disabled>${icon("globe")} 全景</button><button class="scene-control" data-view="close" aria-pressed="false" disabled>${icon("compass")} 近地</button><button class="scene-control" data-view="night" aria-pressed="false" disabled>${icon("moon")} 夜景</button></div></div>
-        <div class="control-group layers"><span class="control-label">画面图层 <small>LAYERS</small></span><div class="layer-switches"><button class="switch scene-control" role="switch" aria-checked="true" data-layer="clouds" disabled><span>云层</span><i></i></button><button class="switch scene-control" role="switch" aria-checked="true" data-layer="atmosphere" disabled><span>大气</span><i></i></button><button class="switch scene-control" role="switch" aria-checked="true" data-layer="stars" disabled><span>星空</span><i></i></button></div></div>
+        <div class="control-group layers"><span class="control-label">画面图层 <small>LAYERS</small></span><div class="layer-switches"><button class="switch scene-control" role="switch" aria-checked="true" data-layer="clouds" disabled><span>云层</span><i></i></button><button class="switch scene-control" role="switch" aria-checked="true" data-layer="atmosphere" disabled><span>大气</span><i></i></button><button class="switch scene-control" role="switch" aria-checked="true" data-layer="stars" disabled><span>星空</span><i></i></button><button class="switch scene-control" role="switch" aria-checked="true" data-layer="rings" hidden disabled><span>环系</span><i></i></button></div></div>
         <div class="control-group rotation"><span class="control-label">星球自转 <small>ROTATION</small></span><div class="rotation-controls"><button class="icon-button scene-control" id="pause" aria-label="暂停自转" aria-pressed="false" disabled>${icon("pause")}</button><label class="speed-label" for="speed">演示速度</label><select class="scene-control" id="speed" aria-label="自转演示速度" disabled><option value="0.25">0.25×</option><option value="1" selected>1×</option><option value="5">5×</option><option value="10">10×</option></select></div></div>
         <div class="control-group quality"><label class="control-label" for="quality">渲染画质 <small>QUALITY</small></label><select class="scene-control" id="quality" disabled><option value="high">高清</option><option value="standard">标准</option></select></div>
       </section>
     </main>
 
-    <footer class="footer"><span><i></i><span id="render-status">准备观测系统</span></span><span class="footer-center">探索，始于仰望。</span><span>地球观测 · 阶段 01 <b>V 0.1</b></span></footer>
+    <footer class="footer"><span><i></i><span id="render-status">准备观测系统</span></span><span class="footer-center">探索，始于仰望。</span><span>太阳系观测 · 阶段 02 <b>V 0.2</b></span></footer>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">你正在体验远航的第一个目的地。环绕地球，欣赏昼夜交界、城市灯光与大气微光。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">本阶段可观测地球。太阳及其他七颗行星将在后续阶段建设。自转为加速演示，观测高度由相机距离换算；画面尚未模拟航天动力学。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。完整来源见项目 ASSETS.md。</p></details></dialog>
+    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">从太阳出发，探索八颗行星。点击天体导航切换模型，环绕观察地表、云带、风暴与土星光环。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳和八颗行星均可观测。单天体以各自的展示比例呈现；地球使用影像贴图，其余天体为程序化艺术材质。自转为加速演示，观测高度按当前天体半径换算，尚未模拟航天动力学。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。其余天体的地表、云带、环系和太阳材质由程序生成。完整来源见项目 ASSETS.md。</p></details></dialog>
   </div>
 `;
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T =>
   document.querySelector<T>(selector)!;
+const readBodyHash = (): BodyId => {
+  const value =
+    new URLSearchParams(window.location.hash.slice(1)).get("planet") ?? "earth";
+  return isBodyId(value) ? value : "earth";
+};
 const state = {
   ready: false,
+  body: readBodyHash(),
   paused: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   view: "overview" as View,
-  layers: { clouds: true, atmosphere: true, stars: true },
+  layers: { clouds: true, atmosphere: true, stars: true, rings: true },
 };
-let scene: EarthScene | undefined;
+let scene: SolarScene | undefined;
+let requestVersion = 0;
 let toastTimer: ReturnType<typeof setTimeout>;
 const toast = (message: string) => {
   $("#toast").textContent = message;
@@ -117,67 +125,170 @@ function selectView(view: View) {
     });
 }
 
+function setControlsReady(ready: boolean) {
+  state.ready = ready;
+  document
+    .querySelectorAll<HTMLButtonElement | HTMLSelectElement>(".scene-control")
+    .forEach((element) => {
+      element.disabled = !ready;
+    });
+}
+
+function updateBodyInfo(id: BodyId) {
+  const body = getBody(id);
+  const number = SOLAR_SYSTEM.findIndex((item) => item.id === id);
+  const format = (value: number, decimals = 2) =>
+    value.toLocaleString("zh-CN", { maximumFractionDigits: decimals });
+  $(".planet-info").setAttribute("aria-label", `${body.name}信息`);
+  $(".planet-info .eyebrow").innerHTML =
+    `<span class="tiny-line"></span>${id === "earth" ? "我们的蓝色家园" : body.tags[1]}`;
+  $("h1").innerHTML = `${body.name}<span>${body.english}</span>`;
+  $(".planet-tags").innerHTML = body.tags
+    .map((tag) => `<span>${tag}</span>`)
+    .join("");
+  $(".description").innerHTML = body.description;
+  const facts = [
+    ["平均半径", format(body.radiusKm, 0), "km"],
+    id === "sun"
+      ? ["表面温度", "5,772", "K"]
+      : ["距太阳", format(body.distanceFromSunMillionKm / 100, 3), "亿 km"],
+    id === "sun"
+      ? ["光谱类型", "G2V", ""]
+      : [
+          "公转周期",
+          format(
+            body.orbitalPeriodDays > 730
+              ? body.orbitalPeriodDays / 365.25
+              : body.orbitalPeriodDays,
+          ),
+          body.orbitalPeriodDays > 730 ? "年" : "天",
+        ],
+    ["地轴倾角", format(body.axialTiltDeg), "°"],
+  ];
+  $(".facts").innerHTML = facts
+    .map(
+      ([label, value, unit]) =>
+        `<div><dt>${label}</dt><dd>${value} <small>${unit}</small></dd></div>`,
+    )
+    .join("");
+  $(".planet-info .primary-button").innerHTML =
+    `${id === "earth" ? "进入近地轨道" : `近距离观测${body.name}`} ${icon("arrow")}`;
+  $(".milestone").innerHTML =
+    `DESTINATION ${String(number).padStart(2, "0")} <i></i> ${id === "sun" ? "太阳系中心" : `第 ${String(number).padStart(2, "0")} 站`}`;
+  $("#space-stage").setAttribute("aria-label", `${body.name}观测场景`);
+  $(".top-coordinate").innerHTML =
+    `<span>SECTOR ${String(number).padStart(3, "0")}</span><span>太阳系 · ${body.name}</span>`;
+  $(".earth-caption").innerHTML = `<i></i><span>${body.caption}</span>`;
+  $(".sun-label").hidden = id === "sun";
+  $("#error-panel h2").textContent = `暂时无法打开${body.name}场景`;
+  const nightButton = $('[data-view="night"]');
+  nightButton.hidden = id === "sun";
+  nightButton.innerHTML = `${icon("moon")} ${id === "earth" ? "夜景" : "背光"}`;
+  $('.segmented [data-view="close"]').innerHTML =
+    `${icon("compass")} ${id === "earth" ? "近地" : "近观"}`;
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-layer]")
+    .forEach((button) => {
+      const layer = button.dataset.layer as Layer;
+      button.hidden = !body.layers.includes(layer);
+      button.querySelector("span")!.textContent =
+        layer === "atmosphere"
+          ? id === "sun"
+            ? "日冕"
+            : "大气"
+          : ({ clouds: "云层", stars: "星空", rings: "环系" } as const)[layer];
+      button.setAttribute("aria-checked", String(state.layers[layer]));
+    });
+  document
+    .querySelectorAll<HTMLButtonElement>("button[data-body]")
+    .forEach((button) => {
+      const selected = button.dataset.body === id;
+      button.classList.toggle("active", selected);
+      const name = getBody(button.dataset.body as BodyId).name;
+      button.setAttribute(
+        "aria-label",
+        `${name}，${selected ? "当前观测天体" : "切换观测"}`,
+      );
+      if (selected) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    });
+  $("#altitude").innerHTML = "— <small>km</small>";
+  document.title = `远航 VOYAGER · ${body.name}观测站`;
+  try {
+    history.replaceState(null, "", `#planet=${id}`);
+  } catch {
+    /* Isolated document previews may restrict history changes. */
+  }
+}
+
 function showError(message: string) {
-  state.ready = false;
+  ++requestVersion;
+  setControlsReady(false);
   delete $("#canvas-host").dataset.ready;
+  delete $("#canvas-host").dataset.body;
   $("#loading-overlay").hidden = true;
   $("#error-panel").hidden = false;
   $("#error-message").textContent = message;
   $("#connection-text").textContent = "观测站离线";
   $("#render-status").textContent = "场景加载失败";
-  document
-    .querySelectorAll<HTMLButtonElement | HTMLSelectElement>(".scene-control")
-    .forEach((element) => {
-      element.disabled = true;
-    });
   scene?.dispose();
   scene = undefined;
 }
 
-async function start() {
-  scene?.dispose();
-  state.ready = false;
+async function start(id: BodyId = state.body) {
+  const version = ++requestVersion;
+  state.body = id;
+  state.view = "overview";
+  updateBodyInfo(id);
+  setControlsReady(false);
   delete $("#canvas-host").dataset.ready;
+  delete $("#canvas-host").dataset.body;
   $("#error-panel").hidden = true;
   $("#loading-overlay").hidden = false;
   $("#loading-progress").style.width = "0%";
-  $("#loading-text").textContent = "正在展开地球 · 0%";
-  $("#connection-text").textContent = "正在连接观测站";
+  $("#loading-text").textContent = `正在展开${getBody(id).name} · 0%`;
+  $("#loading-overlay small").textContent =
+    id === "earth" ? "准备高清地表与云层" : "准备天体模型与材质";
+  $("#connection-text").textContent = "正在切换观测天体";
   try {
-    scene = new EarthScene(
+    scene ??= new SolarScene(
       $("#canvas-host"),
       ({ altitudeKm }) => {
-        $("#altitude").innerHTML =
-          `${Math.round(altitudeKm).toLocaleString("zh-CN")} <small>km</small>`;
+        if (state.ready)
+          $("#altitude").innerHTML =
+            `${Math.round(altitudeKm).toLocaleString("zh-CN")} <small>km</small>`;
       },
       showError,
     );
-    await scene.load((percent) => {
-      $("#loading-text").textContent = `正在展开地球 · ${percent}%`;
+    const shown = await scene.selectBody(id, (percent) => {
+      if (version !== requestVersion) return;
+      $("#loading-text").textContent =
+        `正在展开${getBody(id).name} · ${percent}%`;
       $("#loading-progress").style.width = `${percent}%`;
     });
-    state.ready = true;
-    document
-      .querySelectorAll<HTMLButtonElement | HTMLSelectElement>(".scene-control")
-      .forEach((element) => {
-        element.disabled = false;
-      });
-    $("#loading-overlay").hidden = true;
-    $("#connection-text").textContent = "地球观测在线";
-    $("#render-status").textContent = "4K 地表 · 实时 3D 渲染";
-    $("#canvas-host").dataset.ready = "true";
+    if (!shown || version !== requestVersion) return;
     updatePause();
     for (const [layer, visible] of Object.entries(state.layers))
       scene.setLayer(layer as Layer, visible);
     scene.setSpeed(Number($<HTMLSelectElement>("#speed").value));
     scene.setQuality($<HTMLSelectElement>("#quality").value === "high");
-    selectView(state.view);
+    selectView("overview");
+    setControlsReady(true);
+    $("#loading-overlay").hidden = true;
+    $("#connection-text").textContent = `${getBody(id).name}观测在线`;
+    $("#render-status").textContent =
+      id === "earth" ? "4K 地表 · 实时 3D 渲染" : "程序化材质 · 实时 3D 渲染";
+    $("#canvas-host").dataset.ready = "true";
+    $("#canvas-host").dataset.body = id;
   } catch (error) {
-    console.error("Earth scene initialization failed:", error);
+    if (version !== requestVersion) return;
+    console.error("Celestial scene initialization failed:", error);
     showError(
       error instanceof Error && /WebGL|context/i.test(error.message)
         ? "当前浏览器无法启用 WebGL 2。请使用支持硬件加速的现代浏览器，并开启图形加速后重试。"
-        : "高清贴图未能完整加载。请检查连接后重新加载场景。",
+        : id === "earth"
+          ? "高清贴图未能完整加载。请检查连接后重新加载场景，也可先观测其他天体。"
+          : "天体模型未能完成初始化，请重新加载场景。",
     );
   }
 }
@@ -187,8 +298,19 @@ document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) =>
     if (state.ready) selectView(button.dataset.view as View);
   }),
 );
-$(".planet-item.active").addEventListener("click", () => {
-  if (state.ready) selectView("overview");
+document
+  .querySelectorAll<HTMLButtonElement>("button[data-body]")
+  .forEach((button) =>
+    button.addEventListener("click", () => {
+      const id = button.dataset.body as BodyId;
+      if (id === state.body && state.ready) selectView("overview");
+      else void start(id);
+    }),
+  );
+$(".brand").addEventListener("click", (event) => {
+  event.preventDefault();
+  if (state.body === "earth" && state.ready) selectView("overview");
+  else void start("earth");
 });
 document.querySelectorAll<HTMLButtonElement>("[data-layer]").forEach((button) =>
   button.addEventListener("click", () => {
@@ -213,7 +335,7 @@ $("#quality").addEventListener("change", () => {
 $("#zoom-in").addEventListener("click", () => scene?.zoom(0.85));
 $("#zoom-out").addEventListener("click", () => scene?.zoom(1.15));
 $("#reset").addEventListener("click", () => selectView("overview"));
-$("#retry").addEventListener("click", start);
+$("#retry").addEventListener("click", () => void start());
 $("#help").addEventListener("click", () =>
   $<HTMLDialogElement>("#help-dialog").showModal(),
 );
@@ -268,9 +390,17 @@ document.addEventListener("keydown", (event) => {
     );
   }
 });
+window.addEventListener("hashchange", () => {
+  const id = readBodyHash();
+  if (id !== state.body) void start(id);
+});
 window.addEventListener("pagehide", () => {
   scene?.dispose();
+  scene = undefined;
   clearTimeout(toastTimer);
+});
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) void start();
 });
 updatePause();
 void start();

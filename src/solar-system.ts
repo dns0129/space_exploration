@@ -1,21 +1,199 @@
-/** Rendering units are Earth radii. This first milestone implements Earth only. */
-export const EARTH = {
-  id: "earth",
-  name: "地球",
-  radiusKm: 6371,
-  axialTiltDeg: 23.44,
-  distanceFromSunMillionKm: 149.6,
-  orbitalPeriodDays: 365.25,
-} as const;
+export type BodyId =
+  | "sun"
+  | "mercury"
+  | "venus"
+  | "earth"
+  | "mars"
+  | "jupiter"
+  | "saturn"
+  | "uranus"
+  | "neptune";
+export type Layer = "clouds" | "atmosphere" | "stars" | "rings";
 
-export const SOLAR_SYSTEM = [
-  { id: "sun", name: "太阳", english: "SUN", color: "#f8bd67" },
-  { id: "mercury", name: "水星", english: "MERCURY", color: "#9e958d" },
-  { id: "venus", name: "金星", english: "VENUS", color: "#d9b18a" },
-  { id: "earth", name: "地球", english: "EARTH", color: "#75c8ef" },
-  { id: "mars", name: "火星", english: "MARS", color: "#cd886c" },
-  { id: "jupiter", name: "木星", english: "JUPITER", color: "#ccab89" },
-  { id: "saturn", name: "土星", english: "SATURN", color: "#d9c59b" },
-  { id: "uranus", name: "天王星", english: "URANUS", color: "#b1dadc" },
-  { id: "neptune", name: "海王星", english: "NEPTUNE", color: "#678acd" },
-] as const;
+export interface CelestialBody {
+  id: BodyId;
+  name: string;
+  english: string;
+  color: string;
+  radiusKm: number;
+  axialTiltDeg: number;
+  flattening: number;
+  distanceFromSunMillionKm: number;
+  orbitalPeriodDays: number;
+  rotationSpeed: number;
+  tags: readonly string[];
+  description: string;
+  caption: string;
+  layers: readonly Layer[];
+  atmosphereColor?: string;
+}
+
+/** Single-body models use radius 1; real radii drive information and height readouts. */
+export const SOLAR_SYSTEM: readonly CelestialBody[] = [
+  {
+    id: "sun",
+    name: "太阳",
+    english: "SUN",
+    color: "#f8bd67",
+    radiusKm: 695700,
+    axialTiltDeg: 7.25,
+    flattening: 1,
+    distanceFromSunMillionKm: 0,
+    orbitalPeriodDays: 0,
+    rotationSpeed: 0.015,
+    tags: ["G 型恒星", "太阳系中心"],
+    description:
+      "光与热的源头。<br>翻涌的等离子体与明亮日冕，<br>照亮八颗行星的旅程。",
+    caption: "SOL / OUR STAR",
+    layers: ["atmosphere", "stars"],
+  },
+  {
+    id: "mercury",
+    name: "水星",
+    english: "MERCURY",
+    color: "#b4aaa1",
+    radiusKm: 2439.7,
+    axialTiltDeg: 0.034,
+    flattening: 1,
+    distanceFromSunMillionKm: 57.9,
+    orbitalPeriodDays: 87.97,
+    rotationSpeed: 0.012,
+    tags: ["岩石行星", "陨石坑地表"],
+    description:
+      "紧邻太阳的岩石世界。<br>无数陨石坑镌刻着时间，<br>明暗交界处，山脊浮现。",
+    caption: "MERCURY / SOL I",
+    layers: ["stars"],
+  },
+  {
+    id: "venus",
+    name: "金星",
+    english: "VENUS",
+    color: "#e5c997",
+    radiusKm: 6051.8,
+    axialTiltDeg: 177.36,
+    flattening: 1,
+    distanceFromSunMillionKm: 108.2,
+    orbitalPeriodDays: 224.7,
+    rotationSpeed: 0.009,
+    tags: ["岩石行星", "厚重大气"],
+    description:
+      "被金色云海包裹的世界。<br>浓密云层遮蔽炽热地表，<br>旋涡沿着天空缓慢流动。",
+    caption: "VENUS / SOL II",
+    layers: ["clouds", "atmosphere", "stars"],
+    atmosphereColor: "#eec88e",
+  },
+  {
+    id: "earth",
+    name: "地球",
+    english: "EARTH",
+    color: "#75c8ef",
+    radiusKm: 6371,
+    axialTiltDeg: 23.44,
+    flattening: 1,
+    distanceFromSunMillionKm: 149.6,
+    orbitalPeriodDays: 365.25,
+    rotationSpeed: 0.025,
+    tags: ["岩石行星", "宜居带"],
+    description:
+      "在浩瀚宇宙中，<br>一颗承载生命的蓝色星球。<br>你的星际旅程，从这里开始。",
+    caption: "TERRA / SOL III",
+    layers: ["clouds", "atmosphere", "stars"],
+    atmosphereColor: "#539ced",
+  },
+  {
+    id: "mars",
+    name: "火星",
+    english: "MARS",
+    color: "#d59670",
+    radiusKm: 3389.5,
+    axialTiltDeg: 25.19,
+    flattening: 0.994,
+    distanceFromSunMillionKm: 227.9,
+    orbitalPeriodDays: 686.98,
+    rotationSpeed: 0.024,
+    tags: ["岩石行星", "赤色世界"],
+    description:
+      "红色尘土覆盖的邻居。<br>暗色地形与白色极冠，<br>诉说着一颗行星的过去。",
+    caption: "MARS / SOL IV",
+    layers: ["atmosphere", "stars"],
+    atmosphereColor: "#ca704e",
+  },
+  {
+    id: "jupiter",
+    name: "木星",
+    english: "JUPITER",
+    color: "#dbc1a5",
+    radiusKm: 69911,
+    axialTiltDeg: 3.13,
+    flattening: 0.935,
+    distanceFromSunMillionKm: 778.6,
+    orbitalPeriodDays: 4332.59,
+    rotationSpeed: 0.055,
+    tags: ["气态巨行星", "大红斑"],
+    description:
+      "太阳系中最大的行星。<br>交错云带环绕辽阔天空，<br>一场红色风暴延续至今。",
+    caption: "JUPITER / SOL V",
+    layers: ["atmosphere", "stars"],
+    atmosphereColor: "#bea998",
+  },
+  {
+    id: "saturn",
+    name: "土星",
+    english: "SATURN",
+    color: "#e6d6b1",
+    radiusKm: 58232,
+    axialTiltDeg: 26.73,
+    flattening: 0.902,
+    distanceFromSunMillionKm: 1433.5,
+    orbitalPeriodDays: 10759.22,
+    rotationSpeed: 0.05,
+    tags: ["气态巨行星", "冰粒环系"],
+    description:
+      "以光环闻名的气态巨星。<br>细密环带与卡西尼缝隙，<br>在行星阴影中交织。",
+    caption: "SATURN / SOL VI",
+    layers: ["rings", "atmosphere", "stars"],
+    atmosphereColor: "#d9cba8",
+  },
+  {
+    id: "uranus",
+    name: "天王星",
+    english: "URANUS",
+    color: "#afe0df",
+    radiusKm: 25362,
+    axialTiltDeg: 97.77,
+    flattening: 0.977,
+    distanceFromSunMillionKm: 2872.5,
+    orbitalPeriodDays: 30688.5,
+    rotationSpeed: 0.038,
+    tags: ["冰巨行星", "横卧自转"],
+    description:
+      "柔和青蓝色的冰巨星。<br>极度倾斜的自转轴，<br>让它仿佛横卧着航行。",
+    caption: "URANUS / SOL VII",
+    layers: ["atmosphere", "stars"],
+    atmosphereColor: "#99dedc",
+  },
+  {
+    id: "neptune",
+    name: "海王星",
+    english: "NEPTUNE",
+    color: "#7ca3e8",
+    radiusKm: 24622,
+    axialTiltDeg: 28.32,
+    flattening: 0.983,
+    distanceFromSunMillionKm: 4495.1,
+    orbitalPeriodDays: 60182,
+    rotationSpeed: 0.04,
+    tags: ["冰巨行星", "遥远风暴"],
+    description:
+      "遥远轨道上的蓝色世界。<br>薄云掠过深蓝色大气，<br>隐约可见旋转的风暴。",
+    caption: "NEPTUNE / SOL VIII",
+    layers: ["clouds", "atmosphere", "stars"],
+    atmosphereColor: "#4e91ee",
+  },
+];
+
+export const getBody = (id: BodyId): CelestialBody =>
+  SOLAR_SYSTEM.find((body) => body.id === id)!;
+export const isBodyId = (value: string): value is BodyId =>
+  SOLAR_SYSTEM.some((body) => body.id === value);
+export const EARTH = getBody("earth");

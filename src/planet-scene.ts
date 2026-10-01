@@ -1,9 +1,11 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { EARTH } from "./solar-system";
+import { EARTH, getBody } from "./solar-system";
+import type { BodyId, Layer } from "./solar-system";
+import { createPlanetModel } from "./planet-models";
+import type { PlanetModel } from "./planet-models";
 
 export type View = "overview" | "close" | "night";
-export type Layer = "clouds" | "atmosphere" | "stars";
 export interface SceneStats {
   altitudeKm: number;
   fps: number;
@@ -84,17 +86,20 @@ const atmosphereFragment = /* glsl */ `
 `;
 
 /** Owns rendering and GPU resources; UI consumes its public controls and metrics. */
-export class EarthScene {
+export class SolarScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(40, 1, 0.01, 200);
   private readonly controls: OrbitControls;
   private readonly planet = new THREE.Group();
   private readonly stars = new THREE.Group();
-  private clouds?: THREE.Mesh;
-  private atmosphere?: THREE.Mesh;
-  private surface?: THREE.Mesh;
-  private readonly textures: THREE.Texture[] = [];
+  private currentModel?: PlanetModel;
+  private readonly models = new Map<BodyId, PlanetModel>();
+  private readonly sunDirection = new THREE.Vector3(-3, 1.8, 4).normalize();
+  private readonly textures = new Set<THREE.Texture>();
+  private earthMaps?: THREE.Texture[];
+  private earthPromise?: Promise<THREE.Texture[]>;
+  private selectionVersion = 0;
   private readonly resizeObserver: ResizeObserver;
   private targetPosition: THREE.Vector3 | null = null;
   private paused = window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -130,7 +135,7 @@ export class EarthScene {
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.domElement.setAttribute(
       "aria-label",
-      "交互式 3D 地球：拖动旋转视角，滚轮或双指缩放",
+      "交互式 3D 天体：拖动旋转视角，滚轮或双指缩放",
     );
     this.renderer.domElement.setAttribute("role", "img");
     this.container.append(this.renderer.domElement);
@@ -150,7 +155,6 @@ export class EarthScene {
     this.controls.addEventListener("start", () => {
       this.targetPosition = null;
     });
-    this.planet.rotation.z = THREE.MathUtils.degToRad(EARTH.axialTiltDeg);
     this.scene.add(this.planet);
     this.createStars();
     this.scene.add(this.stars);
@@ -163,7 +167,46 @@ export class EarthScene {
     this.resize();
   }
 
-  async load(onProgress: (percent: number) => void): Promise<void> {
+  async selectBody(
+    id: BodyId,
+    onProgress: (percent: number) => void,
+  ): Promise<boolean> {
+    const version = ++this.selectionVersion;
+    const maps =
+      id === "earth" ? await this.loadEarthTextures(onProgress) : undefined;
+    if (this.destroyed || version !== this.selectionVersion) return false;
+    let model = this.models.get(id);
+    if (!model) {
+      model =
+        id === "earth"
+          ? this.createEarthModel(maps!)
+          : createPlanetModel(getBody(id), this.sunDirection);
+      this.models.set(id, model);
+    }
+    this.planet.clear();
+    this.planet.add(model.group);
+    this.currentModel = model;
+    this.controls.maxDistance = id === "saturn" ? 12 : 7;
+    this.targetPosition = null;
+    this.controls.reset();
+    this.camera.position.copy(this.viewPosition("overview"));
+    this.controls.update();
+    this.renderer.domElement.setAttribute(
+      "aria-label",
+      `交互式 3D ${model.body.name}：拖动旋转视角，滚轮或双指缩放`,
+    );
+    this.renderer.compile(this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera);
+    onProgress(100);
+    if (!this.frame) this.animate(0);
+    return true;
+  }
+
+  private loadEarthTextures(
+    onProgress: (percent: number) => void,
+  ): Promise<THREE.Texture[]> {
+    if (this.earthMaps) return Promise.resolve(this.earthMaps);
+    if (this.earthPromise) return this.earthPromise;
     const loader = new THREE.TextureLoader();
     const files = [
       "earth-day.jpg",
@@ -173,12 +216,14 @@ export class EarthScene {
       "earth-clouds.png",
     ];
     let loaded = 0;
-    const maps = await Promise.all(
+    const batch: THREE.Texture[] = [];
+    let failed = false;
+    this.earthPromise = Promise.all(
       files.map(async (file) => {
         const texture = await loader.loadAsync(
           `${import.meta.env.BASE_URL}textures/${file}`,
         );
-        if (this.destroyed) {
+        if (this.destroyed || failed) {
           texture.dispose();
           throw new Error("场景已关闭");
         }
@@ -186,17 +231,42 @@ export class EarthScene {
           this.renderer.capabilities.getMaxAnisotropy(),
           16,
         );
-        this.textures.push(texture);
+        this.textures.add(texture);
+        batch.push(texture);
         onProgress(Math.round((++loaded / files.length) * 100));
         return texture;
       }),
-    );
+    )
+      .then((maps) => {
+        maps[0].colorSpace = THREE.SRGBColorSpace;
+        maps[1].colorSpace = THREE.SRGBColorSpace;
+        maps[4].colorSpace = THREE.SRGBColorSpace;
+        this.earthMaps = maps;
+        return maps;
+      })
+      .catch((error) => {
+        failed = true;
+        batch.forEach((texture) => {
+          this.textures.delete(texture);
+          texture.dispose();
+        });
+        throw error;
+      })
+      .finally(() => {
+        this.earthPromise = undefined;
+      });
+    return this.earthPromise;
+  }
+
+  private createEarthModel(maps: THREE.Texture[]): PlanetModel {
     maps[0].colorSpace = THREE.SRGBColorSpace;
     maps[1].colorSpace = THREE.SRGBColorSpace;
     maps[4].colorSpace = THREE.SRGBColorSpace;
-    const sunDirection = new THREE.Vector3(-3, 1.8, 4).normalize();
+    const sunDirection = this.sunDirection;
+    const group = new THREE.Group();
+    group.rotation.z = THREE.MathUtils.degToRad(EARTH.axialTiltDeg);
     const geometry = new THREE.SphereGeometry(1, 192, 128);
-    this.surface = new THREE.Mesh(
+    const surface = new THREE.Mesh(
       geometry,
       new THREE.ShaderMaterial({
         vertexShader: surfaceVertex,
@@ -210,8 +280,8 @@ export class EarthScene {
         },
       }),
     );
-    this.surface.rotation.y = -1.8;
-    this.clouds = new THREE.Mesh(
+    surface.rotation.y = -1.8;
+    const clouds = new THREE.Mesh(
       new THREE.SphereGeometry(1.008, 128, 96),
       new THREE.MeshPhongMaterial({
         map: maps[4],
@@ -221,8 +291,8 @@ export class EarthScene {
         shininess: 5,
       }),
     );
-    this.clouds.rotation.y = this.surface.rotation.y;
-    this.atmosphere = new THREE.Mesh(
+    clouds.rotation.y = surface.rotation.y;
+    const atmosphere = new THREE.Mesh(
       new THREE.SphereGeometry(1.035, 128, 96),
       new THREE.ShaderMaterial({
         vertexShader: surfaceVertex,
@@ -234,9 +304,18 @@ export class EarthScene {
         depthWrite: false,
       }),
     );
-    this.planet.add(this.surface, this.clouds, this.atmosphere);
-    this.renderer.compile(this.scene, this.camera);
-    this.animate(0);
+    group.add(surface, clouds, atmosphere);
+    return {
+      body: EARTH,
+      group,
+      surface,
+      layers: { clouds, atmosphere },
+      spinning: [
+        { object: surface, rate: 0.025 },
+        { object: clouds, rate: 0.029 },
+      ],
+      timeUniforms: [],
+    };
   }
 
   private createStars() {
@@ -312,9 +391,11 @@ export class EarthScene {
       ? Math.min((time - this.lastTime) / 1000, 0.05)
       : 0;
     this.lastTime = time;
-    if (!this.paused) {
-      if (this.surface) this.surface.rotation.y += delta * 0.025 * this.speed;
-      if (this.clouds) this.clouds.rotation.y += delta * 0.029 * this.speed;
+    if (!this.paused && this.currentModel) {
+      for (const { object, rate } of this.currentModel.spinning)
+        object.rotation.y += delta * rate * this.speed;
+      for (const uniform of this.currentModel.timeUniforms)
+        uniform.value += delta * this.speed;
     }
     if (this.targetPosition) {
       // Interpolate around the globe, keeping radius outside the surface even for opposite views.
@@ -343,7 +424,9 @@ export class EarthScene {
     if (!this.metricsStart) this.metricsStart = time;
     if (time - this.metricsStart > 750) {
       this.onStats({
-        altitudeKm: (this.camera.position.length() - 1) * EARTH.radiusKm,
+        altitudeKm:
+          (this.camera.position.length() - 1) *
+          (this.currentModel?.body.radiusKm ?? EARTH.radiusKm),
         fps: Math.round((this.frames * 1000) / (time - this.metricsStart)),
       });
       this.metricsStart = time;
@@ -351,13 +434,29 @@ export class EarthScene {
     }
   };
 
-  setView(view: View) {
+  private viewPosition(view: View): THREE.Vector3 {
+    if (this.currentModel?.body.id === "saturn") {
+      return {
+        // Narrow displays need more distance to show the full ring system.
+        overview: new THREE.Vector3(0, 2.6, 5.2).multiplyScalar(
+          Math.max(1, 1.07 / Math.max(this.camera.aspect, 0.55)),
+        ),
+        close: new THREE.Vector3(0, 1.3, 2.6),
+        night: new THREE.Vector3(4, 2, -4),
+      }[view];
+    }
+    if (this.currentModel?.body.id === "mars" && view === "overview")
+      return new THREE.Vector3(0, 1.2, 3.72);
     const vectors: Record<View, THREE.Vector3> = {
       overview: new THREE.Vector3(0, 0.3, 3.9),
       close: new THREE.Vector3(0, 0.14, 1.85),
       night: new THREE.Vector3(3.6, 0.45, -1.2),
     };
-    this.targetPosition = vectors[view].clone();
+    return vectors[view];
+  }
+
+  setView(view: View) {
+    this.targetPosition = this.viewPosition(view);
   }
 
   setPaused(paused: boolean) {
@@ -368,12 +467,10 @@ export class EarthScene {
   }
   setLayer(layer: Layer, visible: boolean) {
     const object =
-      layer === "clouds"
-        ? this.clouds
-        : layer === "atmosphere"
-          ? this.atmosphere
-          : this.stars;
+      layer === "stars" ? this.stars : this.currentModel?.layers[layer];
     if (object) object.visible = visible;
+    if (layer === "rings" && this.currentModel?.ringsEnabled)
+      this.currentModel.ringsEnabled.value = Number(visible);
   }
   setQuality(high: boolean) {
     this.renderer.setPixelRatio(
@@ -416,15 +513,21 @@ export class EarthScene {
       this.contextLost,
     );
     this.controls.dispose();
-    this.scene.traverse((object) => {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    const collect = (object: THREE.Object3D) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
-        object.geometry.dispose();
-        const materials = Array.isArray(object.material)
+        geometries.add(object.geometry);
+        const objectMaterials = Array.isArray(object.material)
           ? object.material
           : [object.material];
-        materials.forEach((material) => material.dispose());
+        objectMaterials.forEach((material) => materials.add(material));
       }
-    });
+    };
+    this.scene.traverse(collect);
+    this.models.forEach((model) => model.group.traverse(collect));
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
     this.textures.forEach((texture) => texture.dispose());
     this.renderer.dispose();
     this.renderer.domElement.remove();

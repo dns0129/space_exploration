@@ -267,7 +267,9 @@ button:active:not(:disabled) {
   left: -9px;
 }
 .planet-item.active .planet-dot {
-  box-shadow: 0 0 16px #75c8ef55;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--planet-color) 40%, transparent);
+}
+.planet-item.active .planet-dot.earth {
   background: radial-gradient(circle at 35% 30%, #aad9e8, #377688 40%, #28386a);
 }
 .rail-progress {
