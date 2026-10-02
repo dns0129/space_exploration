@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { createVoyagerServer } from "./server.mjs";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
+import * as THREE from "three";
+import { projectFlightTarget } from "../src/flight-target.ts";
 const state = () => new ShipDynamics().snapshot();
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "voyager-server-"));
@@ -171,7 +173,8 @@ test("thrust, six-axis orientation, inertia and braking change the actual ship s
   assert(validateFlightState(ship.snapshot()));
 });
 test("continuous collision protection stops a fast ship before it tunnels through Earth", () => {
-  const ship = new ShipDynamics({ ...world, boostSpeed: 120 });
+  const ship = new ShipDynamics({ ...world, boostSpeed: 120,
+    engines: world.engines.map((engine) => engine.id === "orbital" ? { ...engine, maxSpeedKm: 120 * world.unitsKm } : engine) });
   const earth = world.bodies.find((body) => body.id === "earth");
   const center = { x: earth.position[0], y: earth.position[1], z: earth.position[2] };
   ship.position.set(center.x, center.y, center.z - 3);
@@ -320,4 +323,118 @@ test("warp routes around the Sun and can be interrupted without losing the actua
   const restored = new ShipDynamics();
   assert(restored.restore(ship.snapshot()));
   assert(restored.position.equals(midway));
+});
+
+test("planet proximity blocks warp without changing position or cooldown; changing target cannot bypass atmosphere", () => {
+  const ship = new ShipDynamics();
+  const earth = world.bodies.find((body) => body.id === "earth");
+  const place = (altitudeKm) => ship.position.fromArray(earth.position).add(new THREE.Vector3(0, 0, earth.radius + altitudeKm / world.unitsKm));
+  ship.target = "earth";
+  for (const altitude of [100, 1000, earth.radius * world.unitsKm * 3 - 0.01]) {
+    place(altitude);
+    const previous = ship.snapshot();
+    assert(ship.startWarp());
+    assert.equal(ship.warpPhase, "ready");
+    assert.deepEqual(ship.snapshot(), previous);
+  }
+  place(earth.radius * world.unitsKm * 3 + 1);
+  assert.equal(ship.startWarp(), null);
+  ship.cancelWarp();
+  for (let i = 0; i < 50; i++) ship.step(0.05, emptyInput());
+  place(50);
+  ship.target = "mars";
+  assert.match(ship.startWarp(), /大气层/);
+  assert.equal(ship.warpPhase, "ready");
+});
+
+test("near planets and in atmosphere only the orbital engine works, even with boost, assistance off and restored high speeds", () => {
+  const ship = new ShipDynamics();
+  const earth = world.bodies.find((body) => body.id === "earth");
+  for (const [altitude, atmosphere] of [[50, true], [1000, false]]) {
+    ship.position.fromArray(earth.position).add(new THREE.Vector3(earth.radius + altitude / world.unitsKm, 0, 0));
+    ship.velocity.set(0, 0, -50000 / world.unitsKm);
+    ship.assist = false;
+    assert.equal(ship.environment.atmospheric, atmosphere);
+    assert.equal(ship.engine.id, "orbital");
+    const restored = new ShipDynamics();
+    assert(restored.restore(ship.snapshot()));
+    assert(restored.velocity.length() * world.unitsKm <= 100 + 1e-8);
+    for (let i = 0; i < 20; i++) {
+      ship.step(0.05, { ...emptyInput(), throttle: 1, boost: true });
+      assert.equal(ship.engine.id, "orbital");
+      assert(ship.velocity.length() * world.unitsKm <= 100 + 1e-8);
+    }
+  }
+  const threshold = Math.max(world.flightSafety.nearSurfaceMinKm, earth.radius * world.unitsKm * world.flightSafety.nearSurfaceRadiusFactor);
+  ship.position.fromArray(earth.position).add(new THREE.Vector3(earth.radius + (threshold + 1) / world.unitsKm, 0, 0));
+  ship.orientation.identity();
+  ship.velocity.set(0, 0, -10000 / world.unitsKm);
+  assert.equal(ship.engine.id, "interstellar");
+  ship.step(0.05, { ...emptyInput(), throttle: 1, boost: true });
+  assert(ship.velocity.length() * world.unitsKm > 10000);
+});
+
+test("a long frame cannot skip a planet safety zone and slow frame integration retains elapsed time", () => {
+  const ship = new ShipDynamics();
+  const earth = world.bodies.find((body) => body.id === "earth");
+  ship.position.fromArray(earth.position).add(new THREE.Vector3(earth.radius + 4000 / world.unitsKm, 0, 0));
+  ship.velocity.set(-50000 / world.unitsKm, 0, 0);
+  ship.assist = false;
+  ship.step(0.25, emptyInput());
+  assert.equal(ship.elapsed, 0.25);
+  assert(ship.position.distanceTo(new THREE.Vector3().fromArray(earth.position)) > earth.radius);
+  assert(ship.velocity.length() * world.unitsKm <= 100 + 1e-8);
+  const a = new ShipDynamics(), b = new ShipDynamics();
+  a.position.set(1e6, 0, 0); b.position.copy(a.position);
+  const input = { ...emptyInput(), throttle: 1, yaw: 0.7 };
+  a.step(0.25, input);
+  for (let i = 0; i < 5; i++) b.step(0.05, input);
+  assert(a.position.distanceTo(b.position) < 1e-10);
+  assert(a.orientation.angleTo(b.orientation) < 1e-7);
+});
+
+test("assisted flight follows the heading, turns ease out, and S brakes before reversing", () => {
+  const assisted = new ShipDynamics(), inertial = new ShipDynamics();
+  for (const ship of [assisted, inertial]) {
+    ship.position.set(1e6, 0, 0);
+    ship.orientation.identity();
+    ship.velocity.set(0, 0, -1000 / world.unitsKm);
+  }
+  inertial.assist = false;
+  for (let i = 0; i < 30; i++) {
+    assisted.step(0.05, { ...emptyInput(), yaw: 0.7 });
+    inertial.step(0.05, { ...emptyInput(), yaw: 0.7 });
+  }
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(assisted.orientation);
+  assert(assisted.velocity.clone().normalize().dot(forward) > 0.95);
+  assert(inertial.velocity.clone().normalize().dot(forward) < 0.5);
+  const turn = assisted.angularVelocity.length();
+  assisted.step(0.05, emptyInput());
+  assert(assisted.angularVelocity.length() > 0 && assisted.angularVelocity.length() < turn);
+  for (let i = 0; i < 30; i++) assisted.step(0.05, emptyInput());
+  assert(assisted.angularVelocity.length() < 1e-5);
+  assisted.orientation.identity();
+  assisted.velocity.set(0, 0, -1000 / world.unitsKm);
+  assisted.step(0.25, { ...emptyInput(), throttle: -1 });
+  assert(assisted.velocity.z < 0 && assisted.velocity.length() * world.unitsKm < 600);
+});
+
+test("target projection uses the current camera turn and places off-screen and behind targets at screen edges", () => {
+  const camera = new THREE.PerspectiveCamera(60, 2, 0.01, 200);
+  const target = new THREE.Vector3(0, 0, -10);
+  let projected = projectFlightTarget(target, camera);
+  assert.equal(projected.targetX, 50); assert.equal(projected.targetY, 50);
+  assert(projected.inView);
+  camera.rotation.y = 0.2;
+  projected = projectFlightTarget(target, camera);
+  assert(projected.inView && projected.targetX > 55);
+  camera.rotation.y = 0;
+  for (const target of [new THREE.Vector3(100, 20, -10), new THREE.Vector3(0, 0, 10), new THREE.Vector3(-10, 2, 10)]) {
+    const marker = projectFlightTarget(target, camera);
+    assert.equal(marker.inView, false);
+    assert(Number.isFinite(marker.angle));
+    assert(marker.targetX >= 6 - 1e-9 && marker.targetX <= 94 + 1e-9);
+    assert(marker.targetY >= 14 - 1e-9 && marker.targetY <= 86 + 1e-9);
+    assert(Math.abs(marker.targetX - 50) >= 43.99 || Math.abs(marker.targetY - 50) >= 35.99);
+  }
 });

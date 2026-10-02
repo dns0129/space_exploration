@@ -8,6 +8,7 @@ export class FlightControls {
   private pointer: number | null = null;
   private lastX = 0;
   private lastY = 0;
+  private steering = false;
   private canvas: HTMLCanvasElement;
   private cleanups: (() => void)[] = [];
   constructor(canvas: HTMLCanvasElement) {
@@ -62,18 +63,28 @@ export class FlightControls {
       canvas.setPointerCapture(e.pointerId);
     }) as EventListener);
     on(canvas, "pointermove", ((e: PointerEvent) => {
+      if (e.pointerType === "mouse") {
+        const bounds = canvas.getBoundingClientRect();
+        this.mouseX = Math.max(-1, Math.min(1, (e.clientX - bounds.left - bounds.width / 2) / (bounds.width * 0.35)));
+        this.mouseY = Math.max(-1, Math.min(1, (e.clientY - bounds.top - bounds.height / 2) / (bounds.height * 0.35)));
+        this.steering = true;
+        return;
+      }
       if (this.pointer !== e.pointerId) return;
-      this.mouseX += (e.clientX - this.lastX) * 0.003;
-      this.mouseY += (e.clientY - this.lastY) * 0.003;
-      this.lastX = e.clientX;
-      this.lastY = e.clientY;
+      this.mouseX = Math.max(-1, Math.min(1, (e.clientX - this.lastX) / 80));
+      this.mouseY = Math.max(-1, Math.min(1, (e.clientY - this.lastY) / 80));
+      this.steering = true;
     }) as EventListener);
     const stop = ((e: PointerEvent) => {
-      if (this.pointer === e.pointerId) this.pointer = null;
+      if (this.pointer === e.pointerId) {
+        this.pointer = null;
+        if (e.pointerType !== "mouse") this.centerSteering();
+      }
     }) as EventListener;
     on(canvas, "pointerup", stop);
     on(canvas, "pointercancel", stop);
     on(canvas, "lostpointercapture", stop);
+    on(canvas, "pointerleave", (() => { if (this.pointer === null) this.centerSteering(); }) as EventListener);
     document
       .querySelectorAll<HTMLButtonElement>("[data-flight-input]")
       .forEach((button) => {
@@ -94,6 +105,10 @@ export class FlightControls {
       });
   }
   read(): FlightInput {
+    if (document.querySelector("dialog[open]")) {
+      this.clear();
+      return emptyInput();
+    }
     const has = (...keys: string[]) =>
       keys.some((k) => this.keys.has(k) || this.touch.has(k));
     const value = (positive: string, negative: string) =>
@@ -108,18 +123,24 @@ export class FlightControls {
       roll: value("KeyQ", "KeyE"),
       boost: has("ShiftLeft", "ShiftRight"),
       brake: has("Space"),
-      mouseX: this.mouseX,
-      mouseY: this.mouseY,
+      mouseX: this.deadzone(this.mouseX),
+      mouseY: this.deadzone(this.mouseY),
     };
+    return input;
+  }
+  private deadzone(value: number) {
+    return Math.sign(value) * Math.max(0, (Math.abs(value) - 0.08) / 0.92);
+  }
+  get aim() { return { x: this.mouseX, y: this.mouseY, active: this.steering }; }
+  private centerSteering() {
     this.mouseX = 0;
     this.mouseY = 0;
-    return input;
+    this.steering = false;
   }
   clear() {
     this.keys.clear();
     this.touch.clear();
-    this.mouseX = 0;
-    this.mouseY = 0;
+    this.centerSteering();
     this.pointer = null;
     document
       .querySelectorAll("[data-flight-input]")

@@ -15,6 +15,12 @@ export interface WorldConfig {
   auKm: number;
   cruiseSpeed: number;
   boostSpeed: number;
+  flightSafety: {
+    nearSurfaceMinKm: number;
+    nearSurfaceRadiusFactor: number;
+    warpTargetMinKm: number;
+    warpTargetRadiusFactor: number;
+  };
   engines: {
     id: "orbital" | "planetary" | "interstellar";
     name: string;
@@ -24,7 +30,7 @@ export interface WorldConfig {
     boostAccelerationKm: number;
   }[];
   warp: { chargeSeconds: number; travelSeconds: number; arrivalSeconds: number; cooldownSeconds: number };
-  bodies: { id: BodyId; radius: number; position: number[] }[];
+  bodies: { id: BodyId; radius: number; position: number[]; atmosphereKm?: number }[];
 }
 export const world: WorldConfig;
 export function validateFlightState(value: unknown): FlightState | null;

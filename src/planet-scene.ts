@@ -8,6 +8,8 @@ import { ShipDynamics } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
 import { createShip } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
+import { projectFlightTarget } from "./flight-target";
+import type { FlightTargetStats } from "./flight-target";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
 
 export type View = "overview" | "close" | "night";
@@ -18,6 +20,8 @@ export interface SceneStats {
 
 export interface FlightStats {
   engine: ShipDynamics["engine"];
+  environment: ShipDynamics["environment"];
+  warpBlockReason: string | null;
   warpPhase: ShipDynamics["warpPhase"];
   warpProgress: number;
   speedKm: number;
@@ -29,9 +33,14 @@ export interface FlightStats {
   elapsed: number;
   boosting: boolean;
   collision: BodyId | null;
-  targetX: number;
-  targetY: number;
-  inView: boolean;
+}
+export interface FlightTrackingStats extends FlightTargetStats {
+  target: BodyId;
+  aimX: number;
+  aimY: number;
+  steering: boolean;
+  width: number;
+  height: number;
 }
 
 const surfaceVertex = /* glsl */ `
@@ -128,6 +137,10 @@ export class SolarScene {
   private readonly flightSun = new THREE.PointLight(0xfff3e5, 2.5, 0, 0);
   private readonly observeSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
   private readonly ship = createShip();
+  private readonly shipScene = new THREE.Scene();
+  private readonly shipCamera = new THREE.PerspectiveCamera(58, 1, 0.01, 200);
+  private readonly shipSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
+  private readonly shipScale = 0.000015 * 0.16;
   private readonly warpEffect = createWarpEffect();
   private galaxy?: THREE.Texture;
   private spacePromise?: Promise<void>;
@@ -141,6 +154,14 @@ export class SolarScene {
   private flightPaused = false;
   private flightMetrics = 0;
   private flightHandler?: (stats: FlightStats) => void;
+  private flightTargetHandler?: (stats: FlightTrackingStats) => void;
+  private flightWidth = 1;
+  private flightHeight = 1;
+  private readonly flightRelative = new THREE.Vector3();
+  private readonly flightForward = new THREE.Vector3();
+  private flightBoost = 0;
+  private readonly bankRotation = new THREE.Quaternion();
+  private readonly flightAxis = new THREE.Vector3(0, 0, 1);
   private readonly models = new Map<BodyId, PlanetModel>();
   private readonly sunDirection = new THREE.Vector3(-3, 1.8, 4).normalize();
   private readonly textures = new Set<THREE.Texture>();
@@ -209,8 +230,9 @@ export class SolarScene {
     this.observeSun.position.set(-3, 1.8, 4);
     this.flightRoot.visible = false;
     this.flightSun.visible = false;
-    this.flightRoot.add(
+    this.shipScene.add(
       this.ship.group,
+      this.shipSun,
       new THREE.HemisphereLight(0xc1e6ee, 0x233643, 1.2),
     );
     this.scene.add(
@@ -473,6 +495,8 @@ export class SolarScene {
   private readonly resize = () => {
     if (this.destroyed) return;
     const { width, height } = this.container.getBoundingClientRect();
+    this.flightWidth = width;
+    this.flightHeight = height;
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
@@ -489,6 +513,22 @@ export class SolarScene {
     if (this.flying) {
       this.animateFlight(delta, time);
       this.renderer.render(this.scene, this.camera);
+      if (this.ship.group.visible) {
+        // Meter-scale hull details need their own depth range in an AU-scale world.
+        const camera = this.shipCamera;
+        if (camera.aspect !== this.camera.aspect || camera.fov !== this.camera.fov) {
+          camera.aspect = this.camera.aspect;
+          camera.fov = this.camera.fov;
+          camera.updateProjectionMatrix();
+        }
+        camera.position.copy(this.camera.position).multiplyScalar(1 / this.shipScale);
+        camera.quaternion.copy(this.camera.quaternion);
+        this.shipSun.position.copy(this.flightSun.position).normalize().multiplyScalar(10);
+        this.renderer.autoClear = false;
+        this.renderer.clearDepth();
+        this.renderer.render(this.shipScene, camera);
+        this.renderer.autoClear = true;
+      }
       return;
     }
     if (!this.paused && this.currentModel) {
@@ -570,6 +610,8 @@ export class SolarScene {
     }
     this.dynamics = new ShipDynamics(config);
     this.dynamics.jump(id);
+    this.flightBoost = 0;
+    this.flightMetrics = 0;
     this.flightPaused = false;
     this.flying = true;
     this.planet.visible = false;
@@ -588,7 +630,7 @@ export class SolarScene {
     this.flightControls = new FlightControls(this.renderer.domElement);
     this.renderer.domElement.setAttribute(
       "aria-label",
-      "自由驾驶飞船：W/S 推力，拖动或方向键转向，空格刹车",
+      "自由驾驶飞船：W/S 推力，鼠标偏移或触屏拖动转向，空格刹车",
     );
     this.updateFlightCamera(1);
     this.renderer.compile(this.scene, this.camera);
@@ -619,6 +661,9 @@ export class SolarScene {
   }
   setFlightHandler(handler: (stats: FlightStats) => void) {
     this.flightHandler = handler;
+  }
+  setFlightTargetHandler(handler: NonNullable<SolarScene["flightTargetHandler"]>) {
+    this.flightTargetHandler = handler;
   }
   setFlightPaused(paused: boolean) {
     this.flightPaused = paused;
@@ -666,26 +711,27 @@ export class SolarScene {
       model.surface.geometry = angularRadius < 0.005 ? this.distantSphere : this.flightGeometries.get(model.surface)!;
     }
     this.flightSun.position.fromArray(ship.config.bodies[0].position).sub(ship.position);
-    const scale = 0.000015; // Approximately 25 m hull, with a 200 m chase camera.
+    const scale = 0.000015; // Approximately 25 m hull with a close chase camera.
     this.ship.group.position.set(0, 0, 0);
-    this.ship.group.scale.setScalar(scale * 0.16);
-    this.ship.group.quaternion.copy(ship.orientation);
+    this.ship.group.scale.setScalar(1);
+    const attitude = ship.orientation.clone().multiply(this.bankRotation.setFromAxisAngle(this.flightAxis, ship.bank));
+    this.ship.group.quaternion.copy(attitude);
     this.ship.group.visible = ship.camera === "chase" && !ship.warping;
-    const offset = new THREE.Vector3(0, ship.camera === "chase" ? 0.65 : 0, ship.camera === "chase" ? 2.4 : 0).multiplyScalar(scale).applyQuaternion(ship.orientation);
+    const offset = new THREE.Vector3(0, ship.camera === "chase" ? 0.19 : 0, ship.camera === "chase" ? 0.72 + this.flightBoost * 0.1 : 0).multiplyScalar(scale).applyQuaternion(ship.orientation);
     if (ship.camera === "chase") {
       this.camera.position.lerp(offset, blend);
-      this.camera.up.set(0, 1, 0).applyQuaternion(ship.orientation);
+      this.camera.up.set(0, 1, 0).applyQuaternion(attitude);
       this.camera.lookAt(new THREE.Vector3(0, 0, -5 * scale).applyQuaternion(ship.orientation));
     } else {
       this.camera.position.copy(offset);
-      this.camera.quaternion.copy(ship.orientation);
+      this.camera.quaternion.slerp(attitude, blend);
     }
     const strength = ship.warpPhase === "transit" ? Math.sin(ship.warpProgress * Math.PI) * 0.65 + 0.35 : ship.warpPhase === "charging" ? ship.warpProgress * 0.15 : ship.warpPhase === "arrival" ? (1 - ship.warpProgress) * 0.35 : 0;
     this.warpEffect.mesh.visible = strength > 0;
     this.warpEffect.material.uniforms.strength.value = strength;
     this.warpEffect.material.uniforms.time.value = ship.elapsed;
     this.warpEffect.material.uniforms.aspect.value = this.camera.aspect;
-    const fov = 58 + strength * 25;
+    const fov = 58 + strength * 25 + this.flightBoost * 9;
     if (Math.abs(this.camera.fov - fov) > 0.01) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
@@ -703,46 +749,35 @@ export class SolarScene {
           for (const uniform of model.timeUniforms) uniform.value += delta;
         }
     }
-    this.ship.exhaust.scale.z = input.boost
-      ? 2.4
-      : input.throttle > 0
-        ? 1
-        : 0.22;
+    if (!this.flightPaused) this.flightBoost = THREE.MathUtils.lerp(this.flightBoost,
+      input.boost && ship.velocity.length() > 0 && !ship.warping ? 1 : 0, 1 - Math.exp(-delta * 4));
+    const exhaust = this.flightPaused || ship.warping ? 0.1 : input.boost && input.throttle > 0 ? 2.4 : input.throttle > 0 ? 1 : 0.22;
+    this.ship.exhaust.scale.z = THREE.MathUtils.lerp(this.ship.exhaust.scale.z, exhaust, 1 - Math.exp(-delta * 10));
     this.updateFlightCamera(1 - Math.exp(-delta * 9));
+    const target = ship.config.bodies.find((b) => b.id === ship.target)!;
+    this.flightRelative.fromArray(target.position).sub(ship.position);
+    const tracking = projectFlightTarget(this.flightRelative, this.camera);
+    const aim = this.flightControls!.aim;
+    this.flightTargetHandler?.({ ...tracking, target: ship.target,
+      aimX: aim.x, aimY: aim.y, steering: aim.active && !this.flightPaused,
+      width: this.flightWidth, height: this.flightHeight });
     if (time - this.flightMetrics < 150) return;
     this.flightMetrics = time;
-    let nearest = ship.config.bodies[0],
-      altitude = Infinity;
-    for (const body of ship.config.bodies) {
-      const height =
-        ship.position.distanceTo(new THREE.Vector3().fromArray(body.position)) -
-        body.radius;
-      if (height < altitude) {
-        nearest = body;
-        altitude = height;
-      }
-    }
-    const target = ship.config.bodies.find((b) => b.id === ship.target)!;
-    const center = new THREE.Vector3().fromArray(target.position);
-    const relative = center.clone().sub(ship.position);
-    const direction = relative.clone().sub(this.camera.position).normalize();
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(
+    const environment = ship.environment;
+    const forward = this.flightForward.set(0, 0, -1).applyQuaternion(
       this.camera.quaternion,
     );
-    const projected = relative.clone().project(this.camera);
-    const inView =
-      forward.dot(direction) > 0 &&
-      Math.abs(projected.x) < 1 &&
-      Math.abs(projected.y) < 1;
     this.flightHandler?.({
       engine: ship.engine,
+      environment,
+      warpBlockReason: ship.warpBlockReason,
       warpPhase: ship.warpPhase,
       warpProgress: ship.warpProgress,
       speedKm: ship.warping ? ship.warpSpeedKm : ship.velocity.length() * ship.config.unitsKm,
-      altitudeKm: Math.max(0, altitude) * ship.config.unitsKm,
-      nearest: nearest.id,
+      altitudeKm: environment.altitudeKm,
+      nearest: environment.body.id,
       distanceKm:
-        Math.max(0, ship.position.distanceTo(center) - target.radius) *
+        Math.max(0, this.flightRelative.length() - target.radius) *
         ship.config.unitsKm,
       target: ship.target,
       heading:
@@ -751,9 +786,6 @@ export class SolarScene {
       elapsed: ship.elapsed,
       boosting: input.boost,
       collision: ship.collision,
-      targetX: (Math.max(-0.85, Math.min(0.85, projected.x)) + 1) * 50,
-      targetY: (1 - Math.max(-0.7, Math.min(0.7, projected.y))) * 50,
-      inView,
     });
   }
 
@@ -855,6 +887,7 @@ export class SolarScene {
       }
     };
     this.scene.traverse(collect);
+    this.shipScene.traverse(collect);
     this.models.forEach((model) => model.group.traverse(collect));
     geometries.forEach((geometry) => geometry.dispose());
     materials.forEach((material) => material.dispose());

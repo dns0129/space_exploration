@@ -9,6 +9,12 @@
     { "id": "planetary", "name": "行星引擎", "minSpeedKm": 100, "maxSpeedKm": 10000, "accelerationKm": 2000, "boostAccelerationKm": 6000 },
     { "id": "interstellar", "name": "星际引擎", "minSpeedKm": 10000, "maxSpeedKm": 50000, "accelerationKm": 10000, "boostAccelerationKm": 30000 }
   ],
+  "flightSafety": {
+    "nearSurfaceMinKm": 2000,
+    "nearSurfaceRadiusFactor": 0.5,
+    "warpTargetMinKm": 2000,
+    "warpTargetRadiusFactor": 3
+  },
   "warp": {
     "chargeSeconds": 1.6,
     "travelSeconds": 7,
@@ -36,6 +42,7 @@
     },
     {
       "id": "venus",
+      "atmosphereKm": 170,
       "radius": 0.9498979752001256,
       "position": [
         -8491.602574164177,
@@ -45,6 +52,7 @@
     },
     {
       "id": "earth",
+      "atmosphereKm": 90,
       "radius": 1.0,
       "position": [
         1.43780060831906e-12,
@@ -54,6 +62,7 @@
     },
     {
       "id": "mars",
+      "atmosphereKm": 95,
       "radius": 0.5320200910375137,
       "position": [
         27402.53156283394,
@@ -63,6 +72,7 @@
     },
     {
       "id": "jupiter",
+      "atmosphereKm": 1960,
       "radius": 10.973316590802073,
       "position": [
         -107905.03779625811,
@@ -72,6 +82,7 @@
     },
     {
       "id": "saturn",
+      "atmosphereKm": 1630,
       "radius": 9.14016637890441,
       "position": [
         141599.5574587886,
@@ -81,6 +92,7 @@
     },
     {
       "id": "uranus",
+      "atmosphereKm": 710,
       "radius": 3.980850729869722,
       "position": [
         -411891.2772058344,
@@ -90,6 +102,7 @@
     },
     {
       "id": "neptune",
+      "atmosphereKm": 690,
       "radius": 3.864699419243447,
       "position": [
         286975.652847281,

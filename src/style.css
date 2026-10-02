@@ -1557,6 +1557,7 @@ dialog h2 {
 }
 .flight-mode .space-stage {
   left: 0;
+  top: 0;
   bottom: 0;
 }
 .flight-mode canvas {
@@ -1691,6 +1692,11 @@ dialog h2 {
 }
 .flight-marker {
   position: absolute;
+  left: 0;
+  top: 0;
+  width: 44px;
+  height: 44px;
+  will-change: transform;
   transform: translate(-50%, -50%);
   font-size: 9px;
   color: #a5e5e1;
@@ -1702,15 +1708,40 @@ dialog h2 {
   height: 44px;
   border: 1px solid #b3f0e382;
   transform: rotate(45deg);
-  margin: 0 auto 18px;
+  margin: 0;
 }
+.flight-marker span {
+  position: absolute;
+  top: calc(100% + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.flight-aim {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #e8c49a;
+  border-radius: 50%;
+  box-shadow: 0 0 14px #e8c49a44;
+  will-change: transform;
+}
+.canvas-host[data-mode="flight"] canvas { cursor: crosshair; }
 .flight-marker.offscreen {
-  opacity: 0.4;
+  opacity: 0.7;
+  width: 18px;
+  height: 18px;
 }
 .flight-marker.offscreen i {
-  width: 12px;
-  height: 12px;
-  margin-bottom: 10px;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  background: #a5e5e1;
+  clip-path: polygon(50% 0, 100% 100%, 50% 72%, 0 100%);
+  transform: rotate(var(--target-angle, 0deg));
 }
 .cockpit-frame {
   position: absolute;
