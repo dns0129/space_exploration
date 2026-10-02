@@ -1,4 +1,5 @@
 import "./style.css";
+import { watchSiteVersion } from "./site-version";
 import { FlightInterface } from "./flight-ui";
 import { SolarScene } from "./planet-scene";
 import type { View } from "./planet-scene";
@@ -27,11 +28,12 @@ const icons: Record<string, string> = {
 };
 const icon = (name: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
+const publicSite = import.meta.env.VITE_PUBLIC_SITE === "true";
 
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div class="observatory">
     <header class="header">
-      <a class="brand" href="#planet=earth" aria-label="远航首页">${icon("orbit")}<span>远航 <b>VOYAGER</b></span></a>
+      <a class="brand" href="${publicSite ? `${import.meta.env.BASE_URL}index.html` : "#planet=earth"}" aria-label="${publicSite ? "星际探索首页" : "远航首页"}">${icon("orbit")}<span>${publicSite ? "星际探索" : "远航"} <b>VOYAGER</b></span></a>
       <nav class="main-nav" aria-label="主导航"><button id="mode-observe" class="nav-active" aria-pressed="true">行星观测</button><button id="mode-flight" class="scene-control" aria-pressed="false" disabled>自由航行</button></nav>
       <div class="header-tools"><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
     </header>
@@ -336,6 +338,7 @@ document
     }),
   );
 $(".brand").addEventListener("click", (event) => {
+  if (publicSite) return;
   event.preventDefault();
   if (state.mode === "flight") {
     flight.target("earth");
@@ -480,4 +483,8 @@ $("#mode-observe").addEventListener("click", () => {
   if (flight.active) void start(state.body);
 });
 updatePause();
-void start();
+watchSiteVersion();
+void start().then(() => {
+  if (state.ready && new URLSearchParams(location.search).get("mode") === "flight")
+    $<HTMLButtonElement>("#mode-flight").click();
+});

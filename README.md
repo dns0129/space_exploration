@@ -1,4 +1,10 @@
-# 远航 VOYAGER
+# 星际探索 · 远航 VOYAGER
+
+网站源码和自动部署配置已加入仓库：每次推送到 `main`，GitHub Actions 构建首页与游戏并发布到 GitHub Pages。首次启用、在线存档和部署验证见 [网站发布说明](docs/WEBSITE.md)。公开地址在 Pages 启用且部署成功后为 `https://dns0129.github.io/space_exploration/`。
+
+![星际探索网站首页](docs/screenshots/site-desktop.png)
+
+[查看手机网站首页](docs/screenshots/site-mobile.png)。
 
 **阶段 04：写实太阳系与跃迁引擎。** 在一个连续的 3D 太阳系中驾驶飞船，环绕太阳和八颗行星，自由加速、平移、升降与翻滚；可使用座舱或外部视角。现在使用 4096 × 2048 银河全景与行星影像贴图，行星半径和平均日距保持真实比例。跃迁引擎提供蓄能、航道飞行、减速抵达和冷却；Node.js 后端保存航行状态，原有观测功能保留。
 
@@ -65,6 +71,8 @@ npm run dev -- --port 5173 --strictPort
 
 ```sh
 npm run build        # TypeScript 检查与生产构建，输出 dist/
+npm run build:site   # 网站首页和在线游戏，输出 dist-site/
+npm run test:site    # 部署路径下的桌面/手机网页、驾驶、存档和版本更新验证
 npm start            # 后端同时提供 dist/ 游戏页面与 API，默认本机 3000
 npm test             # 桌面与移动浏览器功能和实际渲染验证
 npm run test:server  # HTTP、持久存档、输入验证和航行动力学检查
@@ -106,6 +114,8 @@ npm run test:offline # 导出并验证断网驾驶、跃迁、本机保存与恢
 云浏览器策略阻止 `file://` 导航；离线验证在普通浏览器来源中载入导出的完整 HTML，再断网测试，不绕过文件策略，也未验证在云浏览器中双击文件的系统行为。
 
 - `src/planet-scene.ts`：共用渲染器、观测与连续航行场景、相机、模型及资源管理。
+- `site.html`、`src/site.ts`、`src/site.css`：网站首页、目的地导航与驾驶入口。
+- `src/site-version.ts`：已打开页面的新部署提示和刷新。
 - `src/planet-models.ts`：天体着色器，支持航行世界中的位置与尺寸。
 - `src/ship-dynamics.ts`：推力、六轴运动、惯性、防撞、跃迁阶段和路线避让。
 - `src/flight-controls.ts`、`src/flight-ui.ts`：键盘、鼠标、触屏驾驶与仪表。

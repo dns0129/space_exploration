@@ -2,6 +2,8 @@
 
 The texture images are included locally to avoid external requests during rendering. The five original Earth maps are 4096 × 2048 pixels. Credit and ownership of the imagery remain with their respective creators; no exclusive ownership of third-party imagery is claimed.
 
+The website posters `public/site/earth.png`, `mars.png`, and `saturn.png` are original 900 × 900 transparent screenshots of this application's planet renderer using the textures listed below. They retain the underlying imagery credits and applicable licenses; they are not additional stock imagery. The site background uses the same `milky-way-4k.jpg` panorama. The deployed website includes this document and `THIRD_PARTY_NOTICES.md` under `legal/`.
+
 | Local file         | Upstream file and source                                                                                                                 |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `earth-day.jpg`    | `example/img/earth-blue-marble.jpg`, [vasturiano/three-globe](https://github.com/vasturiano/three-globe), NASA Blue Marble Earth imagery |

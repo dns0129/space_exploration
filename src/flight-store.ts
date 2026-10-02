@@ -5,7 +5,7 @@ export class FlightStore {
   online = false;
   async connect(): Promise<WorldConfig> {
     this.online = false;
-    if (!["http:", "https:"].includes(location.protocol) || !navigator.onLine)
+    if (import.meta.env.VITE_PUBLIC_SITE === "true" || !["http:", "https:"].includes(location.protocol) || !navigator.onLine)
       return world;
     try {
       const response = await fetch("/api/world", {
