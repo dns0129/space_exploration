@@ -6,7 +6,7 @@ import { PNG } from "pngjs";
 import { createServer } from "node:http";
 
 const html = await readFile(
-  new URL("../dist-standalone/voyager-flight.html", import.meta.url),
+  new URL("../dist-standalone/voyager-warp.html", import.meta.url),
   "utf8",
 );
 // Give the offline document an ordinary origin so browser local storage can be tested.
@@ -87,7 +87,7 @@ try {
         document
           .querySelector("#flight-speed")
           ?.textContent.replaceAll(",", ""),
-      ) > 700,
+      ) > 5,
   );
   await page.keyboard.up("w");
   await page.getByRole("button", { name: "暂停航行", exact: true }).click();
@@ -102,7 +102,9 @@ try {
   );
   assert(saved.elapsed > 0 && Math.hypot(...saved.velocity) > 0);
   await page.locator('button[data-body="saturn"]').click();
-  await page.getByRole("button", { name: "跃迁至目标" }).click();
+  await page.locator("#flight-jump").click();
+  await page.locator('#warp-engine[data-phase="transit"]').waitFor();
+  await page.locator('#warp-engine[data-phase="ready"]').waitFor({timeout:45000});
   await page.waitForFunction(
     () => document.querySelector("#flight-nearest")?.textContent === "土星",
   );

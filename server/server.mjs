@@ -176,7 +176,7 @@ if (
   const standalone = process.argv.includes("--standalone");
   const server = createVoyagerServer({
     staticRoot: standalone ? project : resolve(project, "dist"),
-    indexFile: standalone ? "voyager-flight.html" : "index.html",
+    indexFile: standalone ? "voyager-warp.html" : "index.html",
     serveOnlyIndex: standalone,
     dataDir: process.env.VOYAGER_DATA_DIR ?? resolve(project, "data"),
   });

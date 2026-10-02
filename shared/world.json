@@ -1,19 +1,98 @@
 {
-  "version": 1,
+  "version": 2,
   "unitsKm": 6371,
-  "acceleration": 3,
-  "boostAcceleration": 18,
-  "cruiseSpeed": 12,
-  "boostSpeed": 60,
+  "auKm": 149597870.7,
+  "acceleration": 0.004,
+  "boostAcceleration": 0.02,
+  "cruiseSpeed": 0.03,
+  "boostSpeed": 0.3,
+  "warp": {
+    "chargeSeconds": 1.6,
+    "travelSeconds": 7,
+    "arrivalSeconds": 1.3,
+    "cooldownSeconds": 2
+  },
   "bodies": [
-    { "id": "sun", "radius": 8, "position": [0, 0, 0] },
-    { "id": "mercury", "radius": 0.4, "position": [14, 0, 13] },
-    { "id": "venus", "radius": 0.95, "position": [-28, 1, 4] },
-    { "id": "earth", "radius": 1, "position": [0, 0, 42] },
-    { "id": "mars", "radius": 0.58, "position": [41, 1, -38] },
-    { "id": "jupiter", "radius": 5.4, "position": [-79, -3, -47] },
-    { "id": "saturn", "radius": 4.6, "position": [78, 4, 96] },
-    { "id": "uranus", "radius": 2.5, "position": [-147, 5, 65] },
-    { "id": "neptune", "radius": 2.45, "position": [80, -4, -180] }
+    {
+      "id": "sun",
+      "radius": 109.1979281117564,
+      "position": [
+        0.0,
+        0,
+        0.0
+      ]
+    },
+    {
+      "id": "mercury",
+      "radius": 0.3829383142363836,
+      "position": [
+        7444.499036938099,
+        0,
+        5212.6943438589815
+      ]
+    },
+    {
+      "id": "venus",
+      "radius": 0.9498979752001256,
+      "position": [
+        -8491.602574164177,
+        0,
+        14707.887096135028
+      ]
+    },
+    {
+      "id": "earth",
+      "radius": 1.0,
+      "position": [
+        1.43780060831906e-12,
+        0,
+        23481.065876628472
+      ]
+    },
+    {
+      "id": "mars",
+      "radius": 0.5320200910375137,
+      "position": [
+        27402.53156283394,
+        0,
+        -22993.45412769775
+      ]
+    },
+    {
+      "id": "jupiter",
+      "radius": 10.973316590802073,
+      "position": [
+        -107905.03779625811,
+        0,
+        -57374.1263200588
+      ]
+    },
+    {
+      "id": "saturn",
+      "radius": 9.14016637890441,
+      "position": [
+        141599.5574587886,
+        0,
+        174860.89087247965
+      ]
+    },
+    {
+      "id": "uranus",
+      "radius": 3.980850729869722,
+      "position": [
+        -411891.2772058344,
+        0,
+        183385.8118404076
+      ]
+    },
+    {
+      "id": "neptune",
+      "radius": 3.864699419243447,
+      "position": [
+        286975.652847281,
+        0,
+        -644557.8695101643
+      ]
+    }
   ]
 }

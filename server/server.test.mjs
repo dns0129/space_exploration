@@ -161,8 +161,8 @@ test("thrust, six-axis orientation, inertia and braking change the actual ship s
     roll: 0.5,
   };
   for (let i = 0; i < 30; i++) ship.step(0.05, input);
-  assert(ship.position.distanceTo(start) > 0.1);
-  assert(ship.velocity.length() > 1);
+  assert(ship.position.distanceTo(start) > 0.001);
+  assert(ship.velocity.length() > 0.003);
   assert(ship.orientation.angleTo(new ShipDynamics().orientation) > 0.2);
   const speed = ship.velocity.length();
   for (let i = 0; i < 15; i++)
@@ -171,14 +171,16 @@ test("thrust, six-axis orientation, inertia and braking change the actual ship s
   assert(validateFlightState(ship.snapshot()));
 });
 test("continuous collision protection stops a fast ship before it tunnels through Earth", () => {
-  const ship = new ShipDynamics();
-  ship.position.set(0, 0, 39);
-  ship.velocity.set(0, 0, 60);
+  const ship = new ShipDynamics({ ...world, boostSpeed: 120 });
+  const earth = world.bodies.find((body) => body.id === "earth");
+  const center = { x: earth.position[0], y: earth.position[1], z: earth.position[2] };
+  ship.position.set(center.x, center.y, center.z - 3);
+  ship.velocity.set(0, 0, 120);
   ship.assist = false;
   ship.step(0.05, emptyInput());
   assert.equal(ship.collision, "earth");
   assert.equal(ship.velocity.length(), 0);
-  assert(ship.position.distanceTo({ x: 0, y: 0, z: 42 }) >= 1.28);
+  assert(ship.position.distanceTo(center) >= earth.radius * 1.002);
   const saved = ship.snapshot();
   const restored = new ShipDynamics();
   assert(restored.restore(saved));
@@ -187,4 +189,71 @@ test("continuous collision protection stops a fast ship before it tunnels throug
     restored.restore({ ...saved, position: [Infinity, 0, 0] }),
     false,
   );
+});
+
+test("world uses real solar radii and astronomical distances; compressed saves migrate safely", () => {
+  const earth = world.bodies.find((b) => b.id === "earth");
+  const sun = world.bodies.find((b) => b.id === "sun");
+  const neptune = world.bodies.find((b) => b.id === "neptune");
+  assert.equal(earth.radius * world.unitsKm, 6371);
+  assert.equal(sun.radius * world.unitsKm, 695700);
+  assert(Math.abs(Math.hypot(...earth.position) * world.unitsKm - world.auKm) < 1);
+  assert(Math.abs(Math.hypot(...neptune.position) * world.unitsKm - 4495.1e6) < 1);
+  const legacy = { ...state(), version: 1, position: [0, 0, 38.2], velocity: [0, 0, -30] };
+  const migrated = validateFlightState(legacy);
+  assert.equal(migrated.version, 2);
+  assert(Math.abs(migrated.position[2] - earth.position[2] + 3.8) < 1e-8);
+  assert.deepEqual(migrated.velocity, [0, 0, 0]);
+});
+
+test("warp charges, moves continuously, arrives safely and cools down at all nine bodies", () => {
+  const ship = new ShipDynamics();
+  for (const target of ["mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "sun", "earth"]) {
+    ship.target = target;
+    const departure = ship.position.clone();
+    assert.equal(ship.startWarp(), null);
+    assert.equal(ship.warpPhase, "charging");
+    assert.equal(ship.startWarp(), "跃迁引擎正在工作或冷却");
+    ship.step(0.05, emptyInput());
+    assert(ship.position.equals(departure));
+    let sawTransit = false, sawArrival = false, movedInTransit = false;
+    for (let i = 0; i < 300 && ship.warpPhase !== "ready"; i++) {
+      ship.step(0.05, emptyInput());
+      if (ship.warpPhase === "transit") {
+        sawTransit = true;
+        if (ship.position.distanceTo(departure) > 1) movedInTransit = true;
+      }
+      if (ship.warpPhase === "arrival") sawArrival = true;
+      for (const body of world.bodies) {
+        const distance = Math.hypot(...ship.position.toArray().map((n, axis) => n - body.position[axis]));
+        assert(distance > body.radius * (body.id === "sun" ? 1.24 : 1.002), `route intersects ${body.id}`);
+      }
+      assert(validateFlightState(ship.snapshot()));
+    }
+    assert(sawTransit && movedInTransit && sawArrival);
+    assert.equal(ship.warpPhase, "ready");
+    const expected = new ShipDynamics(); expected.jump(target);
+    assert(ship.position.distanceTo(expected.position) < 1e-8);
+    assert.equal(ship.velocity.length(), 0);
+  }
+});
+
+test("warp routes around the Sun and can be interrupted without losing the actual position", () => {
+  const ship = new ShipDynamics();
+  const mercury = world.bodies.find((b) => b.id === "mercury");
+  ship.position.fromArray(mercury.position).normalize().multiplyScalar(-14000);
+  ship.target = "mercury";
+  assert.equal(ship.startWarp(), null);
+  for (let i = 0; i < 100; i++) {
+    ship.step(0.05, emptyInput());
+    assert(ship.position.length() > world.bodies[0].radius * 1.24);
+  }
+  assert.equal(ship.warpPhase, "transit");
+  const midway = ship.position.clone();
+  ship.cancelWarp();
+  assert.equal(ship.warpPhase, "cooldown");
+  assert(ship.position.equals(midway));
+  const restored = new ShipDynamics();
+  assert(restored.restore(ship.snapshot()));
+  assert(restored.position.equals(midway));
 });

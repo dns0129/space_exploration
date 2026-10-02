@@ -1,6 +1,6 @@
 import type { BodyId } from "../src/solar-system";
 export interface FlightState {
-  version: 1;
+  version: 2;
   position: number[];
   velocity: number[];
   orientation: number[];
@@ -12,10 +12,12 @@ export interface FlightState {
 export interface WorldConfig {
   version: number;
   unitsKm: number;
+  auKm: number;
   acceleration: number;
   boostAcceleration: number;
   cruiseSpeed: number;
   boostSpeed: number;
+  warp: { chargeSeconds: number; travelSeconds: number; arrivalSeconds: number; cooldownSeconds: number };
   bodies: { id: BodyId; radius: number; position: number[] }[];
 }
 export const world: WorldConfig;

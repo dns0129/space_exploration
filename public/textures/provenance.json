@@ -1,0 +1,92 @@
+{
+  "milky-way-4k.jpg": {
+    "source": "https://github.com/Whitebee7/solarsystem/blob/235e72c02e825e0c8d0792ec0aa6be43e1a14f68/textures/8k_stars_milky_way.jpg",
+    "credit": "Solar System Scope",
+    "license": "CC-BY-4.0",
+    "changes": "8192x4096, resized to 4096x2048",
+    "width": 4096,
+    "height": 2048,
+    "sourceSha256": "1fd005ddd6d53364cc5106e0121b83fd3bca236b1503f6b51f5501d9d51eafaf",
+    "sha256": "2c8d81c5cd767244ad49c8bd97df7a47f925fc24384e23d5f6772983b5d75f8b"
+  },
+  "mercury-real.jpg": {
+    "source": "https://github.com/yamansdev/three.js-solar-system/blob/1a73e2921da8a7d8659ed159592932f8ce7a1d67/static/textures/2k_mercury.jpg",
+    "credit": "Solar System Scope",
+    "license": "CC-BY-4.0",
+    "changes": "unchanged",
+    "width": 2048,
+    "height": 1024,
+    "sourceSha256": "5a5c80607f643496bac9a631e71957def35ed788895f18b678ac849c2b38e48a",
+    "sha256": "5a5c80607f643496bac9a631e71957def35ed788895f18b678ac849c2b38e48a"
+  },
+  "mars-real.jpg": {
+    "source": "https://github.com/yamansdev/three.js-solar-system/blob/1a73e2921da8a7d8659ed159592932f8ce7a1d67/static/textures/2k_mars.jpg",
+    "credit": "Solar System Scope",
+    "license": "CC-BY-4.0",
+    "changes": "unchanged",
+    "width": 2048,
+    "height": 1024,
+    "sourceSha256": "2d187f3e77a98eaa8cea5f4cc722f633c122ef170b9e94ace6b5fb6cbc3f8e01",
+    "sha256": "2d187f3e77a98eaa8cea5f4cc722f633c122ef170b9e94ace6b5fb6cbc3f8e01"
+  },
+  "jupiter-real.jpg": {
+    "source": "https://github.com/CelestiaProject/CelestiaContent/blob/3ed5836133901114a9cb4a2ea35751b274a464a1/textures/hires/jupiter.jpg",
+    "credit": "Askaniy Anpilogov; NASA/JPL-Caltech/SSI/SWRI/MSSS/ASI/INAF/JIRAM; Björn Jónsson",
+    "license": "CC-BY-3.0",
+    "changes": "JPEG re-encoded at quality 92",
+    "width": 4096,
+    "height": 2048,
+    "sourceSha256": "82fcef5b104368879865601e446aecba81dfe13ad05d341f3c45e7beeed152d8",
+    "sha256": "43cc6e8402e35c7f0b316ad766ee6171495257dff05194a66be5646ee004d42c"
+  },
+  "saturn-real.jpg": {
+    "source": "https://github.com/CelestiaProject/CelestiaContent/blob/3ed5836133901114a9cb4a2ea35751b274a464a1/textures/hires/saturn.jpg",
+    "credit": "Askaniy Anpilogov; NASA/JPL-Caltech; Björn Jónsson",
+    "license": "CC-BY-3.0",
+    "changes": "unchanged",
+    "width": 4096,
+    "height": 2048,
+    "sourceSha256": "09086aa5cb7ff38a41a31477ad967e4fb0e9703b2cb7a23f2c0c0a78381f27c4",
+    "sha256": "09086aa5cb7ff38a41a31477ad967e4fb0e9703b2cb7a23f2c0c0a78381f27c4"
+  },
+  "neptune-real.jpg": {
+    "source": "https://github.com/CelestiaProject/CelestiaContent/blob/3ed5836133901114a9cb4a2ea35751b274a464a1/textures/hires/neptune.jpg",
+    "credit": "Askaniy Anpilogov; NASA/JPL-Caltech; Björn Jónsson; Karkoschka, E. (1994)",
+    "license": "CC-BY-3.0",
+    "changes": "unchanged",
+    "width": 4096,
+    "height": 2048,
+    "sourceSha256": "4de5541a2bfc5a90a86228483811c5d1653f3f5ecb1c29b7713b7f9015f68032",
+    "sha256": "4de5541a2bfc5a90a86228483811c5d1653f3f5ecb1c29b7713b7f9015f68032"
+  },
+  "uranus-real.jpg": {
+    "source": "https://github.com/Stellarium/stellarium/blob/f57342271c6047774f3b25991ba494600301c709/textures/uranus.png",
+    "credit": "Oleg Pluton (Helleformer)",
+    "license": "CC-BY-4.0",
+    "changes": "PNG converted to JPEG",
+    "width": 512,
+    "height": 256,
+    "sourceSha256": "d880997f883960079f230ef38c56d887681c5880eb08fafe5bcc77e10005c80b",
+    "sha256": "6f7bbf52c7a5c09e666ae70eba057e4e3191dd8b28e36cd8d082b5fea1016925"
+  },
+  "venus-real.jpg": {
+    "source": "https://github.com/Stellarium/stellarium/blob/f57342271c6047774f3b25991ba494600301c709/textures/venus.png",
+    "credit": "Oleg Pluton (Helleformer)",
+    "license": "CC-BY-4.0",
+    "changes": "PNG converted to JPEG",
+    "width": 512,
+    "height": 256,
+    "sourceSha256": "d434051d5b180d509b7b7d79c0c4b455096b920c7ad6f26227b5297ade016d51",
+    "sha256": "385f23ec94d962d96903bafb6e54662fc44ab2366a30f1483b12c83fa5541fda"
+  },
+  "sun-real.jpg": {
+    "source": "https://github.com/Stellarium/stellarium/blob/f57342271c6047774f3b25991ba494600301c709/textures/sun.webp",
+    "credit": "Ruslan Kabatsayev; NASA/SDO HMI",
+    "license": "CC-BY-SA-4.0",
+    "changes": "8192x4096, resized to 4096x2048 and converted to JPEG",
+    "width": 4096,
+    "height": 2048,
+    "sourceSha256": "a1fc496b733a3a0d8ee95a9b163753cba2fead1ede3034f2d1167fd64a502e2a",
+    "sha256": "5e6dbccafdec607a4155056c8a36cedf9f012c6be5ed38bfd879d97ef5d00112"
+  }
+}

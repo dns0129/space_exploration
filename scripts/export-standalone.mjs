@@ -1,19 +1,13 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { build } from "vite";
 
 const project = fileURLToPath(new URL("../", import.meta.url));
-const filename = "voyager-flight.html";
+const filename = "voyager-warp.html";
 const textures = {};
-for (const file of [
-  "earth-day.jpg",
-  "earth-night.jpg",
-  "earth-height.jpg",
-  "earth-water.png",
-  "earth-clouds.png",
-]) {
+for (const file of (await readdir(join(project, "public/textures"))).filter((file) => /\.(jpg|png)$/.test(file)).sort()) {
   const bytes = await readFile(join(project, "public/textures", file));
   const type = file.endsWith(".png") ? "image/png" : "image/jpeg";
   textures[file] = `data:${type};base64,${bytes.toString("base64")}`;
@@ -34,7 +28,7 @@ const result = await build({
         if (!code.includes(location))
           throw new Error("Texture loader changed; update the export adapter.");
         return {
-          code: code.replace(location, `(${JSON.stringify(textures)})[file]`),
+          code: `const inlineTextureAssets = ${JSON.stringify(textures)};\n` + code.replaceAll(location, "inlineTextureAssets[file]"),
           map: null,
         };
       },
@@ -88,13 +82,13 @@ html = html.replace(
     `<link rel="icon" href="data:image/svg+xml;base64,${favicon.toString("base64")}">`,
 );
 
-const instructions = `远航 VOYAGER · 自由航行（阶段 03）
+const instructions = `远航 VOYAGER · 写实太阳系与跃迁引擎（阶段 04）
 
-立即驾驶：解压后将 voyager-flight.html 拖入 Chrome 或 Edge。
+立即驾驶：解压后将 voyager-warp.html 拖入 Chrome 或 Edge。
 点击顶部“自由航行”，从当前行星附近出发。
 W/S 推力，A/D 平移，R/F 升降，Q/E 翻滚，方向键或拖动转向。
-Shift 加速，空格刹车，C 切换座舱/外部视角。手机使用触屏驾驶按钮。
-点击天体导航选择目的地；“对准目标”调整航向，“跃迁至目标”快速抵达。
+Shift 加速，空格刹车，C 切换座舱/外部视角，J 启动跃迁。手机使用触屏驾驶按钮。
+点击天体导航选择目的地；“对准目标”调整航向，“启动跃迁”蓄能、穿越航道并减速抵达，可暂停或中止。
 可以暂停航行、保存与恢复；无需服务器的独立 HTML 使用本机存档。
 
 后端模式（服务端存档）：
@@ -106,9 +100,9 @@ Windows 可双击“启动航行.bat”；macOS/Linux 可执行 bash 启动航�
 航行存档保存在 data/ 中，浏览器用自己的会话识别存档。
 不要删除浏览器会话 Cookie；重新启动服务器后仍可恢复同一浏览器的存档。
 
-全部 4K 地球贴图、程序和样式已内嵌。浏览器需要 WebGL 2 与图形加速；性能不足时选择标准画质。
-天体尺寸与距离经过压缩，采用简化惯性、驾驶辅助与防撞护盾，不模拟真实轨道力学。
-地球使用影像贴图，其余天体是程序化艺术材质。
+4K 银河全景、高清行星贴图、程序和样式已内嵌。浏览器需要 WebGL 2 与图形加速；性能不足时选择标准画质。
+天体半径和平均日距使用真实公里比例，方位是静态示意，尚未模拟真实轨道运动，采用简化惯性、驾驶辅助与防撞护盾，不模拟真实轨道力学。
+银河全景与各天体使用影像贴图及简化着色；素材来源、修改和许可见 ASSETS.md 与 THIRD_PARTY_NOTICES.md。
 源码与素材来源：https://github.com/dns0129/space_exploration
 `;
 const windowsStart =
@@ -140,7 +134,7 @@ function archive(entries) {
     header.writeUInt16LE(20, 4);
     header.writeUInt16LE(0x800, 6); // UTF-8 filenames.
     header.writeUInt16LE(8, 8);
-    header.writeUInt16LE(0x5d41, 12); // 2026-10-01, deterministic export date.
+    header.writeUInt16LE(0x5d42, 12); // 2026-10-02, deterministic export date.
     header.writeUInt32LE(crc, 14);
     header.writeUInt32LE(compressed.length, 18);
     header.writeUInt32LE(bytes.length, 22);
@@ -178,8 +172,11 @@ const zip = archive([
     await readFile(join(project, "shared/flight-state.mjs")),
   ],
   ["shared/world.json", await readFile(join(project, "shared/world.json"))],
+  ["ASSETS.md", await readFile(join(project, "ASSETS.md"))],
+  ["THIRD_PARTY_NOTICES.md", await readFile(join(project, "THIRD_PARTY_NOTICES.md"))],
+  ["public/textures/provenance.json", await readFile(join(project, "public/textures/provenance.json"))],
 ]);
-await writeFile(join(project, "downloads/voyager-flight.zip"), zip);
+await writeFile(join(project, "downloads/voyager-warp.zip"), zip);
 console.log(
-  `Exported ${filename} (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MiB) and downloads/voyager-flight.zip (${(zip.length / 1024 / 1024).toFixed(1)} MiB).`,
+  `Exported ${filename} (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MiB) and downloads/voyager-warp.zip (${(zip.length / 1024 / 1024).toFixed(1)} MiB).`,
 );

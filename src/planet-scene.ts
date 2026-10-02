@@ -7,6 +7,7 @@ import type { PlanetModel } from "./planet-models";
 import { ShipDynamics } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
 import { createShip } from "./ship-model";
+import { createWarpEffect } from "./warp-effect";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
 
 export type View = "overview" | "close" | "night";
@@ -16,6 +17,8 @@ export interface SceneStats {
 }
 
 export interface FlightStats {
+  warpPhase: ShipDynamics["warpPhase"];
+  warpProgress: number;
   speedKm: number;
   altitudeKm: number;
   nearest: BodyId;
@@ -31,6 +34,8 @@ export interface FlightStats {
 }
 
 const surfaceVertex = /* glsl */ `
+  #include <common>
+  #include <logdepthbuf_pars_vertex>
   varying vec2 vUv;
   varying vec3 vWorldPosition;
   varying vec3 vNormal;
@@ -40,10 +45,12 @@ const surfaceVertex = /* glsl */ `
     vWorldPosition = world.xyz;
     vNormal = normalize(mat3(modelMatrix) * normal);
     gl_Position = projectionMatrix * viewMatrix * world;
+    #include <logdepthbuf_vertex>
   }
 `;
 
 const surfaceFragment = /* glsl */ `
+  #include <logdepthbuf_pars_fragment>
   uniform sampler2D dayMap;
   uniform sampler2D nightMap;
   uniform sampler2D heightMap;
@@ -72,13 +79,14 @@ const surfaceFragment = /* glsl */ `
     vec3 halfwayDirection = normalize(sunDirection + viewDirection);
     float specular = pow(max(dot(terrainNormal, halfwayDirection), 0.0), 72.0);
     float nightWeight = 1.0 - smoothstep(-0.15, 0.12, daylight);
-    vec3 color = day * (0.025 + diffuse * 1.4);
+    vec3 color = day * (0.015 + diffuse * 1.08);
     // Isolate the warm city lights from the blue-tinted night-map terrain.
     float cityLight = max(night.r - night.b * 0.7, 0.0);
     color += vec3(1.0, 0.65, 0.32) * pow(cityLight, 0.7) * nightWeight * 5.0;
-    color += vec3(0.9, 0.95, 1.0) * specular * water * smoothstep(0.0, 0.15, daylight) * 0.5;
+    color += vec3(0.9, 0.95, 1.0) * specular * water * smoothstep(0.0, 0.15, daylight) * 0.12;
     float rim = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color += vec3(0.035, 0.22, 0.55) * rim * smoothstep(-0.3, 0.6, daylight) * 0.35;
+    #include <logdepthbuf_fragment>
     gl_FragColor = vec4(color, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -86,6 +94,7 @@ const surfaceFragment = /* glsl */ `
 `;
 
 const atmosphereFragment = /* glsl */ `
+  #include <logdepthbuf_pars_fragment>
   uniform vec3 sunDirection;
   varying vec3 vWorldPosition;
   varying vec3 vNormal;
@@ -98,6 +107,7 @@ const atmosphereFragment = /* glsl */ `
     float daylight = smoothstep(-0.4, 0.8, sun);
     vec3 blue = mix(vec3(0.035, 0.15, 0.4), vec3(0.2, 0.55, 1.0), daylight);
     vec3 sunset = vec3(0.7, 0.23, 0.065) * exp(-pow(sun * 7.0, 2.0)) * 0.2;
+    #include <logdepthbuf_fragment>
     gl_FragColor = vec4(blue + sunset, glow * (0.08 + daylight * 0.7));
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -117,7 +127,13 @@ export class SolarScene {
   private readonly flightSun = new THREE.PointLight(0xfff3e5, 2.5, 0, 0);
   private readonly observeSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
   private readonly ship = createShip();
+  private readonly warpEffect = createWarpEffect();
+  private galaxy?: THREE.Texture;
+  private spacePromise?: Promise<void>;
+  private readonly planetMaps = new Map<BodyId, THREE.Texture>();
   private flightModels: PlanetModel[] = [];
+  private readonly distantSphere = new THREE.SphereGeometry(1, 32, 24);
+  private readonly flightGeometries = new Map<THREE.Mesh, THREE.BufferGeometry>();
   private dynamics?: ShipDynamics;
   private flightControls?: FlightControls;
   private flying = false;
@@ -154,6 +170,7 @@ export class SolarScene {
     private readonly onError: (message: string) => void,
   ) {
     this.renderer = new THREE.WebGLRenderer({
+      logarithmicDepthBuffer: true,
       antialias: true,
       alpha: true,
       powerPreference: "high-performance",
@@ -199,6 +216,7 @@ export class SolarScene {
       this.observeSun,
       this.flightSun,
       this.flightRoot,
+      this.warpEffect.mesh,
       new THREE.AmbientLight(0x9dbde8, 0.09),
     );
     this.resizeObserver = new ResizeObserver(this.resize);
@@ -213,6 +231,7 @@ export class SolarScene {
   ): Promise<boolean> {
     this.leaveFlight();
     const version = ++this.selectionVersion;
+    await this.loadSpaceTextures();
     const maps =
       id === "earth" ? await this.loadEarthTextures(onProgress) : undefined;
     if (this.destroyed || version !== this.selectionVersion) return false;
@@ -221,7 +240,7 @@ export class SolarScene {
       model =
         id === "earth"
           ? this.createEarthModel(maps!)
-          : createPlanetModel(getBody(id), this.sunDirection);
+          : createPlanetModel(getBody(id), this.sunDirection, undefined, this.planetMaps.get(id));
       this.models.set(id, model);
     }
     this.planet.clear();
@@ -241,6 +260,38 @@ export class SolarScene {
     onProgress(100);
     if (!this.frame) this.animate(0);
     return true;
+  }
+
+  private loadSpaceTextures(): Promise<void> {
+    if (this.galaxy) return Promise.resolve();
+    if (this.spacePromise) return this.spacePromise;
+    const loader = new THREE.TextureLoader();
+    const ids = ["mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "sun"] as const;
+    const files = ["milky-way-4k.jpg", ...ids.map((id) => `${id}-real.jpg`)];
+    const batch: THREE.Texture[] = [];
+    let failed = false;
+    this.spacePromise = Promise.all(files.map(async (file) => {
+      const texture = await loader.loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
+      if (this.destroyed || failed) { texture.dispose(); throw new Error("场景已关闭或贴图加载失败"); }
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+      batch.push(texture);
+      return texture;
+    })).then((maps) => {
+      maps.forEach((map) => this.textures.add(map));
+      this.galaxy = maps[0];
+      this.galaxy.mapping = THREE.EquirectangularReflectionMapping;
+      this.scene.background = this.galaxy;
+      this.scene.backgroundIntensity = 2.5;
+      this.scene.backgroundRotation.z = 0.43;
+      this.stars.visible = false;
+      ids.forEach((id, i) => this.planetMaps.set(id, maps[i + 1]));
+    }).catch((error) => {
+      failed = true;
+      batch.forEach((texture) => texture.dispose());
+      throw error;
+    }).finally(() => { this.spacePromise = undefined; });
+    return this.spacePromise;
   }
 
   private loadEarthTextures(
@@ -336,7 +387,7 @@ export class SolarScene {
     );
     clouds.rotation.y = surface.rotation.y;
     const atmosphere = new THREE.Mesh(
-      new THREE.SphereGeometry(1.035, 128, 96),
+      new THREE.SphereGeometry(1.014, 128, 96),
       new THREE.ShaderMaterial({
         vertexShader: surfaceVertex,
         fragmentShader: atmosphereFragment,
@@ -431,7 +482,7 @@ export class SolarScene {
     this.frame = requestAnimationFrame(this.animate);
     if (this.hidden) return;
     const delta = this.lastTime
-      ? Math.min((time - this.lastTime) / 1000, 0.05)
+      ? Math.min((time - this.lastTime) / 1000, 0.25)
       : 0;
     this.lastTime = time;
     if (this.flying) {
@@ -488,6 +539,7 @@ export class SolarScene {
     onProgress: (percent: number) => void,
   ): Promise<boolean> {
     const version = ++this.selectionVersion;
+    await this.loadSpaceTextures();
     const maps = await this.loadEarthTextures(onProgress);
     if (this.destroyed || version !== this.selectionVersion) return false;
     if (!this.flightModels.length) {
@@ -503,9 +555,14 @@ export class SolarScene {
             : createPlanetModel(getBody(body.id), light, {
                 center,
                 radius: body.radius,
-              });
+              }, this.planetMaps.get(body.id));
+        model.group.traverse((object) => {
+          if (object instanceof THREE.Mesh && object.material instanceof THREE.ShaderMaterial && object.material.uniforms.planetCenter)
+            object.material.uniforms.planetCenter.value = model.group.position;
+        });
         model.group.position.copy(center);
         model.group.scale.setScalar(body.radius);
+        this.flightGeometries.set(model.surface, model.surface.geometry);
         this.flightRoot.add(model.group);
         this.flightModels.push(model);
       }
@@ -521,13 +578,11 @@ export class SolarScene {
     this.controls.enabled = false;
     this.targetPosition = null;
     this.camera.fov = 58;
-    this.camera.far = 3000;
+    this.camera.near = 1e-8;
+    this.camera.far = 2e6;
     this.camera.updateProjectionMatrix();
-    this.stars.visible = true;
-    this.stars.scale.setScalar(10);
-    this.stars.children.forEach((object) => {
-      if (object instanceof THREE.Points) object.material.size *= 10;
-    });
+    this.scene.background = this.galaxy ?? null;
+    this.stars.visible = !this.galaxy;
     this.flightControls?.dispose();
     this.flightControls = new FlightControls(this.renderer.domElement);
     this.renderer.domElement.setAttribute(
@@ -552,10 +607,10 @@ export class SolarScene {
     this.flightSun.visible = false;
     this.controls.enabled = true;
     this.stars.position.set(0, 0, 0);
-    this.stars.scale.setScalar(1);
-    this.stars.children.forEach((object) => {
-      if (object instanceof THREE.Points) object.material.size /= 10;
-    });
+    this.warpEffect.mesh.visible = false;
+    this.scene.background = this.galaxy ?? null;
+    this.stars.visible = !this.galaxy;
+    this.camera.near = 0.01;
     this.camera.up.set(0, 1, 0);
     this.camera.fov = 40;
     this.camera.far = 200;
@@ -577,19 +632,19 @@ export class SolarScene {
     return restored;
   }
   setDestination(id: BodyId) {
-    if (this.dynamics) this.dynamics.target = id;
+    if (this.dynamics && !this.dynamics.warping) this.dynamics.target = id;
   }
   alignFlight() {
     this.dynamics?.align();
     this.flightControls?.clear();
   }
-  jumpFlight() {
-    if (this.dynamics) {
-      this.dynamics.jump(this.dynamics.target);
-      this.flightControls?.clear();
-      this.updateFlightCamera(1);
-    }
+  jumpFlight(): string | null {
+    if (!this.dynamics) return "飞船尚未就绪";
+    const error = this.dynamics.startWarp();
+    this.flightControls?.clear();
+    return error;
   }
+  cancelWarp() { this.dynamics?.cancelWarp(); }
   setFlightCamera(view: "cockpit" | "chase") {
     if (this.dynamics) {
       this.dynamics.camera = view;
@@ -601,37 +656,39 @@ export class SolarScene {
   }
   private updateFlightCamera(blend: number) {
     const ship = this.dynamics!;
-    this.ship.group.position.copy(ship.position);
+    // CPU positions remain in double precision. GPU objects are relative to the ship.
+    for (const model of this.flightModels) {
+      const body = ship.config.bodies.find((b) => b.id === model.body.id)!;
+      model.group.position.fromArray(body.position).sub(ship.position);
+      const angularRadius = body.radius / Math.max(model.group.position.length(), 1e-9);
+      model.group.visible = angularRadius > 0.00001;
+      model.surface.geometry = angularRadius < 0.005 ? this.distantSphere : this.flightGeometries.get(model.surface)!;
+    }
+    this.flightSun.position.fromArray(ship.config.bodies[0].position).sub(ship.position);
+    const scale = 0.000015; // Approximately 25 m hull, with a 200 m chase camera.
+    this.ship.group.position.set(0, 0, 0);
+    this.ship.group.scale.setScalar(scale * 0.16);
     this.ship.group.quaternion.copy(ship.orientation);
-    this.ship.group.visible = ship.camera === "chase";
-    const offset = new THREE.Vector3(
-      0,
-      ship.camera === "chase" ? 0.65 : 0.07,
-      ship.camera === "chase" ? 2.4 : -0.1,
-    ).applyQuaternion(ship.orientation);
-    const destination = ship.position.clone().add(offset);
+    this.ship.group.visible = ship.camera === "chase" && !ship.warping;
+    const offset = new THREE.Vector3(0, ship.camera === "chase" ? 0.65 : 0, ship.camera === "chase" ? 2.4 : 0).multiplyScalar(scale).applyQuaternion(ship.orientation);
     if (ship.camera === "chase") {
-      for (const b of ship.config.bodies) {
-        const center = new THREE.Vector3().fromArray(b.position),
-          radius = b.radius * 1.04 + 0.1;
-        const relative = destination.clone().sub(center);
-        if (relative.length() < radius)
-          destination
-            .copy(center)
-            .addScaledVector(relative.normalize(), radius);
-      }
-      this.camera.position.lerp(destination, blend);
+      this.camera.position.lerp(offset, blend);
       this.camera.up.set(0, 1, 0).applyQuaternion(ship.orientation);
-      this.camera.lookAt(
-        ship.position
-          .clone()
-          .add(new THREE.Vector3(0, 0, -5).applyQuaternion(ship.orientation)),
-      );
+      this.camera.lookAt(new THREE.Vector3(0, 0, -5 * scale).applyQuaternion(ship.orientation));
     } else {
-      this.camera.position.copy(destination);
+      this.camera.position.copy(offset);
       this.camera.quaternion.copy(ship.orientation);
     }
-    this.stars.position.copy(this.camera.position);
+    const strength = ship.warpPhase === "transit" ? Math.sin(ship.warpProgress * Math.PI) * 0.65 + 0.35 : ship.warpPhase === "charging" ? ship.warpProgress * 0.15 : ship.warpPhase === "arrival" ? (1 - ship.warpProgress) * 0.35 : 0;
+    this.warpEffect.mesh.visible = strength > 0;
+    this.warpEffect.material.uniforms.strength.value = strength;
+    this.warpEffect.material.uniforms.time.value = ship.elapsed;
+    this.warpEffect.material.uniforms.aspect.value = this.camera.aspect;
+    const fov = 58 + strength * 25;
+    if (Math.abs(this.camera.fov - fov) > 0.01) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
   }
   private animateFlight(delta: number, time: number) {
     const ship = this.dynamics!;
@@ -666,17 +723,20 @@ export class SolarScene {
     }
     const target = ship.config.bodies.find((b) => b.id === ship.target)!;
     const center = new THREE.Vector3().fromArray(target.position);
-    const direction = center.clone().sub(this.camera.position).normalize();
+    const relative = center.clone().sub(ship.position);
+    const direction = relative.clone().sub(this.camera.position).normalize();
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(
       this.camera.quaternion,
     );
-    const projected = center.clone().project(this.camera);
+    const projected = relative.clone().project(this.camera);
     const inView =
       forward.dot(direction) > 0 &&
       Math.abs(projected.x) < 1 &&
       Math.abs(projected.y) < 1;
     this.flightHandler?.({
-      speedKm: ship.velocity.length() * ship.config.unitsKm,
+      warpPhase: ship.warpPhase,
+      warpProgress: ship.warpProgress,
+      speedKm: ship.warping ? ship.warpSpeedKm : ship.velocity.length() * ship.config.unitsKm,
       altitudeKm: Math.max(0, altitude) * ship.config.unitsKm,
       nearest: nearest.id,
       distanceKm:
@@ -730,6 +790,10 @@ export class SolarScene {
     const object =
       layer === "stars" ? this.stars : this.currentModel?.layers[layer];
     if (object) object.visible = visible;
+    if (layer === "stars") {
+      this.scene.background = visible ? this.galaxy ?? null : null;
+      this.stars.visible = visible && !this.galaxy;
+    }
     if (layer === "rings" && this.currentModel?.ringsEnabled)
       this.currentModel.ringsEnabled.value = Number(visible);
   }
@@ -776,6 +840,8 @@ export class SolarScene {
     this.flightControls?.dispose();
     this.controls.dispose();
     const geometries = new Set<THREE.BufferGeometry>();
+    geometries.add(this.distantSphere);
+    this.flightGeometries.forEach((geometry) => geometries.add(geometry));
     const materials = new Set<THREE.Material>();
     const collect = (object: THREE.Object3D) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Points) {

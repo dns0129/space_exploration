@@ -76,10 +76,10 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       </section>
     </main>
 
-    <footer class="footer"><span><i></i><span id="render-status">准备观测系统</span></span><span class="footer-center">探索，始于仰望。</span><span>自由航行 · 阶段 03 <b>V 0.3</b></span></footer>
+    <footer class="footer"><span><i></i><span id="render-status">准备观测系统</span></span><span class="footer-center">探索，始于仰望。</span><span>写实航行 · 阶段 04 <b>V 0.4</b></span></footer>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">观测太阳和八颗行星，或切换到自由航行驾驶飞船。航行时点击天体导航选择目标，用“对准目标”确定航向，再按 W 出发；也可使用跃迁快速抵达。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳和八颗行星均可观测。点击顶部“自由航行”驾驶飞船：W/S 推力，A/D 平移，R/F 升降，Q/E 翻滚，方向键或拖动转向，Shift 加速，空格刹车，C 切换视角。航行距离和天体大小经过压缩，支持简化惯性与防撞护盾；保存与恢复使用服务端或本机存档。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。其余天体的地表、云带、环系和太阳材质由程序生成。完整来源见项目 ASSETS.md。</p></details></dialog>
+    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">观测太阳和八颗行星，或切换到自由航行驾驶飞船。航行时点击天体导航选择目标，用“对准目标”确定航向，再按 W 出发；按 J 启动跃迁引擎，蓄能后沿航线抵达。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳和八颗行星均可观测。点击顶部“自由航行”驾驶飞船：W/S 推力，A/D 平移，R/F 升降，Q/E 翻滚，方向键或拖动转向，Shift 加速，空格刹车，C 切换视角，J 启动跃迁。航行距离和天体半径按真实公里比例呈现，行星位置采用静态轨道示意，支持简化惯性与防撞护盾；保存与恢复使用服务端或本机存档。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。银河背景、水星与火星贴图：Solar System Scope（CC BY 4.0）；木星、土星与海王星：Askaniy Anpilogov、NASA/JPL-Caltech、Björn Jónsson 等，收录于 CelestiaContent（CC BY 3.0）；金星与天王星：Oleg Pluton / Helleformer（CC BY 4.0）；太阳：Ruslan Kabatsayev、NASA/SDO HMI，收录于 Stellarium（CC BY-SA 4.0）。背景和太阳影像缩小到 4K，部分贴图转换格式。完整作者、修改、来源与许可见项目 ASSETS.md。</p></details></dialog>
   </div>
 `;
 
@@ -122,7 +122,7 @@ const flight = new FlightInterface(toast, (active, target) => {
   $("#canvas-host").dataset.mode = state.mode;
   if (active) {
     $("#connection-text").textContent = "远航号 · 驾驶在线";
-    $("#render-status").textContent = "自由航行 · 连续太阳系场景";
+    $("#render-status").textContent = "真实太阳系 · 4K 银河背景";
   }
 });
 

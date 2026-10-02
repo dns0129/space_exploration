@@ -1,6 +1,12 @@
 import world from "./world.json" with { type: "json" };
 export { world };
 const ids = new Set(world.bodies.map((body) => body.id));
+// Stage 03 used a compressed world. Re-anchor old saves relative to their destination.
+const legacy = {
+  sun: [8, [0, 0, 0]], mercury: [0.4, [14, 0, 13]], venus: [0.95, [-28, 1, 4]],
+  earth: [1, [0, 0, 42]], mars: [0.58, [41, 1, -38]], jupiter: [5.4, [-79, -3, -47]],
+  saturn: [4.6, [78, 4, 96]], uranus: [2.5, [-147, 5, 65]], neptune: [2.45, [80, -4, -180]],
+};
 const vector = (value, count, bound) =>
   Array.isArray(value) &&
   value.length === count &&
@@ -11,9 +17,9 @@ export function validateFlightState(value) {
   if (
     !value ||
     typeof value !== "object" ||
-    value.version !== 1 ||
-    !vector(value.position, 3, 1e6) ||
-    !vector(value.velocity, 3, world.boostSpeed * 2) ||
+    ![1, 2].includes(value.version) ||
+    !vector(value.position, 3, value.version === 1 ? 1e6 : 1e8) ||
+    !vector(value.velocity, 3, value.version === 1 ? 120 : world.boostSpeed * 2) ||
     !vector(value.orientation, 4, 1.01) ||
     !ids.has(value.target) ||
     !["cockpit", "chase"].includes(value.camera) ||
@@ -28,14 +34,20 @@ export function validateFlightState(value) {
   if (
     norm < 0.95 ||
     norm > 1.05 ||
-    Math.hypot(...value.velocity) > world.boostSpeed * 2
+    Math.hypot(...value.velocity) > (value.version === 1 ? 120 : world.boostSpeed * 2)
   )
     return null;
+  const body = world.bodies.find((b) => b.id === value.target);
+  const old = legacy[value.target];
+  const position = value.version === 1
+    ? value.position.map((n, i) => body.position[i] + (n - old[1][i]) / old[0] * body.radius)
+    : [...value.position];
+  if (!vector(position, 3, 1e8)) return null;
   return {
-    version: 1,
-    position: [...value.position],
-    velocity: [...value.velocity],
-    orientation: value.orientation.map((n) => n / norm),
+    version: 2,
+    position,
+    velocity: value.version === 1 ? [0, 0, 0] : [...value.velocity],
+    orientation: value.orientation.map((n) => n / (Math.abs(norm - 1) < 1e-10 ? 1 : norm)),
     target: value.target,
     camera: value.camera,
     assist: value.assist,

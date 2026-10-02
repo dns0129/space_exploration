@@ -17,6 +17,14 @@ async function launch(page: any) {
     .getByRole("combobox", { name: "航行画质" })
     .selectOption("standard");
 }
+async function warp(page: any) {
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 45000 });
+  await page.locator("#flight-jump").click();
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "charging");
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "transit", { timeout: 30000 });
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "arrival", { timeout: 45000 });
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 30000 });
+}
 async function hold(page: any, action: string, mobile: boolean) {
   if (!mobile) {
     await page.keyboard.down(action);
@@ -66,7 +74,7 @@ test("自由航行真实渲染，推力、刹车、服务端保存和恢复正�
   try {
     await expect
       .poll(async () => number(await page.locator("#flight-speed").innerText()))
-      .toBeGreaterThan(700);
+      .toBeGreaterThan(5);
   } finally {
     await release();
   }
@@ -74,12 +82,12 @@ test("自由航行真实渲染，推力、刹车、服务端保存和恢复正�
     .poll(async () =>
       number(await page.locator("#flight-distance").innerText()),
     )
-    .toBeLessThan(before - 10);
+    .toBeLessThan(before - 1);
   const stop = await hold(page, "Space", info.project.name === "mobile");
   try {
     await expect
       .poll(async () => number(await page.locator("#flight-speed").innerText()))
-      .toBeLessThan(20);
+      .toBeLessThan(0.1);
   } finally {
     await stop();
   }
@@ -92,8 +100,9 @@ test("自由航行真实渲染，推力、刹车、服务端保存和恢复正�
   expect(saved.state.elapsed).toBeGreaterThan(0.1);
   const savedDistance = await page.locator("#flight-distance").innerText();
   await page.locator('button[data-body="saturn"]').click();
-  await page.getByRole("button", { name: "跃迁至目标" }).click();
+  await warp(page);
   await expect(page.locator("#flight-nearest")).toHaveText("土星");
+  await page.getByRole("button", { name: "暂停航行", exact: true }).click();
   await page.getByRole("button", { name: "恢复存档", exact: true }).click();
   await expect(page.locator("#flight-nearest")).toHaveText("地球");
   await expect(page.locator("#flight-distance")).toHaveText(savedDistance);
@@ -119,7 +128,7 @@ test("自由航行真实渲染，推力、刹车、服务端保存和恢复正�
   try {
     await expect
       .poll(async () => number(await page.locator("#flight-speed").innerText()))
-      .toBeGreaterThan(700);
+      .toBeGreaterThan(5);
   } finally {
     await again();
   }
@@ -128,10 +137,9 @@ test("自由航行真实渲染，推力、刹车、服务端保存和恢复正�
 test("可在九个天体附近驾驶，刷新后恢复目的地、视角和位置", async ({
   page,
 }, info) => {
-  test.setTimeout(180000);
+  test.setTimeout(300000);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await launch(page);
-  await page.getByRole("button", { name: "暂停航行", exact: true }).click();
   for (const [id, name] of [
     ["mercury", "水星"],
     ["venus", "金星"],
@@ -144,7 +152,7 @@ test("可在九个天体附近驾驶，刷新后恢复目的地、视角和位�
     ["earth", "地球"],
   ]) {
     await page.locator(`button[data-body="${id}"]`).click();
-    await page.getByRole("button", { name: "跃迁至目标" }).click();
+    await warp(page);
     await expect(page.locator("#flight-nearest")).toHaveText(name);
     const shot = PNG.sync.read(await page.locator("canvas").screenshot());
     let surface = 0;
@@ -153,7 +161,7 @@ test("可在九个天体附近驾驶，刷新后恢复目的地、视角和位�
     expect(surface, `${name}在连续世界中实际渲染`).toBeGreaterThan(3000);
   }
   await page.locator('button[data-body="saturn"]').click();
-  await page.getByRole("button", { name: "跃迁至目标" }).click();
+  await warp(page);
   await page.getByRole("button", { name: "切换外部视角" }).click();
   await page.getByRole("button", { name: "驾驶辅助：开", exact: true }).click();
   await page.getByRole("button", { name: "保存航行", exact: true }).click();

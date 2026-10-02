@@ -2043,3 +2043,27 @@ dialog h2 {
     grid-column: 2;
   }
 }
+.warp-engine {
+  position: absolute;
+  right: 32px;
+  bottom: 190px;
+  width: 240px;
+  padding: 18px 20px;
+  border: 1px solid #365260;
+  background: rgba(5, 13, 19, .85);
+  pointer-events: auto;
+  z-index: 3;
+}
+.warp-engine strong { display: block; margin: 10px 0; font-size: 17px; font-weight: 400; color: #b9e1eb; }
+.warp-engine small { display: block; margin-top: 10px; font-size: 11px; color: #7f9eac; }
+.warp-track { height: 3px; background: #1c303b; overflow: hidden; }
+.warp-track i { display: block; width: 0; height: 100%; background: #ade1ee; transition: width .15s linear; }
+.warp-engine[data-phase="transit"] { border-color: #88c5dc; box-shadow: 0 0 40px #4c98c530; }
+#warp-cancel { margin-top: 12px; padding: 7px 14px; border: 1px solid #466475; background: #0c1a25; color: #c1dfed; }
+#flight-distance-au { display: block; margin: 6px 0 14px; color: #7496a7; font-size: 11px; }
+@media (max-width: 700px) {
+  .warp-engine { right: 14px; bottom: 270px; width: 155px; padding: 12px; }
+  .warp-engine strong { margin: 7px 0; font-size: 14px; }
+  .warp-engine .eyebrow { font-size: 8px; letter-spacing: .8px; }
+  .warp-engine small { font-size: 10px; line-height: 1.5; }
+}

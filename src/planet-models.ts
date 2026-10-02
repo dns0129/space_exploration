@@ -12,6 +12,8 @@ export interface PlanetModel {
 }
 
 export const modelVertex = /* glsl */ `
+  #include <common>
+  #include <logdepthbuf_pars_vertex>
   varying vec2 vUv;
   varying vec3 vLocalPosition;
   varying vec3 vWorldPosition;
@@ -24,6 +26,7 @@ export const modelVertex = /* glsl */ `
     vec3 n = normalMatrix * normal;
     vNormal = normalize(vec3(dot(viewMatrix[0].xyz,n),dot(viewMatrix[1].xyz,n),dot(viewMatrix[2].xyz,n)));
     gl_Position = projectionMatrix * viewMatrix * world;
+    #include <logdepthbuf_vertex>
   }
 `;
 
@@ -72,6 +75,8 @@ const noise = /* glsl */ `
 `;
 
 const planetFragment = /* glsl */ `
+  #include <logdepthbuf_pars_fragment>
+  uniform sampler2D detailMap;
   uniform vec3 sunDirection;
   uniform vec3 planetAxis;
   uniform vec3 planetCenter;
@@ -136,12 +141,20 @@ const planetFragment = /* glsl */ `
       color = mix(vec3(1.5,0.25,0.007),vec3(3.0,1.6,0.22),smoothstep(0.24,0.70,granules))*(0.84+fine*0.23);
       float sunspots = smoothstep(0.69,0.78,fbm(p*8.0+vec3(17.0)));
       color *= 1.0-sunspots*0.85;
+      #ifdef PHOTOGRAPHIC_MAP
+        color = texture2D(detailMap,vUv).rgb*1.7;
+      #endif
       vec3 viewDirection = normalize(cameraPosition-vWorldPosition);
       color *= 0.55+0.45*pow(max(dot(normalize(vNormal),viewDirection),0.0),0.3);
-      gl_FragColor = vec4(color,1.0);
+      #include <logdepthbuf_fragment>
+    gl_FragColor = vec4(color,1.0);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
       return;
+    #endif
+    #ifdef PHOTOGRAPHIC_MAP
+      color = texture2D(detailMap,vUv).rgb;
+      height = dot(color,vec3(0.2126,0.7152,0.0722))*0.001;
     #endif
     vec3 normal = normalize(vNormal);
     vec3 dpdx = dFdx(vWorldPosition), dpdy = dFdy(vWorldPosition);
@@ -159,13 +172,15 @@ const planetFragment = /* glsl */ `
         if(t>0.0 && r>1.12 && r<2.3) diffuse *= 1.0-ringDensity(r,0.0)*ringsEnabled*0.88;
       }
     #endif
-    gl_FragColor = vec4(max(color*(0.045+diffuse*1.2),vec3(0.0)),1.0);
+    #include <logdepthbuf_fragment>
+    gl_FragColor = vec4(max(color*(0.018+diffuse*1.05),vec3(0.0)),1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
 `;
 
 const atmosphereFragment = /* glsl */ `
+  #include <logdepthbuf_pars_fragment>
   uniform vec3 sunDirection;
   uniform vec3 atmosphereColor;
   uniform vec3 planetCenter;
@@ -184,9 +199,11 @@ const atmosphereFragment = /* glsl */ `
       float streamers = 0.65+noise3(normal*14.0+uTime*0.006)*0.6;
       float impact = length(cross(cameraPosition-planetCenter,normalize(vWorldPosition-cameraPosition)))/bodyRadius;
       float envelope = exp(-max(impact-1.0,0.0)*18.0)*(1.0-smoothstep(1.08,1.2,impact));
-      gl_FragColor = vec4(atmosphereColor*1.6,envelope*strength*streamers*0.68);
+      #include <logdepthbuf_fragment>
+    gl_FragColor = vec4(atmosphereColor*1.6,envelope*strength*streamers*0.68);
     #else
-      gl_FragColor = vec4(atmosphereColor,rim*strength*(0.12+sun*0.75));
+      #include <logdepthbuf_fragment>
+    gl_FragColor = vec4(atmosphereColor,rim*strength*(0.12+sun*0.75));
     #endif
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -194,6 +211,7 @@ const atmosphereFragment = /* glsl */ `
 `;
 
 const cloudsFragment = /* glsl */ `
+  #include <logdepthbuf_pars_fragment>
   uniform vec3 sunDirection;
   uniform float uTime;
   varying vec3 vLocalPosition;
@@ -207,10 +225,12 @@ const cloudsFragment = /* glsl */ `
     #ifdef VENUS_CLOUDS
       float swirl = fbm(p*8.0+(clouds-0.5)*1.8);
       vec3 color = mix(vec3(0.67,0.45,0.21),vec3(0.96,0.85,0.62),swirl*0.75+0.15);
-      gl_FragColor = vec4(color*(0.06+diffuse*1.15),0.995);
+      #include <logdepthbuf_fragment>
+    gl_FragColor = vec4(color*(0.06+diffuse*1.15),0.995);
     #else
       float streaks = fbm(p*vec3(15.0,90.0,15.0));
-      gl_FragColor = vec4(vec3(0.72,0.83,0.92)*(0.035+diffuse*1.15),smoothstep(0.52,0.72,streaks)*0.45);
+      #include <logdepthbuf_fragment>
+    gl_FragColor = vec4(vec3(0.72,0.83,0.92)*(0.035+diffuse*1.15),smoothstep(0.52,0.72,streaks)*0.45);
     #endif
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -218,6 +238,7 @@ const cloudsFragment = /* glsl */ `
 `;
 
 const ringFragment = /* glsl */ `
+  #include <logdepthbuf_pars_fragment>
   uniform vec3 sunDirection;
   uniform vec3 planetAxis;
   uniform vec3 planetCenter;
@@ -240,6 +261,7 @@ const ringFragment = /* glsl */ `
     float c = dot(relative,relative)+scale*py*py-1.0;
     float discriminant = b*b-4.0*a*c;
     if(discriminant>0.0 && (-b-sqrt(discriminant))/(2.0*a)>0.0) light *= 0.16;
+    #include <logdepthbuf_fragment>
     gl_FragColor = vec4(color*light,density*0.95);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -250,6 +272,7 @@ export function createPlanetModel(
   body: CelestialBody,
   sunDirection: THREE.Vector3,
   placement = { center: new THREE.Vector3(), radius: 1 },
+  map?: THREE.Texture,
 ): PlanetModel {
   const kinds = {
     mercury: 0,
@@ -276,8 +299,9 @@ export function createPlanetModel(
     new THREE.ShaderMaterial({
       vertexShader: modelVertex,
       fragmentShader: planetFragment,
-      defines: { BODY_KIND: kinds[body.id] },
+      defines: { BODY_KIND: kinds[body.id], ...(map ? { PHOTOGRAPHIC_MAP: 1 } : {}) },
       uniforms: {
+        detailMap: { value: map ?? null },
         sunDirection: { value: sunDirection },
         planetAxis: { value: axis },
         planetCenter: { value: placement.center },
@@ -341,6 +365,16 @@ export function createPlanetModel(
         depthWrite: false,
       }),
     );
+    if (map && body.id === "venus") {
+      clouds.material.fragmentShader = planetFragment;
+      clouds.material.defines = { BODY_KIND: 1, PHOTOGRAPHIC_MAP: 1 };
+      clouds.material.uniforms.detailMap = { value: map };
+      clouds.material.uniforms.planetAxis = { value: axis };
+      clouds.material.uniforms.planetCenter = { value: placement.center };
+      clouds.material.uniforms.bodyRadius = { value: placement.radius };
+      clouds.material.uniforms.ringsEnabled = ringsEnabled;
+      surface.material.defines = { BODY_KIND: 1 };
+    }
     clouds.scale.y = body.flattening;
     group.add(clouds);
     model.layers.clouds = clouds;

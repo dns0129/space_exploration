@@ -60,7 +60,7 @@ test("太阳和八颗行星均渲染独立外观，信息与图层随天体切�
     .selectOption("standard");
 
   const colors: Record<string, (r: number, g: number, b: number) => boolean> = {
-    sun: (r, g, b) => r > 180 && g > 90 && b < 180,
+    sun: (r, g, b) => r > 140 && g > 125 && b > 100,
     mercury: (r, g, b) =>
       r > 70 && Math.abs(r - g) < 25 && Math.abs(g - b) < 28,
     venus: (r, g, b) => r > 80 && r > g * 1.1 && g > b * 1.18,
@@ -69,7 +69,7 @@ test("太阳和八颗行星均渲染独立外观，信息与图层随天体切�
     jupiter: (r, g, b) => r > 80 && r > g * 1.05 && g > b * 1.13,
     saturn: (r, g, b) => r > 80 && r > g * 1.02 && g > b * 1.09,
     uranus: (r, g, b) => g > 80 && g > r * 1.18 && b > r * 1.16,
-    neptune: (r, g, b) => b > 80 && b > g * 1.08 && b > r * 1.3,
+    neptune: (r, g, b) => b > 70 && b > g * 1.02 && b > r * 1.12,
   };
   for (const [id, name, english] of bodies) {
     await page.locator(`button[data-body="${id}"]`).click();
@@ -193,13 +193,13 @@ test("加载地球期间切换天体，旧请求不会覆盖新模型，返回�
   });
   let requests = 0,
     responses = 0;
-  await page.route("**/textures/*", async (route) => {
+  await page.route("**/textures/earth-*", async (route) => {
     requests++;
     await barrier;
     await route.continue();
   });
   page.on("response", (response) => {
-    if (response.url().includes("/textures/")) responses++;
+    if (response.url().includes("/textures/earth-")) responses++;
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   try {
