@@ -1777,6 +1777,9 @@ dialog h2 {
   font-size: 10px;
   color: #769dac;
 }
+.flight-instruments #flight-engine {
+  color: #b9e1eb;
+}
 .flight-instruments .flight-save-info strong {
   font-size: 15px;
   line-height: 32px;

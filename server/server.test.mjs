@@ -191,6 +191,70 @@ test("continuous collision protection stops a fast ship before it tunnels throug
   );
 });
 
+test("propulsion switches at 100 and 10000 km/s, including restored flight states", () => {
+  const ship = new ShipDynamics();
+  ship.position.set(1e6, 0, 0);
+  for (const [speed, engine] of [
+    [0, "orbital"], [1, "orbital"], [99.9, "orbital"],
+    [100, "planetary"], [9999.9, "planetary"],
+    [10000, "interstellar"], [50000, "interstellar"],
+  ]) {
+    ship.velocity.set(speed / world.unitsKm, 0, 0);
+    assert.equal(ship.engine.id, engine, `${speed} km/s`);
+    const restored = new ShipDynamics();
+    assert(restored.restore(ship.snapshot()));
+    assert.equal(restored.engine.id, engine);
+    assert(Math.abs(restored.velocity.length() * world.unitsKm - speed) < 1e-8);
+  }
+  const overspeed = ship.snapshot();
+  overspeed.velocity = [60000 / world.unitsKm, 0, 0];
+  assert(ship.restore(overspeed));
+  assert(Math.abs(ship.velocity.length() * world.unitsKm - 50000) < 1e-8);
+});
+
+test("normal and boosted six-axis thrust reach 50000 km/s, brake through all engines and preserve inertia", () => {
+  for (const boost of [false, true]) {
+    const ship = new ShipDynamics();
+    ship.position.set(1e6, 0, 0);
+    const engines = new Set();
+    for (let i = 0; i < 600; i++) {
+      engines.add(ship.engine.id);
+      ship.step(0.05, { ...emptyInput(), throttle: 1, strafe: 1, lift: 1, boost });
+      assert(ship.velocity.length() * world.unitsKm <= 50000 + 1e-8);
+    }
+    assert.deepEqual([...engines], ["orbital", "planetary", "interstellar"]);
+    assert(Math.abs(ship.velocity.length() * world.unitsKm - 50000) < 1e-8);
+    assert(validateFlightState(ship.snapshot()));
+    ship.assist = false;
+    const velocity = ship.velocity.clone();
+    const position = ship.position.clone();
+    ship.step(0.05, emptyInput());
+    assert(ship.velocity.distanceTo(velocity) < 1e-12);
+    assert(ship.position.distanceTo(position.clone().addScaledVector(velocity, 0.05)) < 1e-8);
+    const brakingEngines = new Set();
+    for (let i = 0; i < 80; i++) {
+      brakingEngines.add(ship.engine.id);
+      ship.step(0.05, { ...emptyInput(), brake: true });
+    }
+    assert.deepEqual([...brakingEngines], ["interstellar", "planetary", "orbital"]);
+    assert.equal(ship.velocity.length(), 0);
+    assert.equal(ship.engine.id, "orbital");
+  }
+});
+
+test("backend saves and restores the new maximum cruise speed", async (t) => {
+  const { url } = await fixture(t);
+  const cookie = (await fetch(url + "/api/flight/save")).headers.get("set-cookie").split(";")[0];
+  const saved = state();
+  saved.velocity = [50000 / world.unitsKm, 0, 0];
+  const response = await fetch(url + "/api/flight/save", {
+    method: "POST", headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify(saved),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await (await fetch(url + "/api/flight/save", { headers: { cookie } })).json()).state, saved);
+});
+
 test("world uses real solar radii and astronomical distances; compressed saves migrate safely", () => {
   const earth = world.bodies.find((b) => b.id === "earth");
   const sun = world.bodies.find((b) => b.id === "sun");

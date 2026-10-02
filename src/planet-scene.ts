@@ -17,6 +17,7 @@ export interface SceneStats {
 }
 
 export interface FlightStats {
+  engine: ShipDynamics["engine"];
   warpPhase: ShipDynamics["warpPhase"];
   warpProgress: number;
   speedKm: number;
@@ -734,6 +735,7 @@ export class SolarScene {
       Math.abs(projected.x) < 1 &&
       Math.abs(projected.y) < 1;
     this.flightHandler?.({
+      engine: ship.engine,
       warpPhase: ship.warpPhase,
       warpProgress: ship.warpProgress,
       speedKm: ship.warping ? ship.warpSpeedKm : ship.velocity.length() * ship.config.unitsKm,

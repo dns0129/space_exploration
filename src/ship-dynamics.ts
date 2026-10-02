@@ -94,7 +94,7 @@ export class ShipDynamics {
     if (!saved) return false;
     this.resetWarp();
     this.position.fromArray(saved.position);
-    this.velocity.fromArray(saved.velocity);
+    this.velocity.fromArray(saved.velocity).clampLength(0, this.config.boostSpeed);
     this.orientation.fromArray(saved.orientation);
     this.target = saved.target;
     this.camera = saved.camera;
@@ -102,6 +102,12 @@ export class ShipDynamics {
     this.elapsed = saved.elapsed;
     this.resolveCollision(this.position.clone());
     return true;
+  }
+  get engine() {
+    const speedKm = this.velocity.length() * this.config.unitsKm;
+    // Shared boundaries belong to the faster engine; stopping remains possible.
+    return this.config.engines.find((engine) => speedKm < engine.maxSpeedKm)
+      ?? this.config.engines[this.config.engines.length - 1];
   }
   step(seconds: number, input: FlightInput) {
     const dt = Math.max(0, Math.min(seconds, 0.05));
@@ -130,21 +136,17 @@ export class ShipDynamics {
       -input.throttle,
     );
     if (acceleration.lengthSq() > 1) acceleration.normalize();
+    const engine = this.engine;
     acceleration
       .applyQuaternion(this.orientation)
       .multiplyScalar(
-        input.boost ? this.config.boostAcceleration : this.config.acceleration,
+        (input.boost ? engine.boostAccelerationKm : engine.accelerationKm)
+          / this.config.unitsKm,
       );
     this.velocity.addScaledVector(acceleration, dt);
     if (input.brake) this.velocity.multiplyScalar(Math.exp(-8 * dt));
     else if (this.assist) {
-      this.velocity.multiplyScalar(
-        Math.exp(
-          -(this.velocity.length() > this.config.cruiseSpeed && !input.boost
-            ? 0.9
-            : 0.1) * dt,
-        ),
-      );
+      this.velocity.multiplyScalar(Math.exp(-0.1 * dt));
     }
     this.velocity.clampLength(0, this.config.boostSpeed);
     if (this.velocity.length() < 0.000000001) this.velocity.set(0, 0, 0);

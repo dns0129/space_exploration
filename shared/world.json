@@ -2,10 +2,13 @@
   "version": 2,
   "unitsKm": 6371,
   "auKm": 149597870.7,
-  "acceleration": 0.004,
-  "boostAcceleration": 0.02,
-  "cruiseSpeed": 0.03,
-  "boostSpeed": 0.3,
+  "cruiseSpeed": 7.848061528802386,
+  "boostSpeed": 7.848061528802386,
+  "engines": [
+    { "id": "orbital", "name": "近地轨道引擎", "minSpeedKm": 1, "maxSpeedKm": 100, "accelerationKm": 30, "boostAccelerationKm": 100 },
+    { "id": "planetary", "name": "行星引擎", "minSpeedKm": 100, "maxSpeedKm": 10000, "accelerationKm": 2000, "boostAccelerationKm": 6000 },
+    { "id": "interstellar", "name": "星际引擎", "minSpeedKm": 10000, "maxSpeedKm": 50000, "accelerationKm": 10000, "boostAccelerationKm": 30000 }
+  ],
   "warp": {
     "chargeSeconds": 1.6,
     "travelSeconds": 7,

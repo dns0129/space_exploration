@@ -34,7 +34,7 @@ export class FlightInterface {
   <aside class="warp-engine" id="warp-engine" data-phase="ready" aria-label="跃迁引擎"><span class="eyebrow">HYPERDRIVE / 跃迁引擎</span><strong id="warp-label">引擎就绪</strong><div class="warp-track"><i id="warp-progress"></i></div><small id="warp-hint">选择目的地，按 J 蓄能启航</small><button id="warp-cancel" hidden>中止跃迁</button></aside>
   <div class="flight-crosshair" aria-hidden="true"><i></i><b></b></div><div class="flight-marker" id="flight-marker" aria-hidden="true"><i></i><span>地球</span></div>
   <div class="cockpit-frame" aria-hidden="true"><i class="cockpit-left"></i><i class="cockpit-right"></i><i class="cockpit-dashboard"></i></div>
-  <div class="flight-instruments"><div><span>航速 / SPEED</span><strong id="flight-speed">0</strong><small id="flight-speed-unit">km/s</small></div><div><span>最近天体 / NEAREST</span><strong id="flight-nearest">地球</strong><small id="flight-altitude">— km 高度</small></div><div><span>航向 / HEADING</span><strong id="flight-heading">000°</strong><small id="flight-time">00:00</small></div><div class="flight-save-info"><span>航行存档 / SAVE</span><strong id="flight-storage">准备存档</strong><small>每 20 秒自动保存</small></div></div>
+  <div class="flight-instruments"><div><span>航速 / SPEED</span><strong id="flight-speed">0</strong><small id="flight-speed-unit">km/s</small><small id="flight-engine" data-engine="orbital">近地轨道引擎 · 自动</small><small id="flight-engine-range">1–100 km/s</small></div><div><span>最近天体 / NEAREST</span><strong id="flight-nearest">地球</strong><small id="flight-altitude">— km 高度</small></div><div><span>航向 / HEADING</span><strong id="flight-heading">000°</strong><small id="flight-time">00:00</small></div><div class="flight-save-info"><span>航行存档 / SAVE</span><strong id="flight-storage">准备存档</strong><small>每 20 秒自动保存</small></div></div>
   <p class="flight-key-guide"><kbd>W S</kbd> 推力 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>↑ ↓ ← →</kbd> / 拖动转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车</p>
   <div class="flight-touch" aria-label="触屏驾驶控制"><div class="flight-thrust-pad"><button data-flight-input="KeyR" aria-label="飞船上升">升</button><button data-flight-input="KeyW" aria-label="飞船前进">前进</button><button data-flight-input="KeyF" aria-label="飞船下降">降</button><button data-flight-input="KeyA" aria-label="飞船左移">左移</button><button data-flight-input="Space" aria-label="飞船刹车">刹车</button><button data-flight-input="KeyD" aria-label="飞船右移">右移</button><button data-flight-input="KeyQ" aria-label="飞船左翻滚">↶</button><button data-flight-input="KeyS" aria-label="飞船后退">后退</button><button data-flight-input="KeyE" aria-label="飞船右翻滚">↷</button></div><div class="flight-steer-pad"><button data-flight-input="ArrowUp" aria-label="飞船抬头">↑</button><button data-flight-input="ArrowLeft" aria-label="飞船左转">←</button><button data-flight-input="ShiftLeft" aria-label="飞船加速">加速</button><button data-flight-input="ArrowRight" aria-label="飞船右转">→</button><button data-flight-input="ArrowDown" aria-label="飞船低头">↓</button></div></div>
  </section>`,
@@ -224,6 +224,11 @@ export class FlightInterface {
     $("#flight-distance-au").textContent = useAu ? `${number(stats.distanceKm)} km` : `${(stats.distanceKm / 149597870.7).toFixed(6)} AU`;
     const labels = { ready: "引擎就绪", charging: "引擎蓄能", transit: "跃迁航行", arrival: "减速抵达", cooldown: "引擎冷却" };
     const activeWarp = ["charging", "transit", "arrival"].includes(stats.warpPhase);
+    $("#flight-engine").textContent = activeWarp ? "跃迁引擎" : `${stats.engine.name} · 自动`;
+    $("#flight-engine").dataset.engine = activeWarp ? "warp" : stats.engine.id;
+    $("#flight-engine-range").textContent = activeWarp
+      ? "按航程自动调速"
+      : `${number(stats.engine.minSpeedKm)}–${number(stats.engine.maxSpeedKm)} km/s`;
     if (this.warpPhase === "arrival" && stats.warpPhase === "cooldown") this.notify("跃迁完成，已抵达目标附近");
     this.warpPhase = stats.warpPhase;
     $("#warp-engine").dataset.phase = stats.warpPhase;
