@@ -107,18 +107,22 @@ export const mapSampling = /* glsl */ `
     float x = s.x, y = s.y - 4.0 * s.x, z = s.z - 4.0 * s.y + 6.0 * s.x;
     return vec4(x, y, z, 6.0 - x - y - z) / 6.0;
   }
-  // Gradients taken across the longitude wrap keep the map seam at full resolution.
-  void seamGradients(vec2 uv, out vec2 gx, out vec2 gy) {
+  // Gradients taken across the longitude wrap keep the map seam at full resolution; true on seam pixels.
+  bool seamGradients(vec2 uv, out vec2 gx, out vec2 gy) {
     gx = dFdx(uv); gy = dFdy(uv);
     vec2 wrapped = vec2(fract(uv.x + 0.5), uv.y);
     vec2 wx = dFdx(wrapped), wy = dFdy(wrapped);
+    bool seam = abs(wx.x) < abs(gx.x) || abs(wy.x) < abs(gy.x);
     if (abs(wx.x) < abs(gx.x)) gx.x = wx.x;
     if (abs(wy.x) < abs(gy.x)) gy.x = wy.x;
+    return seam;
   }
   // A cubic B-spline from four bilinear taps replaces the blocky texel grid of magnified maps.
-  vec4 sampleMap(sampler2D map, vec2 uv, vec2 size, vec2 gx, vec2 gy) {
-    vec4 linear = textureGrad(map, uv, gx, gy);
+  // Only seam pixels need the wrapped gradients, as an explicit mip level; elsewhere the implicit lookup is identical.
+  vec4 sampleMap(sampler2D map, vec2 uv, vec2 size, vec2 gx, vec2 gy, bool seam) {
     float texels = max(length(gx * size), length(gy * size));
+    vec4 linear = texture(map, uv);
+    if (seam) linear = textureLod(map, uv, log2(max(texels, 1.0)));
     if (texels >= 1.0) return linear;
     vec2 coord = uv * size - 0.5;
     vec2 f = fract(coord);
@@ -126,8 +130,9 @@ export const mapSampling = /* glsl */ `
     vec4 xw = bsplineWeights(f.x), yw = bsplineWeights(f.y);
     vec4 s = vec4(xw.xz + xw.yw, yw.xz + yw.yw);
     vec4 offset = (coord.xxyy + vec2(-0.5, 1.5).xyxy + vec4(xw.yw, yw.yw) / s) / size.xxyy;
-    vec4 a = textureGrad(map, offset.xz, gx, gy), b = textureGrad(map, offset.yz, gx, gy);
-    vec4 c = textureGrad(map, offset.xw, gx, gy), d = textureGrad(map, offset.yw, gx, gy);
+    // Magnified maps always read mip 0.
+    vec4 a = textureLod(map, offset.xz, 0.0), b = textureLod(map, offset.yz, 0.0);
+    vec4 c = textureLod(map, offset.xw, 0.0), d = textureLod(map, offset.yw, 0.0);
     float sx = s.x / (s.x + s.y), sy = s.z / (s.z + s.w);
     vec4 cubic = mix(mix(d, c, sx), mix(b, a, sx), sy);
     return mix(cubic, linear, smoothstep(0.5, 1.0, texels));
@@ -206,10 +211,11 @@ const planetFragment = /* glsl */ `
     #ifdef SURFACE_MAP
       vec2 uv = vec2(vUv.x + mapOffset, vUv.y);
       vec2 gx, gy;
-      seamGradients(uv, gx, gy);
+      bool seam = seamGradients(uv, gx, gy);
       float texels = max(length(gx * mapSize), length(gy * mapSize));
       float footprint = max(length(dFdx(p)), length(dFdy(p)));
       float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
+      float reliefLod = log2(max(texels, 1.0));
     #endif
     #if BODY_KIND == 7
       float terrain = fbm(p*5.0);
@@ -222,8 +228,8 @@ const planetFragment = /* glsl */ `
       color *= 1.0-sunspots*0.85;
       #ifdef SURFACE_MAP
         if (mapReady > 0.001) {
-          vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy).rgb;
-          vec4 grain = surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, vec3(1.0), moonSeed);
+          vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb;
+          vec4 grain = magnify > 0.0 ? surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, vec3(1.0), moonSeed) : vec4(0.0);
           // Illustrated stars keep the map's granulation and spots in their own temperature colour.
           vec3 stellar = stellarIllustration > 0.5
             ? stellarTint * 1.5 * pow(max(mapLuminance(photo) * mapTint.x, 0.0), 3.0)
@@ -318,17 +324,18 @@ const planetFragment = /* glsl */ `
     normal = normalize(max(abs(determinant),0.0000001)*normal-0.012*bodyRadius*gradient);
     #ifdef SURFACE_MAP
       if (mapReady > 0.001) {
-        vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy).rgb;
+        vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb;
         vec3 stretch = mix(vec3(1.0), vec3(0.3, 2.6, 0.3), mapStreaks);
-        vec4 grain = surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, stretch, moonSeed);
+        // Grain only exists beyond the map's native resolution; skip it entirely otherwise.
+        vec4 grain = magnify > 0.0 ? surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, stretch, moonSeed) : vec4(0.0);
         vec3 slope = grain.yzw * mapGrain * 2.5;
         if (mapRelief > 0.0) {
           // Map brightness read as relief, differenced in texture space: smooth per-pixel normals, no 2x2 blocks.
           float stepTexels = max(1.0, texels);
           vec2 du = vec2(stepTexels / mapSize.x, 0.0), dv = vec2(0.0, stepTexels / mapSize.y);
           float contrast = 1.0 / (mapLuminance(photo) + 0.04);
-          float east = (mapLuminance(textureGrad(detailMap, uv + du, gx, gy).rgb) - mapLuminance(textureGrad(detailMap, uv - du, gx, gy).rgb)) * contrast;
-          float north = (mapLuminance(textureGrad(detailMap, uv + dv, gx, gy).rgb) - mapLuminance(textureGrad(detailMap, uv - dv, gx, gy).rgb)) * contrast;
+          float east = (mapLuminance(textureLod(detailMap, uv + du, reliefLod).rgb) - mapLuminance(textureLod(detailMap, uv - du, reliefLod).rgb)) * contrast;
+          float north = (mapLuminance(textureLod(detailMap, uv + dv, reliefLod).rgb) - mapLuminance(textureLod(detailMap, uv - dv, reliefLod).rgb)) * contrast;
           float ring = length(p.xz);
           vec3 eastward = vec3(p.z, 0.0, -p.x) / max(ring, 0.0001);
           vec3 northward = cross(p, eastward);

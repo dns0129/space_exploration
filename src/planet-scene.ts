@@ -102,19 +102,20 @@ const surfaceFragment = /* glsl */ `
     vec3 normal = normalize(vNormal);
     vec3 p = normalize(vLocalPosition);
     vec2 gx, gy;
-    seamGradients(vUv, gx, gy);
+    bool seam = seamGradients(vUv, gx, gy);
     float texels = max(length(gx * mapSize), length(gy * mapSize));
     float footprint = max(length(dFdx(p)), length(dFdy(p)));
     float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
     vec3 terrainNormal = normal;
     float water = 0.0, landGrain = 0.0;
     if(terrainDetail>0.5) {
-      water = sampleMap(waterMap, vUv, mapSize, gx, gy).r;
+      water = sampleMap(waterMap, vUv, mapSize, gx, gy, seam).r;
       // Relief differenced in texture space keeps mountains smooth at any zoom, without texel facets.
       float stepTexels = max(1.0, texels);
       vec2 du = vec2(stepTexels / mapSize.x, 0.0), dv = vec2(0.0, stepTexels / mapSize.y);
-      float east = textureGrad(heightMap, vUv + du, gx, gy).r - textureGrad(heightMap, vUv - du, gx, gy).r;
-      float north = textureGrad(heightMap, vUv + dv, gx, gy).r - textureGrad(heightMap, vUv - dv, gx, gy).r;
+      float reliefLod = log2(stepTexels);
+      float east = textureLod(heightMap, vUv + du, reliefLod).r - textureLod(heightMap, vUv - du, reliefLod).r;
+      float north = textureLod(heightMap, vUv + dv, reliefLod).r - textureLod(heightMap, vUv - dv, reliefLod).r;
       float ring = length(p.xz);
       vec3 eastward = vec3(p.z, 0.0, -p.x) / max(ring, 0.0001);
       vec3 northward = cross(p, eastward);
@@ -130,17 +131,17 @@ const surfaceFragment = /* glsl */ `
     float daylight = dot(normal, sunDirection);
     float diffuse = max(dot(terrainNormal, sunDirection), 0.0) * smoothstep(-0.12, 0.04, daylight);
     // The deep-blue day map stays the colour layer at every distance; land grain only adds texture.
-    vec3 day = sampleMap(dayMap, vUv, mapSize, gx, gy).rgb;
+    vec3 day = sampleMap(dayMap, vUv, mapSize, gx, gy, seam).rgb;
     // Open ocean holds faint 8x8 JPEG blocks; when magnified, read it from the block-averaged mip.
     float smoothOcean = water * (1.0 - smoothstep(0.25, 0.6, texels));
     if(smoothOcean > 0.0) day = mix(day, sampleMapLod(dayMap, vUv, mapSize, 3.0).rgb, smoothOcean);
     day *= 1.0 + landGrain * 0.12;
-    vec3 night = daylight<0.12 ? sampleMap(nightMap, vUv, mapSize, gx, gy).rgb : vec3(0.0);
+    vec3 night = daylight<0.12 ? sampleMap(nightMap, vUv, mapSize, gx, gy, seam).rgb : vec3(0.0);
     vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
     vec3 halfwayDirection = normalize(sunDirection + viewDirection);
     float specular = pow(max(dot(terrainNormal, halfwayDirection), 0.0), 72.0);
     float nightWeight = 1.0 - smoothstep(-0.15, 0.12, daylight);
-    vec4 cloud = sampleMap(cloudMap, vec2(vUv.x + cloudOffset, vUv.y), mapSize, gx, gy);
+    vec4 cloud = sampleMap(cloudMap, vec2(vUv.x + cloudOffset, vUv.y), mapSize, gx, gy, seam);
     float cloudCover = cloud.a * cloudsEnabled;
     vec3 color = day * (0.015 + diffuse * 1.08 * (1.0-cloudCover*0.26));
     // Isolate the warm city lights from the blue-tinted night-map terrain.
@@ -171,11 +172,11 @@ const earthCloudFragment = /* glsl */ `
   void main() {
     vec3 p = normalize(vLocalPosition);
     vec2 gx, gy;
-    seamGradients(vUv, gx, gy);
+    bool seam = seamGradients(vUv, gx, gy);
     float texels = max(length(gx * mapSize), length(gy * mapSize));
     float footprint = max(length(dFdx(p)), length(dFdy(p)));
     float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
-    vec4 cloud = sampleMap(cloudMap, vUv, mapSize, gx, gy);
+    vec4 cloud = sampleMap(cloudMap, vUv, mapSize, gx, gy, seam);
     float cover = cloud.a;
     if(magnify > 0.0) {
       // Sub-texel wisps sharpen partly covered texels instead of showing soft magnified blobs.
@@ -219,6 +220,9 @@ export class SolarScene {
   private readonly lazyMaps = new Map<string, { texture?: THREE.Texture; loading?: Promise<void>; failedAt?: number; used: number }>();
   private readonly mapFades = new Set<PlanetModel>();
   private mapCheck = 0;
+  private stillSeconds = 0;
+  private readonly lastCameraPosition = new THREE.Vector3();
+  private readonly lastCameraQuaternion = new THREE.Quaternion();
   private readonly compactTextures = window.matchMedia("(pointer: coarse)").matches
     || ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4;
   private flightModels: PlanetModel[] = [];
@@ -229,6 +233,8 @@ export class SolarScene {
   private readonly renderBudget = new RenderBudget();
   private highQuality = true;
   private minimumRenderRatio = 0.5;
+  /** Sharp oblique detail on GPUs; software rasterizers keep the cheaper 4x filtering. */
+  private surfaceAnisotropy = 4;
   private readonly flightGeometries = new Map<THREE.Mesh, THREE.BufferGeometry>();
   private readonly flightSpheres = new Map<PlanetModel, THREE.Mesh[]>();
   private dynamics?: ShipDynamics;
@@ -288,6 +294,7 @@ export class SolarScene {
     const software = /swiftshader|llvmpipe|software/i.test(graphicsRenderer);
     this.renderer.domElement.dataset.graphicsRenderer = graphicsRenderer;
     if (software) this.minimumRenderRatio = 0.125;
+    else this.surfaceAnisotropy = this.renderer.capabilities.getMaxAnisotropy();
     this.renderer.domElement.dataset.softwareRenderer = String(software);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -441,7 +448,7 @@ export class SolarScene {
       texture.image = canvas;
     }
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = surface ? this.renderer.capabilities.getMaxAnisotropy() : Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+    texture.anisotropy = surface ? this.surfaceAnisotropy : Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
     if (surface) texture.wrapS = THREE.RepeatWrapping;
     texture.needsUpdate = true;
     return texture;
@@ -565,7 +572,7 @@ export class SolarScene {
           texture.dispose();
           throw new Error("场景已关闭");
         }
-        texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+        texture.anisotropy = this.surfaceAnisotropy;
         texture.wrapS = THREE.RepeatWrapping;
         await (texture.image as HTMLImageElement).decode?.().catch(() => undefined);
         this.textures.add(texture);
@@ -763,7 +770,13 @@ export class SolarScene {
       ? Math.min((time - this.lastTime) / 1000, 0.25)
       : 0;
     this.lastTime = time;
-    if ((!this.flying || !this.flightPaused) && this.renderBudget.sample(delta)) this.applyRenderBudget();
+    // Adapt resolution only while the picture moves; a paused, still view is restored to full sharpness.
+    const moved = !this.camera.position.equals(this.lastCameraPosition) || !this.camera.quaternion.equals(this.lastCameraQuaternion);
+    this.lastCameraPosition.copy(this.camera.position);
+    this.lastCameraQuaternion.copy(this.camera.quaternion);
+    const animating = this.flying ? !this.flightPaused : !this.paused || moved || !!this.targetPosition;
+    this.stillSeconds = animating ? 0 : this.stillSeconds + delta;
+    if (animating ? this.renderBudget.sample(delta) : this.stillSeconds > 0.4 && this.renderBudget.rest()) this.applyRenderBudget();
     this.updateSurfaceMaps(delta, time);
     if (this.flying) {
       this.animateFlight(delta, time);

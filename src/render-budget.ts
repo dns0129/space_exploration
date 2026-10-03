@@ -20,6 +20,14 @@ export class RenderBudget {
     this.healthySeconds = 0;
     this.slowFrames = this.sampledFrames = 0;
   }
+  /** A still image needs no frame budget: return to full sharpness. Returns true if the ratio changed. */
+  rest() {
+    if (this.ratio >= this.ceiling) return false;
+    this.ratio = this.ceiling;
+    this.windowSeconds = -1.5;
+    this.healthySeconds = this.slowFrames = this.sampledFrames = 0;
+    return true;
+  }
   /** Ignore frames briefly, e.g. while a large texture uploads, so one stall doesn't blur the view. */
   hold(seconds: number) {
     this.holdSeconds = Math.max(this.holdSeconds, seconds);
