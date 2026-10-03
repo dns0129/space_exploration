@@ -83,6 +83,8 @@ const planetFragment = /* glsl */ `
   uniform float bodyRadius;
   uniform float uTime;
   uniform float ringsEnabled;
+  uniform vec3 moonColor;
+  uniform float moonSeed, moonStyle;
   varying vec2 vUv;
   varying vec3 vLocalPosition;
   varying vec3 vWorldPosition;
@@ -151,6 +153,20 @@ const planetFragment = /* glsl */ `
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
       return;
+    #elif BODY_KIND == 8
+      float regions = fbm(p*4.0+moonSeed);
+      float pits = crater(vUv,20.0)+crater(vUv,62.0)*0.4;
+      height += pits*0.35;
+      color = moonColor * (0.35+regions*0.85+pits*0.5+detail*0.12);
+      if (moonStyle == 0.0) color = mix(color,color*0.45,smoothstep(0.58,0.68,regions));
+      if (moonStyle == 1.0) {
+        float cracks = 1.0-smoothstep(0.018,0.065,abs(sin(p.x*38.0+fbm(p*12.0+moonSeed)*10.0)));
+        height -= cracks*0.1;
+        color = mix(moonColor*(0.7+regions*0.45),vec3(0.25,0.15,0.10),cracks*0.7);
+      }
+      if (moonStyle == 2.0) color = mix(moonColor*(0.6+regions),vec3(0.12,0.07,0.035),smoothstep(0.66,0.75,noise3(p*24.0)));
+      if (moonStyle == 3.0) color = moonColor*(0.8+fbm(p*vec3(12.0,4.0,12.0))*0.35);
+      if (moonStyle == 4.0) color *= mix(0.18,1.3,smoothstep(-0.1,0.12,p.x));
     #endif
     #ifdef PHOTOGRAPHIC_MAP
       color = texture2D(detailMap,vUv).rgb;
@@ -299,7 +315,7 @@ export function createPlanetModel(
     new THREE.ShaderMaterial({
       vertexShader: modelVertex,
       fragmentShader: planetFragment,
-      defines: { BODY_KIND: kinds[body.id], ...(map ? { PHOTOGRAPHIC_MAP: 1 } : {}) },
+      defines: { BODY_KIND: body.parentId ? 8 : kinds[body.id as keyof typeof kinds], ...(map ? { PHOTOGRAPHIC_MAP: 1 } : {}) },
       uniforms: {
         detailMap: { value: map ?? null },
         sunDirection: { value: sunDirection },
@@ -308,6 +324,9 @@ export function createPlanetModel(
         bodyRadius: { value: placement.radius },
         uTime,
         ringsEnabled,
+        moonColor: { value: new THREE.Color(body.color) },
+        moonSeed: { value: body.surfaceSeed ?? 0 },
+        moonStyle: { value: body.surfaceStyle ?? 0 },
       },
     }),
   );

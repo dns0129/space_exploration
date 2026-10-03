@@ -2101,3 +2101,15 @@ dialog h2 {
   .warp-engine .eyebrow { font-size: 8px; letter-spacing: .8px; }
   .warp-engine small { font-size: 10px; line-height: 1.5; }
 }
+
+.satellite-navigation { position: absolute; z-index: 15; top: 152px; right: 28px; display: flex; align-items: center; gap: 10px; font-size: 11px; color: #b9cbd1; }
+.satellite-navigation select { max-width: 195px; padding: 7px 10px; color: #e3eff3; background: #10232b; border: 1px solid #48616c; border-radius: 5px; }
+.flight-mode .satellite-navigation { top: 164px; right: 28px; }
+.flight-deceleration { position: absolute; inset: 0; pointer-events: none; opacity: 0; box-shadow: inset 0 0 110px #efa85f80; background: radial-gradient(ellipse at center, transparent 45%, #ffc28022 78%, #e08e3b44); }
+.flight-deceleration::before { content: ""; position: absolute; inset: 15%; border: 2px solid #ffd6a866; border-radius: 50%; transform: scale(var(--brake-scale, 1)); box-shadow: 0 0 45px #ffbd6140; }
+.flight-deceleration span { position: absolute; left: 50%; top: 36%; transform: translateX(-50%); color: #ffd4a0; letter-spacing: 3px; font-size: 12px; text-shadow: 0 0 15px #d4873b; }
+@media (max-width: 800px) {
+  .satellite-navigation, .flight-mode .satellite-navigation { top: 116px; right: 12px; gap: 6px; font-size: 10px; }
+  .satellite-navigation select { padding: 4px 6px; max-width: 164px; }
+}
+@media (prefers-reduced-motion: reduce) { .flight-deceleration::before { display: none; } }

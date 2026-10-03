@@ -57,8 +57,14 @@ try {
     "uranus",
     "neptune",
     "sun",
+    "moon", "io", "europa", "ganymede", "callisto",
+    "mimas", "enceladus", "tethys", "dione", "rhea", "titan", "hyperion", "iapetus",
+    "miranda", "ariel", "umbriel", "titania", "oberon",
+    "naiad", "thalassa", "despina", "galatea", "larissa", "proteus", "triton", "nereid",
   ]) {
-    if (id !== "earth") await page.locator(`button[data-body="${id}"]`).click();
+    if (await page.locator(`button[data-body="${id}"]`).count()) {
+      if (id !== "earth") await page.locator(`button[data-body="${id}"]`).click();
+    } else await page.locator("#satellite-target").selectOption(id);
     await page.waitForFunction(
       (body) => document.querySelector("#canvas-host")?.dataset.body === body,
       id,
@@ -117,7 +123,7 @@ try {
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(
-    "PASS: nine models, free flight, thrust, warp, camera and local save/restore; zero HTTP requests or browser errors.",
+    "PASS: all 35 models, free flight, thrust, warp, camera and local save/restore; zero HTTP requests or browser errors.",
   );
 } finally {
   await browser.close();

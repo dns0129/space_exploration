@@ -39,12 +39,14 @@ export function validateFlightState(value) {
     return null;
   const body = world.bodies.find((b) => b.id === value.target);
   const old = legacy[value.target];
+  if (value.version === 1 && !old) return null;
   const position = value.version === 1
     ? value.position.map((n, i) => body.position[i] + (n - old[1][i]) / old[0] * body.radius)
     : [...value.position];
   if (!vector(position, 3, 1e8)) return null;
   return {
     version: 2,
+    ...(value.version === 2 && ids.has(value.escapeBody) ? { escapeBody: value.escapeBody } : {}),
     position,
     velocity: value.version === 1 ? [0, 0, 0] : [...value.velocity],
     orientation: value.orientation.map((n) => n / (Math.abs(norm - 1) < 1e-10 ? 1 : norm)),

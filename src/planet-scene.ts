@@ -36,6 +36,7 @@ export interface FlightStats {
 }
 export interface FlightTrackingStats extends FlightTargetStats {
   target: BodyId;
+  deceleration: number;
   aimX: number;
   aimY: number;
   steering: boolean;
@@ -630,7 +631,7 @@ export class SolarScene {
     this.flightControls = new FlightControls(this.renderer.domElement);
     this.renderer.domElement.setAttribute(
       "aria-label",
-      "自由驾驶飞船：W/S 推力，鼠标偏移或触屏拖动转向，空格刹车",
+      "自由驾驶飞船：W/S 推力，方向键或触屏拖动转向，空格刹车",
     );
     this.updateFlightCamera(1);
     this.renderer.compile(this.scene, this.camera);
@@ -758,7 +759,7 @@ export class SolarScene {
     this.flightRelative.fromArray(target.position).sub(ship.position);
     const tracking = projectFlightTarget(this.flightRelative, this.camera);
     const aim = this.flightControls!.aim;
-    this.flightTargetHandler?.({ ...tracking, target: ship.target,
+    this.flightTargetHandler?.({ ...tracking, target: ship.target, deceleration: ship.deceleration,
       aimX: aim.x, aimY: aim.y, steering: aim.active && !this.flightPaused,
       width: this.flightWidth, height: this.flightHeight });
     if (time - this.flightMetrics < 150) return;

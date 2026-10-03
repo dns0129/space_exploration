@@ -56,20 +56,14 @@ export class FlightControls {
     on(window, "blur", (() => this.clear()) as EventListener);
     on(document, "visibilitychange", (() => this.clear()) as EventListener);
     on(canvas, "pointerdown", ((e: PointerEvent) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || e.pointerType === "mouse") return;
       this.pointer = e.pointerId;
       this.lastX = e.clientX;
       this.lastY = e.clientY;
       canvas.setPointerCapture(e.pointerId);
     }) as EventListener);
     on(canvas, "pointermove", ((e: PointerEvent) => {
-      if (e.pointerType === "mouse") {
-        const bounds = canvas.getBoundingClientRect();
-        this.mouseX = Math.max(-1, Math.min(1, (e.clientX - bounds.left - bounds.width / 2) / (bounds.width * 0.35)));
-        this.mouseY = Math.max(-1, Math.min(1, (e.clientY - bounds.top - bounds.height / 2) / (bounds.height * 0.35)));
-        this.steering = true;
-        return;
-      }
+      if (e.pointerType === "mouse") return;
       if (this.pointer !== e.pointerId) return;
       this.mouseX = Math.max(-1, Math.min(1, (e.clientX - this.lastX) / 80));
       this.mouseY = Math.max(-1, Math.min(1, (e.clientY - this.lastY) / 80));

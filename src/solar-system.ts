@@ -1,3 +1,4 @@
+import moonData from "../shared/moons.json";
 export type BodyId =
   | "sun"
   | "mercury"
@@ -7,7 +8,33 @@ export type BodyId =
   | "jupiter"
   | "saturn"
   | "uranus"
-  | "neptune";
+  | "neptune"
+  | "moon"
+  | "io"
+  | "europa"
+  | "ganymede"
+  | "callisto"
+  | "mimas"
+  | "enceladus"
+  | "tethys"
+  | "dione"
+  | "rhea"
+  | "titan"
+  | "hyperion"
+  | "iapetus"
+  | "miranda"
+  | "ariel"
+  | "umbriel"
+  | "titania"
+  | "oberon"
+  | "naiad"
+  | "thalassa"
+  | "despina"
+  | "galatea"
+  | "larissa"
+  | "proteus"
+  | "triton"
+  | "nereid";
 export type Layer = "clouds" | "atmosphere" | "stars" | "rings";
 
 export interface CelestialBody {
@@ -26,10 +53,14 @@ export interface CelestialBody {
   caption: string;
   layers: readonly Layer[];
   atmosphereColor?: string;
+  parentId?: BodyId;
+  orbitRadiusKm?: number;
+  surfaceStyle?: number;
+  surfaceSeed?: number;
 }
 
 /** Single-body models use radius 1; real radii drive information and height readouts. */
-export const SOLAR_SYSTEM: readonly CelestialBody[] = [
+export const PRIMARY_BODIES: readonly CelestialBody[] = [
   {
     id: "sun",
     name: "太阳",
@@ -191,6 +222,22 @@ export const SOLAR_SYSTEM: readonly CelestialBody[] = [
     atmosphereColor: "#4e91ee",
   },
 ];
+
+export const MOONS: readonly CelestialBody[] = moonData.map((moon, index) => {
+  const parent = PRIMARY_BODIES.find((body) => body.id === moon.parentId)!;
+  return {
+    ...moon, id: moon.id as BodyId, parentId: moon.parentId as BodyId,
+    axialTiltDeg: moon.parentId === "uranus" ? 97.77 : 0,
+    flattening: moon.id === "hyperion" ? 0.72 : ["naiad", "thalassa", "proteus"].includes(moon.id) ? 0.88 : 1,
+    distanceFromSunMillionKm: parent.distanceFromSunMillionKm,
+    rotationSpeed: 0.012, surfaceSeed: index * 7.31 + 1,
+    tags: [parent.name + "卫星", moon.surfaceStyle === 1 ? "冰壳与裂缝" : moon.surfaceStyle === 2 ? "火山世界" : "冰岩世界"],
+    caption: `${moon.english} / ${parent.english} SYSTEM`,
+    layers: moon.id === "titan" ? ["atmosphere", "stars"] : ["stars"],
+    atmosphereColor: moon.id === "titan" ? "#dfa350" : undefined,
+  };
+});
+export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS];
 
 export const getBody = (id: BodyId): CelestialBody =>
   SOLAR_SYSTEM.find((body) => body.id === id)!;

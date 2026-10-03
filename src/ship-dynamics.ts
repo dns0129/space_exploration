@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
 import type { BodyId } from "./solar-system";
+// Centimetre tolerance compensates for subtraction at AU-scale coordinates.
+const SURFACE_EPSILON_KM = 1e-5;
 export interface FlightInput {
   throttle: number;
   strafe: number;
@@ -32,6 +34,8 @@ export class ShipDynamics {
   readonly orientation = new THREE.Quaternion();
   readonly angularVelocity = new THREE.Vector3();
   bank = 0;
+  deceleration = 0;
+  private escapeBody: BodyId | null = null;
   target: BodyId = "earth";
   camera: "cockpit" | "chase" = "cockpit";
   assist = true;
@@ -51,6 +55,8 @@ export class ShipDynamics {
   }
   jump(id: BodyId) {
     this.resetWarp();
+    this.escapeBody = null;
+    this.deceleration = 0;
     const body = this.config.bodies.find((b) => b.id === id)!;
     const center = new THREE.Vector3().fromArray(body.position);
     const side =
@@ -62,7 +68,7 @@ export class ShipDynamics {
             .normalize()
             .add(new THREE.Vector3(0, 0.18, 0))
             .normalize();
-    const distance = body.radius * (id === "saturn" ? 5 : 3.8);
+    const distance = Math.max(body.radius * (id === "saturn" ? 5 : 3.8), body.radius + 1100 / this.config.unitsKm);
     this.position.copy(center).addScaledVector(side, distance);
     this.velocity.set(0, 0, 0);
     this.target = id;
@@ -84,6 +90,7 @@ export class ShipDynamics {
   snapshot(): FlightState {
     return {
       version: 2,
+      ...(this.escapeBody ? { escapeBody: this.escapeBody } : {}),
       position: this.position.toArray(),
       velocity: this.velocity.toArray(),
       orientation: this.orientation.toArray(),
@@ -97,12 +104,15 @@ export class ShipDynamics {
     const saved = validateFlightState(value);
     if (!saved) return false;
     this.resetWarp();
+    this.escapeBody = null;
+    this.deceleration = 0;
     this.position.fromArray(saved.position);
     this.velocity.fromArray(saved.velocity).clampLength(0, this.config.boostSpeed);
     this.orientation.fromArray(saved.orientation);
     this.angularVelocity.set(0, 0, 0);
     this.bank = 0;
     this.target = saved.target;
+    this.escapeBody = saved.escapeBody ?? null;
     this.camera = saved.camera;
     this.assist = saved.assist;
     this.elapsed = saved.elapsed;
@@ -120,27 +130,34 @@ export class ShipDynamics {
       ) - candidate.radius) * this.config.unitsKm;
       if (altitude < altitudeKm) { body = candidate; altitudeKm = altitude; }
     }
-    const nearHeightKm = Math.max(this.config.flightSafety.nearSurfaceMinKm,
-      body.radius * this.config.unitsKm * this.config.flightSafety.nearSurfaceRadiusFactor);
+    const nearHeightKm = this.config.flightSafety.nearSurfaceMinKm;
     const atmospheric = !!body.atmosphereKm && altitudeKm <= body.atmosphereKm;
-    const restricted = atmospheric || altitudeKm <= nearHeightKm;
-    return { body, altitudeKm: Math.max(0, altitudeKm), atmospheric, restricted, nearHeightKm };
+    const outward = this.position.clone().sub(new THREE.Vector3().fromArray(body.position)).normalize();
+    const headingOut = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation).dot(outward) > 0.25;
+    const movingOut = this.velocity.dot(outward) >= -1e-9;
+    const escaping = altitudeKm <= nearHeightKm + SURFACE_EPSILON_KM && headingOut && movingOut
+      && (altitudeKm <= 100 + SURFACE_EPSILON_KM || this.escapeBody === body.id);
+    const restricted = altitudeKm <= nearHeightKm + SURFACE_EPSILON_KM && !escaping;
+    return { body, altitudeKm: Math.max(0, altitudeKm), atmospheric, restricted, nearHeightKm, escaping };
   }
   get speedLimit() {
-    return this.environment.restricted
-      ? this.config.engines[0].maxSpeedKm / this.config.unitsKm
-      : this.config.boostSpeed;
+    const environment = this.environment;
+    return (environment.restricted ? this.config.engines[0].maxSpeedKm
+      : environment.escaping ? this.config.engines[1].maxSpeedKm
+      : this.config.boostSpeed * this.config.unitsKm) / this.config.unitsKm;
   }
   get engine() {
-    if (this.environment.restricted) return this.config.engines[0];
+    const environment = this.environment;
+    if (environment.restricted) return this.config.engines[0];
+    if (environment.escaping) return this.config.engines[1];
     const speedKm = this.velocity.length() * this.config.unitsKm;
-    // Shared boundaries belong to the faster engine; stopping remains possible.
     return this.config.engines.find((engine) => speedKm < engine.maxSpeedKm)
       ?? this.config.engines[this.config.engines.length - 1];
   }
   step(seconds: number, input: FlightInput) {
     const duration = Math.max(0, Math.min(seconds, 0.25));
     if (!duration) return;
+    this.deceleration *= Math.exp(-duration * 3);
     if (this.warping) { this.stepWarp(duration); return; }
     for (let remaining = duration; remaining > 1e-9; remaining -= 0.05)
       this.stepManual(Math.min(remaining, 0.05), input);
@@ -178,6 +195,9 @@ export class ShipDynamics {
       local.z = (local.z > 0 ? 1 : -1) * forwardSpeed;
       this.velocity.copy(local.applyQuaternion(this.orientation));
     }
+    const environment = this.environment;
+    this.escapeBody = environment.escaping ? environment.body.id : null;
+    const previousSpeedKm = this.velocity.length() * this.config.unitsKm;
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation);
     const slowing = input.throttle < 0 && this.velocity.dot(forward) * this.config.unitsKm > 1;
     const acceleration = new THREE.Vector3(
@@ -206,8 +226,9 @@ export class ShipDynamics {
     if (travel.lengthSq()) {
       for (const body of this.config.bodies) {
         const center = new THREE.Vector3().fromArray(body.position);
-        const radius = body.radius + Math.max(this.config.flightSafety.nearSurfaceMinKm / this.config.unitsKm,
-          body.radius * this.config.flightSafety.nearSurfaceRadiusFactor);
+        // An outward departure may cross its own safety shell; other bodies still brake it.
+        if (this.escapeBody === body.id && environment.escaping) continue;
+        const radius = body.radius + this.config.flightSafety.nearSurfaceMinKm / this.config.unitsKm;
         const t = THREE.MathUtils.clamp(center.clone().sub(previous).dot(travel) / travel.lengthSq(), 0, 1);
         if (previous.clone().addScaledVector(travel, t).distanceTo(center) <= radius) {
           this.velocity.clampLength(0, this.config.engines[0].maxSpeedKm / this.config.unitsKm);
@@ -218,6 +239,9 @@ export class ShipDynamics {
     this.position.addScaledVector(this.velocity, dt);
     this.resolveCollision(previous);
     this.velocity.clampLength(0, this.speedLimit);
+    const lostSpeedKm = previousSpeedKm - this.velocity.length() * this.config.unitsKm;
+    if (lostSpeedKm > 0.05 && (input.brake || slowing || lostSpeedKm > Math.max(2, previousSpeedKm * 0.015)))
+      this.deceleration = Math.max(this.deceleration, Math.min(1, lostSpeedKm / Math.max(10, previousSpeedKm * 0.15)));
     this.elapsed += dt;
   }
   get warping() {
@@ -233,14 +257,13 @@ export class ShipDynamics {
   get warpBlockReason(): string | null {
     if (this.warpPhase !== "ready") return "跃迁引擎正在工作或冷却";
     const environment = this.environment;
-    if (environment.atmospheric) return "大气层内仅可使用近地轨道引擎，请先离开大气层";
-    if (environment.restricted) return "处于近行星安全区，请先远离天体再启动跃迁";
+    if (environment.altitudeKm <= this.config.flightSafety.nearSurfaceMinKm + SURFACE_EPSILON_KM) return "距天体表面 1000 km 内禁止跃迁，请先向太空离开";
     const target = this.config.bodies.find((body) => body.id === this.target)!;
     const altitudeKm = (Math.hypot(...target.position.map((value, axis) => value - this.position.getComponent(axis)))
       - target.radius) * this.config.unitsKm;
     const minimumKm = Math.max(this.config.flightSafety.warpTargetMinKm,
       target.radius * this.config.unitsKm * this.config.flightSafety.warpTargetRadiusFactor);
-    if (altitudeKm <= minimumKm) return "距离目标太近，无法启动跃迁，请直接驾驶接近";
+    if (altitudeKm <= minimumKm + SURFACE_EPSILON_KM) return "距离目标太近，无法启动跃迁，请直接驾驶接近";
     return null;
   }
   startWarp(): string | null {

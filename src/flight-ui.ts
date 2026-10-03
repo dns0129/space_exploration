@@ -20,6 +20,7 @@ export class FlightInterface {
   private marker!: HTMLElement;
   private markerName!: HTMLElement;
   private aim!: HTMLElement;
+  private deceleration!: HTMLElement;
   private trackedTarget?: BodyId;
   private notify: (message: string) => void;
   private changed: (active: boolean, target?: BodyId) => void;
@@ -36,16 +37,18 @@ export class FlightInterface {
   <div class="flight-toolbar"><button id="flight-camera" aria-pressed="false">切换外部视角 <kbd>C</kbd></button><button id="flight-assist" aria-pressed="true">驾驶辅助：开</button><button id="flight-pause" aria-pressed="false">暂停航行</button><button id="flight-save">保存航行</button><button id="flight-resume" disabled>恢复存档</button><select id="flight-quality" aria-label="航行画质"><option value="high">高清</option><option value="standard">标准</option></select></div>
   <aside class="flight-navigation"><span class="eyebrow">导航目标 / DESTINATION</span><h3 id="flight-target">地球</h3><p><strong id="flight-distance">—</strong><small id="flight-distance-unit"> km</small></p><small id="flight-distance-au"></small><div><button id="flight-align">对准目标</button><button id="flight-jump">启动跃迁 <kbd>J</kbd></button></div><small class="flight-nav-note">真实距离 · 1 AU ≈ 1.496 亿 km</small></aside>
   <aside class="warp-engine" id="warp-engine" data-phase="ready" aria-label="跃迁引擎"><span class="eyebrow">HYPERDRIVE / 跃迁引擎</span><strong id="warp-label">引擎就绪</strong><div class="warp-track"><i id="warp-progress"></i></div><small id="warp-hint">选择目的地，按 J 蓄能启航</small><button id="warp-cancel" hidden>中止跃迁</button></aside>
+  <div id="flight-deceleration" class="flight-deceleration" aria-hidden="true"><span>减速制动 / DECELERATING</span></div>
   <div class="flight-crosshair" aria-hidden="true"><i></i><b></b></div><div class="flight-aim" id="flight-aim" aria-hidden="true" hidden></div><div class="flight-marker" id="flight-marker" aria-hidden="true"><i></i><span>地球</span></div>
   <div class="cockpit-frame" aria-hidden="true"><i class="cockpit-left"></i><i class="cockpit-right"></i><i class="cockpit-dashboard"></i></div>
   <div class="flight-instruments"><div><span>航速 / SPEED</span><strong id="flight-speed">0</strong><small id="flight-speed-unit">km/s</small><small id="flight-engine" data-engine="orbital">近地轨道引擎 · 自动</small><small id="flight-engine-range">1–100 km/s</small></div><div><span>最近天体 / NEAREST</span><strong id="flight-nearest">地球</strong><small id="flight-altitude">— km 高度</small></div><div><span>航向 / HEADING</span><strong id="flight-heading">000°</strong><small id="flight-time">00:00</small></div><div class="flight-save-info"><span>航行存档 / SAVE</span><strong id="flight-storage">准备存档</strong><small>每 20 秒自动保存</small></div></div>
-  <p class="flight-key-guide"><kbd>W S</kbd> 前进/减速 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>↑ ↓ ← →</kbd> / 鼠标偏移转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车</p>
+  <p class="flight-key-guide"><kbd>W S</kbd> 前进/减速 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>↑ ↓ ← →</kbd> 转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车</p>
   <div class="flight-touch" aria-label="触屏驾驶控制"><div class="flight-thrust-pad"><button data-flight-input="KeyR" aria-label="飞船上升">升</button><button data-flight-input="KeyW" aria-label="飞船前进">前进</button><button data-flight-input="KeyF" aria-label="飞船下降">降</button><button data-flight-input="KeyA" aria-label="飞船左移">左移</button><button data-flight-input="Space" aria-label="飞船刹车">刹车</button><button data-flight-input="KeyD" aria-label="飞船右移">右移</button><button data-flight-input="KeyQ" aria-label="飞船左翻滚">↶</button><button data-flight-input="KeyS" aria-label="飞船减速或倒车">减速</button><button data-flight-input="KeyE" aria-label="飞船右翻滚">↷</button></div><div class="flight-steer-pad"><button data-flight-input="ArrowUp" aria-label="飞船抬头">↑</button><button data-flight-input="ArrowLeft" aria-label="飞船左转">←</button><button data-flight-input="ShiftLeft" aria-label="飞船加速">加速</button><button data-flight-input="ArrowRight" aria-label="飞船右转">→</button><button data-flight-input="ArrowDown" aria-label="飞船低头">↓</button></div></div>
  </section>`,
     );
     this.marker = $("#flight-marker");
     this.markerName = this.marker.querySelector("span")!;
     this.aim = $("#flight-aim");
+    this.deceleration = $("#flight-deceleration");
     $("#flight-camera").onclick = () => this.camera();
     $("#flight-assist").onclick = () => {
       const state = this.scene?.flightState();
@@ -232,7 +235,7 @@ export class FlightInterface {
     $("#flight-distance-au").textContent = useAu ? `${number(stats.distanceKm)} km` : `${(stats.distanceKm / 149597870.7).toFixed(6)} AU`;
     const labels = { ready: "引擎就绪", charging: "引擎蓄能", transit: "跃迁航行", arrival: "减速抵达", cooldown: "引擎冷却" };
     const activeWarp = ["charging", "transit", "arrival"].includes(stats.warpPhase);
-    const zone = stats.environment.atmospheric ? "大气层" : stats.environment.restricted ? "安全区" : "自动";
+    const zone = stats.environment.escaping ? "向太空离地" : stats.environment.atmospheric ? "大气层" : stats.environment.restricted ? "安全区" : "自动";
     $("#flight-engine").textContent = activeWarp ? "跃迁引擎" : `${stats.engine.name} · ${zone}`;
     $("#flight-ui").dataset.environment = stats.environment.atmospheric ? "atmosphere" : stats.environment.restricted ? "near" : "space";
     $("#flight-engine").dataset.engine = activeWarp ? "warp" : stats.engine.id;
@@ -250,7 +253,7 @@ export class FlightInterface {
     $("#flight-jump").title = stats.warpBlockReason ?? "启动跃迁（J）";
     $<HTMLButtonElement>("#flight-align").disabled = activeWarp;
     $<HTMLButtonElement>("#flight-resume").disabled = activeWarp || !this.saved;
-    document.querySelectorAll<HTMLButtonElement>("[data-body]").forEach((button) => { button.disabled = activeWarp; });
+    document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("[data-body], #satellite-target").forEach((button) => { button.disabled = activeWarp; });
     $("#flight-nearest").textContent = getBody(stats.nearest).name;
     $("#flight-altitude").textContent = `${number(stats.altitudeKm)} km 高度`;
     $("#flight-heading").textContent =
@@ -265,8 +268,10 @@ export class FlightInterface {
         ? labels[stats.warpPhase]
       : stats.collision
         ? "安全护盾已制动 · 请转向离开"
-        : stats.environment.atmospheric
-          ? "大气层飞行 · 仅限近地轨道引擎"
+        : stats.environment.escaping
+          ? "离地推进 · 行星引擎可用，跃迁受限"
+        : stats.environment.restricted && stats.environment.atmospheric
+          ? "大气层飞行 · 最高 100 km/s"
         : stats.environment.restricted
           ? "近行星安全区 · 最高 100 km/s"
         : stats.boosting
@@ -284,6 +289,8 @@ export class FlightInterface {
       this.markerName.textContent = getBody(stats.target).name;
       this.trackedTarget = stats.target;
     }
+    this.deceleration.style.opacity = stats.deceleration.toFixed(3);
+    this.deceleration.style.setProperty("--brake-scale", String(0.72 + stats.deceleration * 0.28));
     this.aim.hidden = !stats.steering;
     this.aim.style.transform = `translate3d(${(0.5 + stats.aimX * 0.35) * stats.width}px, ${(0.5 + stats.aimY * 0.35) * stats.height}px, 0) translate(-50%, -50%)`;
   }

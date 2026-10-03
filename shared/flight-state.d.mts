@@ -8,6 +8,7 @@ export interface FlightState {
   camera: "cockpit" | "chase";
   assist: boolean;
   elapsed: number;
+  escapeBody?: BodyId;
 }
 export interface WorldConfig {
   version: number;

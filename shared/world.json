@@ -5,15 +5,36 @@
   "cruiseSpeed": 7.848061528802386,
   "boostSpeed": 7.848061528802386,
   "engines": [
-    { "id": "orbital", "name": "近地轨道引擎", "minSpeedKm": 1, "maxSpeedKm": 100, "accelerationKm": 30, "boostAccelerationKm": 100 },
-    { "id": "planetary", "name": "行星引擎", "minSpeedKm": 100, "maxSpeedKm": 10000, "accelerationKm": 2000, "boostAccelerationKm": 6000 },
-    { "id": "interstellar", "name": "星际引擎", "minSpeedKm": 10000, "maxSpeedKm": 50000, "accelerationKm": 10000, "boostAccelerationKm": 30000 }
+    {
+      "id": "orbital",
+      "name": "\u8fd1\u5730\u8f68\u9053\u5f15\u64ce",
+      "minSpeedKm": 1,
+      "maxSpeedKm": 100,
+      "accelerationKm": 30,
+      "boostAccelerationKm": 100
+    },
+    {
+      "id": "planetary",
+      "name": "\u884c\u661f\u5f15\u64ce",
+      "minSpeedKm": 100,
+      "maxSpeedKm": 10000,
+      "accelerationKm": 2000,
+      "boostAccelerationKm": 6000
+    },
+    {
+      "id": "interstellar",
+      "name": "\u661f\u9645\u5f15\u64ce",
+      "minSpeedKm": 10000,
+      "maxSpeedKm": 50000,
+      "accelerationKm": 10000,
+      "boostAccelerationKm": 30000
+    }
   ],
   "flightSafety": {
-    "nearSurfaceMinKm": 2000,
-    "nearSurfaceRadiusFactor": 0.5,
-    "warpTargetMinKm": 2000,
-    "warpTargetRadiusFactor": 3
+    "nearSurfaceMinKm": 1000,
+    "nearSurfaceRadiusFactor": 0,
+    "warpTargetMinKm": 1000,
+    "warpTargetRadiusFactor": 0
   },
   "warp": {
     "chargeSeconds": 1.6,
@@ -109,6 +130,267 @@
         0,
         -644557.8695101643
       ]
+    },
+    {
+      "id": "moon",
+      "radius": 0.27270444200282534,
+      "position": [
+        49.42427339894798,
+        3.0162204740074596,
+        23515.541434403036
+      ],
+      "parentId": "earth"
+    },
+    {
+      "id": "io",
+      "radius": 0.28592057761732853,
+      "position": [
+        -107850.81767114798,
+        3.308897434674677,
+        -57336.305449315994
+      ],
+      "parentId": "jupiter"
+    },
+    {
+      "id": "europa",
+      "radius": 0.24498508868309526,
+      "position": [
+        -108009.47522691403,
+        1.1970504757481604,
+        -57360.44397051195
+      ],
+      "parentId": "jupiter"
+    },
+    {
+      "id": "ganymede",
+      "radius": 0.41345157746036726,
+      "position": [
+        -107797.00627679373,
+        -11.21467460821823,
+        -57502.310637389186
+      ],
+      "parentId": "jupiter"
+    },
+    {
+      "id": "callisto",
+      "radius": 0.37832365405744783,
+      "position": [
+        -107892.27145808919,
+        25.73142757107025,
+        -57080.01475709675
+      ],
+      "parentId": "jupiter"
+    },
+    {
+      "id": "mimas",
+      "radius": 0.031109715900172655,
+      "position": [
+        141623.41315666103,
+        7.513209901825917,
+        174875.80976222074
+      ],
+      "parentId": "saturn"
+    },
+    {
+      "id": "enceladus",
+      "radius": 0.03956992622822163,
+      "position": [
+        141562.5138398331,
+        2.1911913206254137,
+        174865.24189449835
+      ],
+      "parentId": "saturn"
+    },
+    {
+      "id": "tethys",
+      "radius": 0.08336210955893894,
+      "position": [
+        141629.2976156492,
+        -15.932724752574142,
+        174829.25345425695
+      ],
+      "parentId": "saturn"
+    },
+    {
+      "id": "dione",
+      "radius": 0.08811803484539318,
+      "position": [
+        141602.11665968093,
+        26.620274019169734,
+        174913.75042760448
+      ],
+      "parentId": "saturn"
+    },
+    {
+      "id": "rhea",
+      "radius": 0.11988698791398524,
+      "position": [
+        141541.09173165113,
+        -26.326497342455024,
+        174808.61466613726
+      ],
+      "parentId": "saturn"
+    },
+    {
+      "id": "titan",
+      "radius": 0.40412808036415004,
+      "position": [
+        141791.1552526277,
+        3.8228990959832068,
+        174868.4819568297
+      ],
+      "parentId": "saturn",
+      "atmosphereKm": 600
+    },
+    {
+      "id": "hyperion",
+      "radius": 0.021189766127766442,
+      "position": [
+        141421.34593790726,
+        67.14550102325163,
+        174994.22087915675
+      ],
+      "parentId": "saturn"
+    },
+    {
+      "id": "iapetus",
+      "radius": 0.11528802385810705,
+      "position": [
+        141673.0515050488,
+        -249.20772589429993,
+        174366.04211491407
+      ],
+      "parentId": "saturn"
+    },
+    {
+      "id": "miranda",
+      "radius": 0.037011458169832055,
+      "position": [
+        -411874.6408719762,
+        11.541935214313144,
+        183384.2369482519
+      ],
+      "parentId": "uranus"
+    },
+    {
+      "id": "ariel",
+      "radius": 0.09086485638047402,
+      "position": [
+        -411920.98530524166,
+        3.8710552328726604,
+        183385.28363656593
+      ],
+      "parentId": "uranus"
+    },
+    {
+      "id": "umbriel",
+      "radius": 0.09177523151781511,
+      "position": [
+        -411864.43080806016,
+        -31.68257182662413,
+        183390.13491387112
+      ],
+      "parentId": "uranus"
+    },
+    {
+      "id": "titania",
+      "radius": 0.12382671480144404,
+      "position": [
+        -411888.3187135929,
+        67.79008626452388,
+        183376.5619119415
+      ],
+      "parentId": "uranus"
+    },
+    {
+      "id": "oberon",
+      "radius": 0.11951028096060273,
+      "position": [
+        -411956.0027285083,
+        -64.20293779676832,
+        183394.57230398952
+      ],
+      "parentId": "uranus"
+    },
+    {
+      "id": "naiad",
+      "radius": 0.005179720609009575,
+      "position": [
+        286981.85363925085,
+        0.3784164016648225,
+        -644553.544190901
+      ],
+      "parentId": "neptune"
+    },
+    {
+      "id": "thalassa",
+      "radius": 0.0064354104536179565,
+      "position": [
+        286967.8601124575,
+        0.08931947932214146,
+        -644556.8485838439
+      ],
+      "parentId": "neptune"
+    },
+    {
+      "id": "despina",
+      "radius": 0.011772092293203579,
+      "position": [
+        286980.95410250465,
+        -0.5503195052982723,
+        -644564.159690893
+      ],
+      "parentId": "neptune"
+    },
+    {
+      "id": "galatea",
+      "radius": 0.013812588290692198,
+      "position": [
+        286976.0729423299,
+        0.8467302981412415,
+        -644548.1913385702
+      ],
+      "parentId": "neptune"
+    },
+    {
+      "id": "larissa",
+      "radius": 0.015225239365876629,
+      "position": [
+        286967.49443641276,
+        -0.7118470558961266,
+        -644566.0059592447
+      ],
+      "parentId": "neptune"
+    },
+    {
+      "id": "proteus",
+      "radius": 0.03296185842097002,
+      "position": [
+        286994.10072279297,
+        0.0713243929983638,
+        -644557.0542686218
+      ],
+      "parentId": "neptune"
+    },
+    {
+      "id": "triton",
+      "radius": 0.212431329461623,
+      "position": [
+        286932.9669105203,
+        3.116415479201874,
+        -644522.2487182398
+      ],
+      "parentId": "neptune"
+    },
+    {
+      "id": "nereid",
+      "radius": 0.026683409197928113,
+      "position": [
+        287089.45607102226,
+        -74.77446291892062,
+        -645412.5455322384
+      ],
+      "parentId": "neptune"
     }
   ]
 }

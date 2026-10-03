@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, readFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ async function fixture(t) {
     url: `http://127.0.0.1:${server.address().port}`,
   };
 }
-test("backend serves the game and nine-body world; blocks invalid files and methods", async (t) => {
+test("backend serves the game and full solar world; blocks invalid files and methods", async (t) => {
   const { url } = await fixture(t);
   assert.equal(await (await fetch(url)).text(), "<h1>Voyager flight</h1>");
   assert.deepEqual(await (await fetch(url + "/api/world")).json(), world);
@@ -330,27 +331,27 @@ test("planet proximity blocks warp without changing position or cooldown; changi
   const earth = world.bodies.find((body) => body.id === "earth");
   const place = (altitudeKm) => ship.position.fromArray(earth.position).add(new THREE.Vector3(0, 0, earth.radius + altitudeKm / world.unitsKm));
   ship.target = "earth";
-  for (const altitude of [100, 1000, earth.radius * world.unitsKm * 3 - 0.01]) {
+  for (const altitude of [100, 500, 1000]) {
     place(altitude);
     const previous = ship.snapshot();
     assert(ship.startWarp());
     assert.equal(ship.warpPhase, "ready");
     assert.deepEqual(ship.snapshot(), previous);
   }
-  place(earth.radius * world.unitsKm * 3 + 1);
+  place(1001);
   assert.equal(ship.startWarp(), null);
   ship.cancelWarp();
   for (let i = 0; i < 50; i++) ship.step(0.05, emptyInput());
   place(50);
   ship.target = "mars";
-  assert.match(ship.startWarp(), /大气层/);
+  assert.match(ship.startWarp(), /1000 km/);
   assert.equal(ship.warpPhase, "ready");
 });
 
-test("near planets and in atmosphere only the orbital engine works, even with boost, assistance off and restored high speeds", () => {
+test("inward or tangential flight below 1000 km uses the orbital engine, even with boost, assistance off and restored high speeds", () => {
   const ship = new ShipDynamics();
   const earth = world.bodies.find((body) => body.id === "earth");
-  for (const [altitude, atmosphere] of [[50, true], [1000, false]]) {
+  for (const [altitude, atmosphere] of [[50, true], [999, false]]) {
     ship.position.fromArray(earth.position).add(new THREE.Vector3(earth.radius + altitude / world.unitsKm, 0, 0));
     ship.velocity.set(0, 0, -50000 / world.unitsKm);
     ship.assist = false;
@@ -437,4 +438,101 @@ test("target projection uses the current camera turn and places off-screen and b
     assert(marker.targetY >= 14 - 1e-9 && marker.targetY <= 86 + 1e-9);
     assert(Math.abs(marker.targetX - 50) >= 43.99 || Math.abs(marker.targetY - 50) >= 35.99);
   }
+});
+
+
+test("outward planetary launch below 100 km crosses the safety shell, restores and relocks when facing inward", () => {
+  const earth = world.bodies.find(body => body.id === "earth");
+  const ship = new ShipDynamics();
+  ship.position.fromArray(earth.position).add(new THREE.Vector3(0, 0, earth.radius + 99 / world.unitsKm));
+  ship.orientation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+  assert.equal(ship.engine.id, "planetary");
+  assert.match(ship.startWarp(), /1000 km/);
+  ship.step(0.05, { ...emptyInput(), throttle: 1, boost: true });
+  assert(ship.environment.altitudeKm > 100);
+  assert(ship.environment.escaping);
+  assert(ship.velocity.length() * world.unitsKm > 100);
+  const restored = new ShipDynamics();
+  assert(restored.restore(ship.snapshot()));
+  assert(restored.environment.escaping);
+  assert(restored.velocity.equals(ship.velocity));
+  ship.orientation.identity();
+  ship.step(0.05, emptyInput());
+  assert(ship.velocity.length() * world.unitsKm <= 100 + 1e-8);
+  assert(ship.deceleration > 0.5);
+  restored.step(0.25, { ...emptyInput(), throttle: 1, boost: true });
+  restored.step(0.25, { ...emptyInput(), throttle: 1, boost: true });
+  assert(restored.environment.altitudeKm > 1000);
+  assert.equal(restored.warpBlockReason, null);
+  const direct = new ShipDynamics();
+  direct.position.fromArray(earth.position).add(new THREE.Vector3(0, 0, earth.radius + 101 / world.unitsKm));
+  direct.orientation.copy(restored.orientation);
+  assert.equal(direct.engine.id, "orbital", "a departure can only start inside 100 km");
+  direct.position.fromArray(earth.position).add(new THREE.Vector3(0, 0, earth.radius + 99 / world.unitsKm));
+  direct.velocity.set(0, 0, -1);
+  assert.equal(direct.engine.id, "orbital", "inward drift must brake before launch");
+});
+
+test("all 26 moons have real parent-relative distances, valid saves and safe warp destinations", () => {
+  const moons = JSON.parse(readFileSync(new URL("../shared/moons.json", import.meta.url), "utf8"));
+  assert.equal(moons.length, 26);
+  assert.equal(new Set(world.bodies.map(body => body.id)).size, 35);
+  const ship = new ShipDynamics();
+  for (const moon of moons) {
+    const body = world.bodies.find(body => body.id === moon.id);
+    const parent = world.bodies.find(body => body.id === moon.parentId);
+    assert(Math.abs(body.radius * world.unitsKm - moon.radiusKm) < 1e-6);
+    assert(Math.abs(Math.hypot(...body.position.map((n, axis) => n - parent.position[axis])) * world.unitsKm - moon.orbitRadiusKm) < 1e-5);
+    ship.jump("earth");
+    ship.target = moon.id;
+    assert.equal(ship.startWarp(), null, moon.id);
+    for (let i = 0; i < 300 && ship.warpPhase !== "ready"; i++) {
+      ship.step(0.05, emptyInput());
+      for (const obstacle of world.bodies) {
+        assert(ship.position.distanceTo(new THREE.Vector3().fromArray(obstacle.position)) > obstacle.radius * (obstacle.id === "sun" ? 1.24 : 1.002), `moon route intersects ${obstacle.id}`);
+      }
+    }
+    assert.equal(ship.warpPhase, "ready");
+    assert.equal(ship.environment.body.id, moon.id);
+    assert(ship.environment.altitudeKm >= 1099.99);
+    assert(validateFlightState(ship.snapshot()));
+    assert.equal(validateFlightState({ ...ship.snapshot(), version: 1 }), null);
+  }
+});
+
+test("braking generates a decaying visual pulse; ordinary assisted drift does not", () => {
+  const ship = new ShipDynamics();
+  ship.position.set(1e6, 0, 0);
+  ship.velocity.set(0, 0, -1);
+  ship.step(0.05, emptyInput());
+  assert.equal(ship.deceleration, 0);
+  ship.step(0.05, { ...emptyInput(), brake: true });
+  assert(ship.deceleration > 0.5);
+  const peak = ship.deceleration;
+  ship.step(0.25, emptyInput());
+  assert(ship.deceleration > 0 && ship.deceleration < peak);
+});
+
+
+test("every body uses the same 1000 km boundary, including large atmospheres", () => {
+  const ship = new ShipDynamics();
+  ship.orientation.identity();
+  for (const body of world.bodies) {
+    ship.position.fromArray(body.position).add(new THREE.Vector3(0, 0, body.radius + 1000 / world.unitsKm));
+    ship.velocity.set(0, 0, 0);
+    assert(ship.environment.restricted, `${body.id}: exactly 1000 km is restricted`);
+    assert.equal(ship.engine.id, "orbital");
+    assert(ship.warpBlockReason);
+    ship.position.z += 0.1 / world.unitsKm;
+    assert(!ship.environment.restricted, `${body.id}: above 1000 km is open`);
+    ship.velocity.set(0, 0, -10000 / world.unitsKm);
+    assert.equal(ship.engine.id, "interstellar");
+    assert.equal(ship.warpBlockReason, null);
+  }
+  const jupiter = world.bodies.find(body => body.id === "jupiter");
+  ship.position.fromArray(jupiter.position).add(new THREE.Vector3(0, 0, jupiter.radius + 1500 / world.unitsKm));
+  assert(ship.environment.atmospheric);
+  assert(!ship.environment.restricted);
+  assert.equal(ship.engine.id, "interstellar");
+  assert.equal(ship.warpBlockReason, null);
 });

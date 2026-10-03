@@ -9,7 +9,7 @@ async function launch(page: any) {
   await page.getByRole("combobox", { name: "航行画质" }).selectOption("standard");
 }
 
-test("锁定标识居中对齐天体，转向逐帧跟随，鼠标和触屏持续操纵后释放", async ({ page }, info) => {
+test("锁定标识居中对齐天体，转向逐帧跟随，鼠标不转向、触屏持续操纵后释放", async ({ page }, info) => {
   test.setTimeout(120000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -24,8 +24,7 @@ test("锁定标识居中对齐天体，转向逐帧跟随，鼠标和触屏持�
   });
   expect(Math.abs(offset[0])).toBeLessThan(2);
   expect(Math.abs(offset[1])).toBeLessThan(2);
-  await expect(page.locator("#flight-jump")).toBeDisabled();
-  await expect(page.locator("#warp-hint")).toContainText("距离目标太近");
+  await expect(page.locator("#flight-jump")).toBeEnabled();
   await page.keyboard.down("ArrowRight");
   const frames = await page.evaluate(async () => {
     const positions: string[] = [];
@@ -48,8 +47,25 @@ test("锁定标识居中对齐天体，转向逐帧跟随，鼠标和触屏持�
     await cdp.detach();
   } else {
     await page.mouse.move(box.x + box.width * 0.72, box.y + box.height / 2);
-    await expect(page.locator("#flight-aim")).toBeVisible();
-    await page.mouse.move(10, 10);
+    await expect(page.locator("#flight-aim")).toBeHidden();
+    await page.locator("#flight-align").click();
+    await expect.poll(async () => {
+      const marker = await page.locator("#flight-marker").boundingBox();
+      return Math.abs(marker!.x + marker!.width / 2 - box.x - box.width / 2);
+    }).toBeLessThan(2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.8);
+    await page.mouse.up();
+    await expect(page.locator("#flight-aim")).toBeHidden();
+    const transforms = await page.evaluate(async () => {
+      const values: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        values.push((document.querySelector("#flight-marker") as HTMLElement).style.transform);
+      }
+      return values;
+    });
+    expect(new Set(transforms).size).toBe(1);
   }
   await expect(page.locator("#flight-aim")).toBeHidden();
   await page.locator("#flight-align").click();
@@ -75,7 +91,7 @@ test("大气层内恢复高速存档会限为最低档，切换目标和 J 都�
   await expect(page.locator("#flight-ui")).toHaveAttribute("data-environment", "atmosphere");
   await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 大气层");
   await expect(page.locator("#flight-jump")).toBeDisabled();
-  await expect(page.locator("#warp-hint")).toContainText("大气层内仅可使用近地轨道引擎");
+  await expect(page.locator("#warp-hint")).toContainText("1000 km 内禁止跃迁");
   await page.locator('button[data-body="mars"]').click();
   await page.keyboard.press("j");
   await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready");
