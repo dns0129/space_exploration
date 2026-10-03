@@ -1,4 +1,4 @@
-import type { BodyId } from "../src/solar-system";
+import type { BodyId, SystemId, SystemGroupId } from "../src/solar-system";
 export interface FlightState {
   version: 2;
   position: number[];
@@ -9,11 +9,14 @@ export interface FlightState {
   assist: boolean;
   elapsed: number;
   escapeBody?: BodyId;
+  systemId: SystemId;
 }
 export interface WorldConfig {
   version: number;
   unitsKm: number;
   auKm: number;
+  lightYearKm: number;
+  systems: { id: SystemId; groupId: SystemGroupId; name: string; positionLy: number[]; primaryStar: BodyId; backgroundFile: string; backgroundIntensity: number; backgroundRotation: number[] }[];
   cruiseSpeed: number;
   boostSpeed: number;
   flightSafety: {
@@ -31,7 +34,7 @@ export interface WorldConfig {
     boostAccelerationKm: number;
   }[];
   warp: { chargeSeconds: number; travelSeconds: number; arrivalSeconds: number; cooldownSeconds: number };
-  bodies: { id: BodyId; radius: number; position: number[]; atmosphereKm?: number }[];
+  bodies: { id: BodyId; radius: number; position: number[]; systemId: SystemId; kind?: "star" | "planet"; hostStarId?: BodyId; atmosphereKm?: number }[];
 }
 export const world: WorldConfig;
 export function validateFlightState(value: unknown): FlightState | null;

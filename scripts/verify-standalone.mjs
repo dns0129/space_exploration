@@ -61,7 +61,9 @@ try {
     "mimas", "enceladus", "tethys", "dione", "rhea", "titan", "hyperion", "iapetus",
     "miranda", "ariel", "umbriel", "titania", "oberon",
     "naiad", "thalassa", "despina", "galatea", "larissa", "proteus", "triton", "nereid",
+    "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-c", "proxima-d",
   ]) {
+    if (id === "alpha-centauri-a") await page.locator("#star-system").selectOption("alpha-centauri");
     if (await page.locator(`button[data-body="${id}"]`).count()) {
       if (id !== "earth") await page.locator(`button[data-body="${id}"]`).click();
     } else await page.locator("#satellite-target").selectOption(id);
@@ -119,11 +121,32 @@ try {
     () => document.querySelector("#flight-nearest")?.textContent === "地球",
   );
   await page.getByRole("button", { name: "切换外部视角" }).click();
+  await page.locator("#star-system").selectOption("alpha-centauri");
+  assert.equal((await page.locator("canvas").getAttribute("data-system")), "solar");
+  await page.locator('button[data-body="proxima-b"]').click();
+  await page.locator("#flight-jump").click();
+  await page.locator('#warp-engine[data-phase="transit"]').waitFor();
+  await page.locator('#warp-engine[data-phase="ready"]').waitFor({ timeout: 45000 });
+  await page.waitForFunction(() => document.querySelector("#flight-nearest")?.textContent === "比邻星 b");
+  assert.equal(await page.locator("canvas").getAttribute("data-background"), "centauri-milky-way-4k.jpg");
+  assert.equal(await page.locator("canvas").getAttribute("data-system"), "proxima-centauri");
+  await page.locator("#flight-pause").click();
+  await page.locator("#flight-save").click();
+  await page.waitForFunction(() => document.querySelector("#flight-storage")?.textContent === "已保存 · 本机");
+  const proximaSave = await page.evaluate(() => JSON.parse(localStorage.getItem("voyager-flight-v1")));
+  assert.equal(proximaSave.systemId, "proxima-centauri");
+  await page.locator("#star-system").selectOption("solar");
+  await page.locator("#flight-jump").click();
+  await page.locator('#warp-engine[data-phase="transit"]').waitFor();
+  await page.locator('#warp-engine[data-phase="ready"]').waitFor({ timeout: 45000 });
+  assert.equal(await page.locator("canvas").getAttribute("data-background"), "milky-way-4k.jpg");
+  await page.locator("#flight-resume").click();
+  await page.waitForFunction(() => document.querySelector("canvas")?.dataset.system === "proxima-centauri");
   assert.equal(await page.locator("canvas").count(), 1);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(
-    "PASS: all 35 models, free flight, thrust, warp, camera and local save/restore; zero HTTP requests or browser errors.",
+    "PASS: all 41 models, two sky panoramas, interstellar warp, free flight, thrust, warp, camera and local save/restore; zero HTTP requests or browser errors.",
   );
 } finally {
   await browser.close();

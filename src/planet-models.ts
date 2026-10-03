@@ -85,6 +85,8 @@ const planetFragment = /* glsl */ `
   uniform float ringsEnabled;
   uniform vec3 moonColor;
   uniform float moonSeed, moonStyle;
+  uniform vec3 stellarTint;
+  uniform float stellarIllustration;
   varying vec2 vUv;
   varying vec3 vLocalPosition;
   varying vec3 vWorldPosition;
@@ -141,6 +143,7 @@ const planetFragment = /* glsl */ `
       float granules = fbm(plasma+(terrain-0.5)*1.4);
       float fine = noise3(p*170.0+uTime*0.006);
       color = mix(vec3(1.5,0.25,0.007),vec3(3.0,1.6,0.22),smoothstep(0.24,0.70,granules))*(0.84+fine*0.23);
+      if (stellarIllustration > 0.5) color = stellarTint * (1.2+granules*2.4) * (0.84+fine*0.23);
       float sunspots = smoothstep(0.69,0.78,fbm(p*8.0+vec3(17.0)));
       color *= 1.0-sunspots*0.85;
       #ifdef PHOTOGRAPHIC_MAP
@@ -153,6 +156,11 @@ const planetFragment = /* glsl */ `
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
       return;
+    #elif BODY_KIND == 9
+      height += crater(vUv,28.0)*0.2;
+      color = moonColor*(0.48+terrain*0.7+detail*0.08);
+      float darkPlains = smoothstep(0.49,0.63,fbm(p*vec3(5.0,3.0,7.0)+moonSeed));
+      color = mix(color,vec3(0.075,0.055,0.05),darkPlains*0.7);
     #elif BODY_KIND == 8
       float regions = fbm(p*4.0+moonSeed);
       float pits = crater(vUv,20.0)+crater(vUv,62.0)*0.4;
@@ -315,7 +323,7 @@ export function createPlanetModel(
     new THREE.ShaderMaterial({
       vertexShader: modelVertex,
       fragmentShader: planetFragment,
-      defines: { BODY_KIND: body.parentId ? 8 : kinds[body.id as keyof typeof kinds], ...(map ? { PHOTOGRAPHIC_MAP: 1 } : {}) },
+      defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(map ? { PHOTOGRAPHIC_MAP: 1 } : {}) },
       uniforms: {
         detailMap: { value: map ?? null },
         sunDirection: { value: sunDirection },
@@ -327,6 +335,8 @@ export function createPlanetModel(
         moonColor: { value: new THREE.Color(body.color) },
         moonSeed: { value: body.surfaceSeed ?? 0 },
         moonStyle: { value: body.surfaceStyle ?? 0 },
+        stellarTint: { value: new THREE.Color(body.color) },
+        stellarIllustration: { value: body.kind === "star" ? 1 : 0 },
       },
     }),
   );
@@ -343,7 +353,7 @@ export function createPlanetModel(
     ringsEnabled,
   };
   if (body.layers.includes("atmosphere")) {
-    const solar = body.id === "sun";
+    const solar = body.id === "sun" || body.kind === "star";
     const halo = new THREE.Mesh(
       new THREE.SphereGeometry(solar ? 1.23 : 1.028, 96, 64),
       new THREE.ShaderMaterial({
@@ -355,7 +365,7 @@ export function createPlanetModel(
           planetCenter: { value: placement.center },
           bodyRadius: { value: placement.radius },
           atmosphereColor: {
-            value: new THREE.Color(solar ? "#ff8f2c" : body.atmosphereColor!),
+            value: new THREE.Color(solar ? body.id === "sun" ? "#ff8f2c" : body.color : body.atmosphereColor!),
           },
           strength: { value: solar ? 0.95 : body.id === "mars" ? 0.4 : 0.5 },
           uTime,

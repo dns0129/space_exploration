@@ -7,7 +7,7 @@
   "engines": [
     {
       "id": "orbital",
-      "name": "\u8fd1\u5730\u8f68\u9053\u5f15\u64ce",
+      "name": "近地轨道引擎",
       "minSpeedKm": 1,
       "maxSpeedKm": 100,
       "accelerationKm": 30,
@@ -15,7 +15,7 @@
     },
     {
       "id": "planetary",
-      "name": "\u884c\u661f\u5f15\u64ce",
+      "name": "行星引擎",
       "minSpeedKm": 100,
       "maxSpeedKm": 10000,
       "accelerationKm": 2000,
@@ -23,7 +23,7 @@
     },
     {
       "id": "interstellar",
-      "name": "\u661f\u9645\u5f15\u64ce",
+      "name": "星际引擎",
       "minSpeedKm": 10000,
       "maxSpeedKm": 50000,
       "accelerationKm": 10000,
@@ -50,7 +50,9 @@
         0.0,
         0,
         0.0
-      ]
+      ],
+      "systemId": "solar",
+      "kind": "star"
     },
     {
       "id": "mercury",
@@ -59,7 +61,8 @@
         7444.499036938099,
         0,
         5212.6943438589815
-      ]
+      ],
+      "systemId": "solar"
     },
     {
       "id": "venus",
@@ -69,7 +72,8 @@
         -8491.602574164177,
         0,
         14707.887096135028
-      ]
+      ],
+      "systemId": "solar"
     },
     {
       "id": "earth",
@@ -79,7 +83,8 @@
         1.43780060831906e-12,
         0,
         23481.065876628472
-      ]
+      ],
+      "systemId": "solar"
     },
     {
       "id": "mars",
@@ -89,7 +94,8 @@
         27402.53156283394,
         0,
         -22993.45412769775
-      ]
+      ],
+      "systemId": "solar"
     },
     {
       "id": "jupiter",
@@ -99,7 +105,8 @@
         -107905.03779625811,
         0,
         -57374.1263200588
-      ]
+      ],
+      "systemId": "solar"
     },
     {
       "id": "saturn",
@@ -109,7 +116,8 @@
         141599.5574587886,
         0,
         174860.89087247965
-      ]
+      ],
+      "systemId": "solar"
     },
     {
       "id": "uranus",
@@ -119,7 +127,8 @@
         -411891.2772058344,
         0,
         183385.8118404076
-      ]
+      ],
+      "systemId": "solar"
     },
     {
       "id": "neptune",
@@ -129,7 +138,8 @@
         286975.652847281,
         0,
         -644557.8695101643
-      ]
+      ],
+      "systemId": "solar"
     },
     {
       "id": "moon",
@@ -139,7 +149,8 @@
         3.0162204740074596,
         23515.541434403036
       ],
-      "parentId": "earth"
+      "parentId": "earth",
+      "systemId": "solar"
     },
     {
       "id": "io",
@@ -149,7 +160,8 @@
         3.308897434674677,
         -57336.305449315994
       ],
-      "parentId": "jupiter"
+      "parentId": "jupiter",
+      "systemId": "solar"
     },
     {
       "id": "europa",
@@ -159,7 +171,8 @@
         1.1970504757481604,
         -57360.44397051195
       ],
-      "parentId": "jupiter"
+      "parentId": "jupiter",
+      "systemId": "solar"
     },
     {
       "id": "ganymede",
@@ -169,7 +182,8 @@
         -11.21467460821823,
         -57502.310637389186
       ],
-      "parentId": "jupiter"
+      "parentId": "jupiter",
+      "systemId": "solar"
     },
     {
       "id": "callisto",
@@ -179,7 +193,8 @@
         25.73142757107025,
         -57080.01475709675
       ],
-      "parentId": "jupiter"
+      "parentId": "jupiter",
+      "systemId": "solar"
     },
     {
       "id": "mimas",
@@ -189,7 +204,8 @@
         7.513209901825917,
         174875.80976222074
       ],
-      "parentId": "saturn"
+      "parentId": "saturn",
+      "systemId": "solar"
     },
     {
       "id": "enceladus",
@@ -199,7 +215,8 @@
         2.1911913206254137,
         174865.24189449835
       ],
-      "parentId": "saturn"
+      "parentId": "saturn",
+      "systemId": "solar"
     },
     {
       "id": "tethys",
@@ -209,7 +226,8 @@
         -15.932724752574142,
         174829.25345425695
       ],
-      "parentId": "saturn"
+      "parentId": "saturn",
+      "systemId": "solar"
     },
     {
       "id": "dione",
@@ -219,7 +237,8 @@
         26.620274019169734,
         174913.75042760448
       ],
-      "parentId": "saturn"
+      "parentId": "saturn",
+      "systemId": "solar"
     },
     {
       "id": "rhea",
@@ -229,7 +248,8 @@
         -26.326497342455024,
         174808.61466613726
       ],
-      "parentId": "saturn"
+      "parentId": "saturn",
+      "systemId": "solar"
     },
     {
       "id": "titan",
@@ -240,7 +260,8 @@
         174868.4819568297
       ],
       "parentId": "saturn",
-      "atmosphereKm": 600
+      "atmosphereKm": 600,
+      "systemId": "solar"
     },
     {
       "id": "hyperion",
@@ -250,7 +271,8 @@
         67.14550102325163,
         174994.22087915675
       ],
-      "parentId": "saturn"
+      "parentId": "saturn",
+      "systemId": "solar"
     },
     {
       "id": "iapetus",
@@ -260,7 +282,8 @@
         -249.20772589429993,
         174366.04211491407
       ],
-      "parentId": "saturn"
+      "parentId": "saturn",
+      "systemId": "solar"
     },
     {
       "id": "miranda",
@@ -270,7 +293,8 @@
         11.541935214313144,
         183384.2369482519
       ],
-      "parentId": "uranus"
+      "parentId": "uranus",
+      "systemId": "solar"
     },
     {
       "id": "ariel",
@@ -280,7 +304,8 @@
         3.8710552328726604,
         183385.28363656593
       ],
-      "parentId": "uranus"
+      "parentId": "uranus",
+      "systemId": "solar"
     },
     {
       "id": "umbriel",
@@ -290,7 +315,8 @@
         -31.68257182662413,
         183390.13491387112
       ],
-      "parentId": "uranus"
+      "parentId": "uranus",
+      "systemId": "solar"
     },
     {
       "id": "titania",
@@ -300,7 +326,8 @@
         67.79008626452388,
         183376.5619119415
       ],
-      "parentId": "uranus"
+      "parentId": "uranus",
+      "systemId": "solar"
     },
     {
       "id": "oberon",
@@ -310,7 +337,8 @@
         -64.20293779676832,
         183394.57230398952
       ],
-      "parentId": "uranus"
+      "parentId": "uranus",
+      "systemId": "solar"
     },
     {
       "id": "naiad",
@@ -320,7 +348,8 @@
         0.3784164016648225,
         -644553.544190901
       ],
-      "parentId": "neptune"
+      "parentId": "neptune",
+      "systemId": "solar"
     },
     {
       "id": "thalassa",
@@ -330,7 +359,8 @@
         0.08931947932214146,
         -644556.8485838439
       ],
-      "parentId": "neptune"
+      "parentId": "neptune",
+      "systemId": "solar"
     },
     {
       "id": "despina",
@@ -340,7 +370,8 @@
         -0.5503195052982723,
         -644564.159690893
       ],
-      "parentId": "neptune"
+      "parentId": "neptune",
+      "systemId": "solar"
     },
     {
       "id": "galatea",
@@ -350,7 +381,8 @@
         0.8467302981412415,
         -644548.1913385702
       ],
-      "parentId": "neptune"
+      "parentId": "neptune",
+      "systemId": "solar"
     },
     {
       "id": "larissa",
@@ -360,7 +392,8 @@
         -0.7118470558961266,
         -644566.0059592447
       ],
-      "parentId": "neptune"
+      "parentId": "neptune",
+      "systemId": "solar"
     },
     {
       "id": "proteus",
@@ -370,7 +403,8 @@
         0.0713243929983638,
         -644557.0542686218
       ],
-      "parentId": "neptune"
+      "parentId": "neptune",
+      "systemId": "solar"
     },
     {
       "id": "triton",
@@ -380,7 +414,8 @@
         3.116415479201874,
         -644522.2487182398
       ],
-      "parentId": "neptune"
+      "parentId": "neptune",
+      "systemId": "solar"
     },
     {
       "id": "nereid",
@@ -390,7 +425,136 @@
         -74.77446291892062,
         -645412.5455322384
       ],
-      "parentId": "neptune"
+      "parentId": "neptune",
+      "systemId": "solar"
+    },
+    {
+      "id": "alpha-centauri-a",
+      "systemId": "alpha-centauri",
+      "kind": "star",
+      "position": [
+        -251651.27921300265,
+        0,
+        0
+      ],
+      "radius": 133.59284256788573
+    },
+    {
+      "id": "alpha-centauri-b",
+      "systemId": "alpha-centauri",
+      "kind": "star",
+      "position": [
+        297805.6623001036,
+        0,
+        0
+      ],
+      "radius": 94.25961387537278
+    },
+    {
+      "id": "proxima-centauri",
+      "systemId": "proxima-centauri",
+      "kind": "star",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "radius": 16.83832993250667
+    },
+    {
+      "id": "proxima-b",
+      "systemId": "proxima-centauri",
+      "kind": "planet",
+      "position": [
+        1140.2405589690786,
+        0,
+        0
+      ],
+      "radius": 1.0516402448595197,
+      "hostStarId": "proxima-centauri",
+      "atmosphereKm": 90
+    },
+    {
+      "id": "proxima-d",
+      "systemId": "proxima-centauri",
+      "kind": "planet",
+      "position": [
+        -338.7143752703657,
+        0,
+        586.6744309275623
+      ],
+      "radius": 0.7377177837074242,
+      "hostStarId": "proxima-centauri"
+    },
+    {
+      "id": "proxima-c",
+      "systemId": "proxima-centauri",
+      "kind": "planet",
+      "position": [
+        24722.554443550984,
+        0,
+        -24722.554443550984
+      ],
+      "radius": 2.9822633809449064,
+      "hostStarId": "proxima-centauri",
+      "atmosphereKm": 500
+    }
+  ],
+  "lightYearKm": 9460730472580.8,
+  "systems": [
+    {
+      "id": "solar",
+      "groupId": "solar",
+      "name": "太阳系",
+      "positionLy": [
+        0,
+        0,
+        0
+      ],
+      "primaryStar": "sun",
+      "backgroundFile": "milky-way-4k.jpg",
+      "backgroundIntensity": 2.5,
+      "backgroundRotation": [
+        0,
+        0,
+        0.43
+      ]
+    },
+    {
+      "id": "alpha-centauri",
+      "groupId": "alpha-centauri",
+      "name": "半人马座 α · 南门二",
+      "positionLy": [
+        4.37,
+        0,
+        0
+      ],
+      "primaryStar": "alpha-centauri-a",
+      "backgroundFile": "centauri-milky-way-4k.jpg",
+      "backgroundIntensity": 1.7,
+      "backgroundRotation": [
+        0,
+        0.75,
+        -0.28
+      ]
+    },
+    {
+      "id": "proxima-centauri",
+      "groupId": "alpha-centauri",
+      "name": "半人马座 α · 比邻星",
+      "positionLy": [
+        4.242831601654726,
+        0.164,
+        0
+      ],
+      "primaryStar": "proxima-centauri",
+      "backgroundFile": "centauri-milky-way-4k.jpg",
+      "backgroundIntensity": 1.7,
+      "backgroundRotation": [
+        0,
+        1.05,
+        -0.28
+      ]
     }
   ]
 }

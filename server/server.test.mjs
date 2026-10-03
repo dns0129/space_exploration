@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createVoyagerServer } from "./server.mjs";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
+import { bodySystem } from "../shared/world-navigation.mjs";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
 import * as THREE from "three";
 import { projectFlightTarget } from "../src/flight-target.ts";
@@ -79,6 +80,23 @@ test("flight saves persist across server restart and remain private to the pilot
     ).state,
     saved,
   );
+});
+test("backend preserves a Proxima coordinate frame and rejects unknown systems", async (t) => {
+  const { url } = await fixture(t);
+  const cookie = (await fetch(url + "/api/flight/save")).headers.get("set-cookie").split(";")[0];
+  const headers = { cookie, "content-type": "application/json" };
+  const ship = new ShipDynamics();
+  ship.jump("proxima-b");
+  const saved = ship.snapshot();
+  const post = value => fetch(url + "/api/flight/save", { method: "POST", headers, body: JSON.stringify(value) });
+  assert.equal((await post(saved)).status, 200);
+  assert.equal((await post({ ...saved, systemId: "unknown" })).status, 400);
+  const stored = (await (await fetch(url + "/api/flight/save", { headers: { cookie } })).json()).state;
+  assert.deepEqual(stored, saved);
+  const restored = new ShipDynamics();
+  assert.equal(restored.restore(stored), true);
+  assert.equal(restored.systemId, "proxima-centauri");
+  assert.equal(restored.environment.body.id, "proxima-b");
 });
 test("malformed, oversized and cross-origin saves are rejected without replacing a valid save", async (t) => {
   const { url } = await fixture(t);
@@ -292,9 +310,9 @@ test("warp charges, moves continuously, arrives safely and cools down at all nin
         if (ship.position.distanceTo(departure) > 1) movedInTransit = true;
       }
       if (ship.warpPhase === "arrival") sawArrival = true;
-      for (const body of world.bodies) {
+      for (const body of ship.activeBodies) {
         const distance = Math.hypot(...ship.position.toArray().map((n, axis) => n - body.position[axis]));
-        assert(distance > body.radius * (body.id === "sun" ? 1.24 : 1.002), `route intersects ${body.id}`);
+        assert(distance > body.radius * (body.kind === "star" ? 1.24 : 1.002), `route intersects ${body.id}`);
       }
       assert(validateFlightState(ship.snapshot()));
     }
@@ -476,7 +494,7 @@ test("outward planetary launch below 100 km crosses the safety shell, restores a
 test("all 26 moons have real parent-relative distances, valid saves and safe warp destinations", () => {
   const moons = JSON.parse(readFileSync(new URL("../shared/moons.json", import.meta.url), "utf8"));
   assert.equal(moons.length, 26);
-  assert.equal(new Set(world.bodies.map(body => body.id)).size, 35);
+  assert.equal(new Set(world.bodies.filter(body => bodySystem(body) === "solar").map(body => body.id)).size, 35);
   const ship = new ShipDynamics();
   for (const moon of moons) {
     const body = world.bodies.find(body => body.id === moon.id);
@@ -488,8 +506,8 @@ test("all 26 moons have real parent-relative distances, valid saves and safe war
     assert.equal(ship.startWarp(), null, moon.id);
     for (let i = 0; i < 300 && ship.warpPhase !== "ready"; i++) {
       ship.step(0.05, emptyInput());
-      for (const obstacle of world.bodies) {
-        assert(ship.position.distanceTo(new THREE.Vector3().fromArray(obstacle.position)) > obstacle.radius * (obstacle.id === "sun" ? 1.24 : 1.002), `moon route intersects ${obstacle.id}`);
+      for (const obstacle of ship.activeBodies) {
+        assert(ship.position.distanceTo(new THREE.Vector3().fromArray(obstacle.position)) > obstacle.radius * (obstacle.kind === "star" ? 1.24 : 1.002), `moon route intersects ${obstacle.id}`);
       }
     }
     assert.equal(ship.warpPhase, "ready");
@@ -518,6 +536,8 @@ test("every body uses the same 1000 km boundary, including large atmospheres", (
   const ship = new ShipDynamics();
   ship.orientation.identity();
   for (const body of world.bodies) {
+    ship.systemId = bodySystem(body);
+    ship.target = body.id;
     ship.position.fromArray(body.position).add(new THREE.Vector3(0, 0, body.radius + 1000 / world.unitsKm));
     ship.velocity.set(0, 0, 0);
     assert(ship.environment.restricted, `${body.id}: exactly 1000 km is restricted`);
@@ -530,9 +550,92 @@ test("every body uses the same 1000 km boundary, including large atmospheres", (
     assert.equal(ship.warpBlockReason, null);
   }
   const jupiter = world.bodies.find(body => body.id === "jupiter");
+  ship.systemId = "solar";
+  ship.target = "mars";
   ship.position.fromArray(jupiter.position).add(new THREE.Vector3(0, 0, jupiter.radius + 1500 / world.unitsKm));
   assert(ship.environment.atmospheric);
   assert(!ship.environment.restricted);
   assert.equal(ship.engine.id, "interstellar");
   assert.equal(ship.warpBlockReason, null);
+});
+
+
+test("three Centauri stars and their planets use local coordinates and light-year navigation", () => {
+  assert.equal(world.systems.length, 3);
+  assert.equal(world.bodies.length, 41);
+  const ship = new ShipDynamics();
+  ship.target = "alpha-centauri-a";
+  assert(Math.abs(ship.targetRelative.length() * world.unitsKm / world.lightYearKm - 4.37) < 0.001);
+  const a = world.bodies.find(body => body.id === "alpha-centauri-a");
+  const b = world.bodies.find(body => body.id === "alpha-centauri-b");
+  assert(Math.abs(Math.hypot(...a.position.map((value, axis) => value - b.position[axis])) * world.unitsKm / world.auKm - 23.4) < 1e-8);
+  assert.equal(a.kind, "star");
+  ship.jump("proxima-b");
+  assert.equal(ship.systemId, "proxima-centauri");
+  assert.equal(ship.environment.body.id, "proxima-b");
+  assert(ship.position.length() < 2000, "arrival coordinates stay precise and local");
+  assert(validateFlightState(ship.snapshot()));
+});
+
+test("warps reach all Centauri bodies and return to Earth; transit snapshots remain restorable and routes avoid local stars", () => {
+  const ship = new ShipDynamics();
+  for (const target of ["alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-d", "proxima-c", "earth"]) {
+    ship.target = target;
+    assert.equal(ship.startWarp(), null, target);
+    let sawNewSystem = false;
+    for (let i = 0; i < 320 && ship.warpPhase !== "ready"; i++) {
+      ship.step(0.05, emptyInput());
+      assert(validateFlightState(ship.snapshot()), `invalid transit save: ${target}`);
+      if (ship.systemId !== "solar") sawNewSystem = true;
+      for (const obstacle of ship.activeBodies) {
+        assert(ship.position.distanceTo(new THREE.Vector3().fromArray(obstacle.position)) > obstacle.radius * (obstacle.kind === "star" ? 1.24 : 1.002), `route intersects ${obstacle.id}`);
+      }
+    }
+    assert.equal(ship.warpPhase, "ready");
+    const expected = new ShipDynamics(); expected.jump(target);
+    assert.equal(ship.systemId, expected.systemId);
+    assert(ship.position.distanceTo(expected.position) < 1e-8);
+    assert.equal(ship.environment.body.id, target);
+    const restored = new ShipDynamics();
+    assert(restored.restore(ship.snapshot()));
+    assert.equal(restored.systemId, ship.systemId);
+    assert(restored.position.equals(ship.position));
+    if (target !== "earth") assert(sawNewSystem);
+  }
+});
+
+test("cancelling an interstellar warp preserves its coordinate frame and old saves default to the solar frame", () => {
+  const ship = new ShipDynamics();
+  ship.target = "proxima-b";
+  assert.equal(ship.startWarp(), null);
+  for (let i = 0; i < 130; i++) ship.step(0.05, emptyInput());
+  assert.equal(ship.warpPhase, "transit");
+  assert.equal(ship.systemId, "proxima-centauri");
+  const saved = ship.snapshot();
+  assert(Math.hypot(...saved.position) > 1e8);
+  ship.cancelWarp();
+  const restored = new ShipDynamics();
+  assert(restored.restore(saved));
+  assert.equal(restored.systemId, saved.systemId);
+  assert(restored.position.equals(ship.position));
+  for (let i = 0; i < 60; i++) ship.step(0.05, emptyInput());
+  assert.equal(ship.startWarp(), null);
+  const old = state(); delete old.systemId;
+  assert.equal(validateFlightState(old).systemId, "solar");
+  assert.equal(validateFlightState({ ...saved, systemId: "missing-system" }), null);
+  assert.equal(validateFlightState({ ...saved, version: 1 }), null);
+});
+
+test("a near Proxima planet blocks an interstellar target, outward departure still works", () => {
+  const ship = new ShipDynamics();
+  const body = world.bodies.find(body => body.id === "proxima-b");
+  ship.jump("proxima-b");
+  ship.position.fromArray(body.position).add(new THREE.Vector3(0, 0, body.radius + 50 / world.unitsKm));
+  ship.orientation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+  ship.target = "earth";
+  assert.equal(ship.engine.id, "planetary");
+  assert.match(ship.startWarp(), /1000 km/);
+  for (let i = 0; i < 15; i++) ship.step(0.05, { ...emptyInput(), throttle: 1, boost: true });
+  assert(ship.environment.altitudeKm > 1000);
+  assert.equal(ship.startWarp(), null);
 });

@@ -1,9 +1,10 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { EARTH, getBody } from "./solar-system";
-import type { BodyId, Layer } from "./solar-system";
+import { EARTH, getBody, STAR_SYSTEMS } from "./solar-system";
+import type { BodyId, Layer, SystemId } from "./solar-system";
 import { createPlanetModel } from "./planet-models";
 import type { PlanetModel } from "./planet-models";
+import { bodySystem, systemConfig } from "../shared/world-navigation.mjs";
 import { ShipDynamics } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
 import { createShip } from "./ship-model";
@@ -19,6 +20,7 @@ export interface SceneStats {
 }
 
 export interface FlightStats {
+  systemId: SystemId;
   engine: ShipDynamics["engine"];
   environment: ShipDynamics["environment"];
   warpBlockReason: string | null;
@@ -144,6 +146,9 @@ export class SolarScene {
   private readonly shipScale = 0.000015 * 0.16;
   private readonly warpEffect = createWarpEffect();
   private galaxy?: THREE.Texture;
+  private readonly backgrounds = new Map<SystemId, THREE.Texture>();
+  private backgroundSystem: SystemId = "solar";
+  private starsEnabled = true;
   private spacePromise?: Promise<void>;
   private readonly planetMaps = new Map<BodyId, THREE.Texture>();
   private flightModels: PlanetModel[] = [];
@@ -270,6 +275,7 @@ export class SolarScene {
     this.planet.clear();
     this.planet.add(model.group);
     this.currentModel = model;
+    this.useSystemBackground(getBody(id).systemId ?? "solar");
     this.controls.maxDistance = id === "saturn" ? 12 : 7;
     this.targetPosition = null;
     this.controls.reset();
@@ -291,7 +297,8 @@ export class SolarScene {
     if (this.spacePromise) return this.spacePromise;
     const loader = new THREE.TextureLoader();
     const ids = ["mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "sun"] as const;
-    const files = ["milky-way-4k.jpg", ...ids.map((id) => `${id}-real.jpg`)];
+    const skyFiles = [...new Set(STAR_SYSTEMS.map(system => system.backgroundFile))];
+    const files = [...skyFiles, ...ids.map((id) => `${id}-real.jpg`)];
     const batch: THREE.Texture[] = [];
     let failed = false;
     this.spacePromise = Promise.all(files.map(async (file) => {
@@ -303,19 +310,36 @@ export class SolarScene {
       return texture;
     })).then((maps) => {
       maps.forEach((map) => this.textures.add(map));
-      this.galaxy = maps[0];
-      this.galaxy.mapping = THREE.EquirectangularReflectionMapping;
-      this.scene.background = this.galaxy;
-      this.scene.backgroundIntensity = 2.5;
-      this.scene.backgroundRotation.z = 0.43;
-      this.stars.visible = false;
-      ids.forEach((id, i) => this.planetMaps.set(id, maps[i + 1]));
+      for (const system of STAR_SYSTEMS) {
+        const texture = maps[skyFiles.indexOf(system.backgroundFile)];
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        this.backgrounds.set(system.id as SystemId, texture);
+      }
+      this.galaxy = this.backgrounds.get("solar");
+      this.useSystemBackground("solar");
+      ids.forEach((id, i) => this.planetMaps.set(id, maps[i + skyFiles.length]));
     }).catch((error) => {
       failed = true;
       batch.forEach((texture) => texture.dispose());
       throw error;
     }).finally(() => { this.spacePromise = undefined; });
     return this.spacePromise;
+  }
+
+  private useSystemBackground(id: SystemId) {
+    const system = STAR_SYSTEMS.find(item => item.id === id)!;
+    const texture = this.backgrounds.get(id) ?? null;
+    const background = this.starsEnabled ? texture : null;
+    if (this.backgroundSystem !== id || this.scene.background !== background) {
+      this.scene.background = background;
+      this.scene.backgroundIntensity = system.backgroundIntensity;
+      this.scene.backgroundRotation.fromArray(system.backgroundRotation as [number, number, number]);
+    }
+    this.backgroundSystem = id;
+    this.stars.visible = this.starsEnabled && !texture;
+    if (this.renderer.domElement.dataset.system !== id) this.renderer.domElement.dataset.system = id;
+    if (this.renderer.domElement.dataset.background !== system.backgroundFile)
+      this.renderer.domElement.dataset.background = system.backgroundFile;
   }
 
   private loadEarthTextures(
@@ -587,10 +611,10 @@ export class SolarScene {
     if (!this.flightModels.length) {
       for (const body of config.bodies) {
         const center = new THREE.Vector3().fromArray(body.position);
-        const light =
-          body.id === "sun"
-            ? this.sunDirection
-            : center.clone().negate().normalize();
+        const hostId = body.hostStarId ?? systemConfig(config, bodySystem(body)).primaryStar;
+        const host = config.bodies.find(candidate => candidate.id === hostId)!;
+        const light = body.kind === "star" ? this.sunDirection
+          : new THREE.Vector3().fromArray(host.position).sub(center).normalize();
         const model =
           body.id === "earth"
             ? this.createEarthModel(maps, light)
@@ -625,8 +649,8 @@ export class SolarScene {
     this.camera.near = 1e-8;
     this.camera.far = 2e6;
     this.camera.updateProjectionMatrix();
-    this.scene.background = this.galaxy ?? null;
-    this.stars.visible = !this.galaxy;
+    this.starsEnabled = true;
+    this.useSystemBackground(this.dynamics!.systemId);
     this.flightControls?.dispose();
     this.flightControls = new FlightControls(this.renderer.domElement);
     this.renderer.domElement.setAttribute(
@@ -652,8 +676,7 @@ export class SolarScene {
     this.controls.enabled = true;
     this.stars.position.set(0, 0, 0);
     this.warpEffect.mesh.visible = false;
-    this.scene.background = this.galaxy ?? null;
-    this.stars.visible = !this.galaxy;
+    this.useSystemBackground(this.currentModel?.body.systemId ?? "solar");
     this.camera.near = 0.01;
     this.camera.up.set(0, 1, 0);
     this.camera.fov = 40;
@@ -706,12 +729,20 @@ export class SolarScene {
     // CPU positions remain in double precision. GPU objects are relative to the ship.
     for (const model of this.flightModels) {
       const body = ship.config.bodies.find((b) => b.id === model.body.id)!;
+      if (bodySystem(body) !== ship.systemId) { model.group.visible = false; continue; }
       model.group.position.fromArray(body.position).sub(ship.position);
       const angularRadius = body.radius / Math.max(model.group.position.length(), 1e-9);
       model.group.visible = angularRadius > 0.00001;
       model.surface.geometry = angularRadius < 0.005 ? this.distantSphere : this.flightGeometries.get(model.surface)!;
     }
-    this.flightSun.position.fromArray(ship.config.bodies[0].position).sub(ship.position);
+    const stars = ship.activeBodies.filter(body => body.kind === "star");
+    const light = stars.reduce((closest, body) =>
+      this.flightRelative.fromArray(body.position).distanceToSquared(ship.position)
+        < this.flightForward.fromArray(closest.position).distanceToSquared(ship.position) ? body : closest);
+    this.flightSun.position.fromArray(light.position).sub(ship.position);
+    this.flightSun.color.set(getBody(light.id).color);
+    this.shipSun.color.copy(this.flightSun.color);
+    this.useSystemBackground(ship.systemId);
     const scale = 0.000015; // Approximately 25 m hull with a close chase camera.
     this.ship.group.position.set(0, 0, 0);
     this.ship.group.scale.setScalar(1);
@@ -756,7 +787,7 @@ export class SolarScene {
     this.ship.exhaust.scale.z = THREE.MathUtils.lerp(this.ship.exhaust.scale.z, exhaust, 1 - Math.exp(-delta * 10));
     this.updateFlightCamera(1 - Math.exp(-delta * 9));
     const target = ship.config.bodies.find((b) => b.id === ship.target)!;
-    this.flightRelative.fromArray(target.position).sub(ship.position);
+    this.flightRelative.copy(ship.targetRelative);
     const tracking = projectFlightTarget(this.flightRelative, this.camera);
     const aim = this.flightControls!.aim;
     this.flightTargetHandler?.({ ...tracking, target: ship.target, deceleration: ship.deceleration,
@@ -769,6 +800,7 @@ export class SolarScene {
       this.camera.quaternion,
     );
     this.flightHandler?.({
+      systemId: ship.systemId,
       engine: ship.engine,
       environment,
       warpBlockReason: ship.warpBlockReason,
@@ -826,8 +858,8 @@ export class SolarScene {
       layer === "stars" ? this.stars : this.currentModel?.layers[layer];
     if (object) object.visible = visible;
     if (layer === "stars") {
-      this.scene.background = visible ? this.galaxy ?? null : null;
-      this.stars.visible = visible && !this.galaxy;
+      this.starsEnabled = visible;
+      this.useSystemBackground(this.backgroundSystem);
     }
     if (layer === "rings" && this.currentModel?.ringsEnabled)
       this.currentModel.ringsEnabled.value = Number(visible);

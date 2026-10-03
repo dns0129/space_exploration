@@ -3,7 +3,7 @@ import { watchSiteVersion } from "./site-version";
 import { FlightInterface } from "./flight-ui";
 import { SolarScene } from "./planet-scene";
 import type { View } from "./planet-scene";
-import { SOLAR_SYSTEM, PRIMARY_BODIES, MOONS, getBody, isBodyId } from "./solar-system";
+import { SOLAR_SYSTEM, PRIMARY_BODIES, MOONS, CENTAURI_BODIES, getBodySystem, getSystemGroup, getBody, isBodyId } from "./solar-system";
 import type { BodyId, Layer } from "./solar-system";
 
 const icons: Record<string, string> = {
@@ -40,11 +40,12 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
     <nav class="planet-rail" aria-label="太阳系天体">
       <span class="rail-label">SOLAR<br>SYSTEM</span>
-      ${PRIMARY_BODIES.map((planet, index) => `<button data-body="${planet.id}" class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" aria-label="${planet.name}，${planet.id === "earth" ? "当前观测天体" : "切换观测"}" ${planet.id === "earth" ? 'aria-current="page"' : ""} title="${planet.name} · ${planet.english}"><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
+      ${[...PRIMARY_BODIES, ...CENTAURI_BODIES].map((planet, index) => `<button data-body="${planet.id}" class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" aria-label="${planet.name}，${planet.id === "earth" ? "当前观测天体" : "切换观测"}" ${planet.id === "earth" ? 'aria-current="page"' : ""} title="${planet.name} · ${planet.english}"><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
       <span class="rail-progress"><b>${SOLAR_SYSTEM.length}</b> / ${SOLAR_SYSTEM.length}</span>
     </nav>
 
-    <label class="satellite-navigation">卫星导航 <select id="satellite-target" class="scene-control" aria-label="卫星导航" disabled><option value="">选择卫星</option>${["earth", "jupiter", "saturn", "uranus", "neptune"].map(parent => `<optgroup label="${getBody(parent as BodyId).name}系统">${MOONS.filter(moon => moon.parentId === parent).map(moon => `<option value="${moon.id}">${moon.name} · ${moon.english}</option>`).join("")}</optgroup>`).join("")}</select></label>
+    <div class="destination-selectors"><label class="system-navigation">恒星系统 <select id="star-system" class="scene-control" aria-label="恒星系统" disabled><option value="solar">太阳系</option><option value="alpha-centauri">半人马座 α</option></select></label>
+    <label class="satellite-navigation">卫星导航 <select id="satellite-target" class="scene-control" aria-label="卫星导航" disabled><option value="">选择卫星</option>${["earth", "jupiter", "saturn", "uranus", "neptune"].map(parent => `<optgroup label="${getBody(parent as BodyId).name}系统">${MOONS.filter(moon => moon.parentId === parent).map(moon => `<option value="${moon.id}">${moon.name} · ${moon.english}</option>`).join("")}</optgroup>`).join("")}</select></label></div>
     <main class="main">
       <aside class="planet-info" aria-label="地球信息">
         <div class="eyebrow"><span class="tiny-line"></span>我们的蓝色家园</div>
@@ -82,7 +83,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <footer class="footer"><span><i></i><span id="render-status">准备观测系统</span></span><span class="footer-center">探索，始于仰望。</span><span>写实航行 · 阶段 04 <b>V 0.4</b></span></footer>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">观测太阳、八颗行星及其主要卫星，或切换到自由航行驾驶飞船。航行时点击天体导航选择目标，用“对准目标”确定航向，再按 W 出发；按 J 启动跃迁引擎，蓄能后沿航线抵达。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳、八颗行星和 26 颗主要卫星均可观测。点击顶部“自由航行”驾驶飞船：W 前进，S 减速（停稳后倒车），A/D 平移，R/F 升降，Q/E 翻滚，方向键转向，触屏按住拖动、松手回正，Shift 加速，空格刹车，C 切换视角，J 启动跃迁。辅助驾驶让速度方向平滑跟随船头。距天体表面 1000 km 内通常最高 100 km/s；100 km 内朝向太空可使用行星引擎离地，持续向外直到安全区外，近地不能跃迁。航行距离和天体半径按真实公里比例呈现，行星位置采用静态轨道示意，支持简化惯性与防撞护盾；保存与恢复使用服务端或本机存档。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。银河背景、水星与火星贴图：Solar System Scope（CC BY 4.0）；木星、土星与海王星：Askaniy Anpilogov、NASA/JPL-Caltech、Björn Jónsson 等，收录于 CelestiaContent（CC BY 3.0）；金星与天王星：Oleg Pluton / Helleformer（CC BY 4.0）；太阳：Ruslan Kabatsayev、NASA/SDO HMI，收录于 Stellarium（CC BY-SA 4.0）。背景和太阳影像缩小到 4K，部分贴图转换格式。完整作者、修改、来源与许可见项目 ASSETS.md。</p></details></dialog>
+    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">观测太阳、八颗行星及其主要卫星，或切换到自由航行驾驶飞船。航行时点击天体导航选择目标，用“对准目标”确定航向，再按 W 出发；按 J 启动跃迁引擎，蓄能后沿航线抵达。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳、八颗行星和 26 颗主要卫星均可观测；“恒星系统”可切换半人马座 α，访问南门二 A/B、比邻星及比邻星行星。各系统使用独立星空背景；半人马座背景和系外行星地表为探索美术示意。点击顶部“自由航行”驾驶飞船：W 前进，S 减速（停稳后倒车），A/D 平移，R/F 升降，Q/E 翻滚，方向键转向，触屏按住拖动、松手回正，Shift 加速，空格刹车，C 切换视角，J 启动跃迁。辅助驾驶让速度方向平滑跟随船头。距天体表面 1000 km 内通常最高 100 km/s；100 km 内朝向太空可使用行星引擎离地，持续向外直到安全区外，近地不能跃迁。航行距离和天体半径按真实公里比例呈现，行星位置采用静态轨道示意，支持简化惯性与防撞护盾；保存与恢复使用服务端或本机存档。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。银河背景、水星与火星贴图：Solar System Scope（CC BY 4.0）；木星、土星与海王星：Askaniy Anpilogov、NASA/JPL-Caltech、Björn Jónsson 等，收录于 CelestiaContent（CC BY 3.0）；金星与天王星：Oleg Pluton / Helleformer（CC BY 4.0）；太阳：Ruslan Kabatsayev、NASA/SDO HMI，收录于 Stellarium（CC BY-SA 4.0）。背景和太阳影像缩小到 4K，部分贴图转换格式。完整作者、修改、来源与许可见项目 ASSETS.md。</p></details></dialog>
   </div>
 `;
 
@@ -125,7 +126,7 @@ const flight = new FlightInterface(toast, (active, target) => {
   $("#canvas-host").dataset.mode = state.mode;
   if (active) {
     $("#connection-text").textContent = "远航号 · 驾驶在线";
-    $("#render-status").textContent = "真实太阳系 · 4K 银河背景";
+    $("#render-status").textContent = "多恒星系统 · 独立 4K 银河背景";
   }
 });
 
@@ -159,6 +160,15 @@ function setControlsReady(ready: boolean) {
 
 function updateBodyInfo(id: BodyId) {
   const body = getBody(id);
+  const system = getBodySystem(body), group = getSystemGroup(id);
+  const isStar = id === "sun" || body.kind === "star";
+  $(".planet-info").dataset.systemGroup = group;
+  $<HTMLSelectElement>("#star-system").value = group;
+  $(".satellite-navigation").hidden = group !== "solar";
+  $(".planet-rail").setAttribute("aria-label", group === "solar" ? "太阳系天体" : "半人马座 α 天体");
+  $(".rail-label").innerHTML = group === "solar" ? "SOLAR<br>SYSTEM" : "ALPHA<br>CENTAURI";
+  const destinations = SOLAR_SYSTEM.filter(item => getSystemGroup(item.id) === group).length;
+  $(".rail-progress").innerHTML = `<b>${destinations}</b> / ${destinations}`;
   const number = SOLAR_SYSTEM.findIndex((item) => item.id === id);
   $<HTMLSelectElement>("#satellite-target").value = body.parentId ? id : "";
   const format = (value: number, decimals = 2) =>
@@ -173,13 +183,15 @@ function updateBodyInfo(id: BodyId) {
   $(".description").innerHTML = body.description;
   const facts = [
     ["平均半径", format(body.radiusKm, 0), "km"],
-    id === "sun"
-      ? ["表面温度", "5,772", "K"]
+    isStar
+      ? ["表面温度", format(body.temperatureK ?? 5772, 0), "K"]
       : body.parentId
         ? [`距${getBody(body.parentId).name}中心`, format(body.orbitRadiusKm!, 0), "km"]
-        : ["距太阳", format(body.distanceFromSunMillionKm / 100, 3), "亿 km"],
-    id === "sun"
-      ? ["光谱类型", "G2V", ""]
+        : body.hostStarId
+          ? [`距${getBody(body.hostStarId).name}`, format(body.orbitRadiusKm! / 149597870.7, 4), "AU"]
+          : ["距太阳", format(body.distanceFromSunMillionKm / 100, 3), "亿 km"],
+    isStar
+      ? ["光谱类型", body.spectralType ?? "G2V", ""]
       : [
           "公转周期",
           format(
@@ -189,7 +201,9 @@ function updateBodyInfo(id: BodyId) {
           ),
           body.orbitalPeriodDays > 730 ? "年" : "天",
         ],
-    ["地轴倾角", format(body.axialTiltDeg), "°"],
+    body.systemId && body.systemId !== "solar"
+      ? isStar ? ["距太阳", format(Math.hypot(...system.positionLy), 3), "光年"] : ["地表模型", "探索示意", ""]
+      : ["地轴倾角", format(body.axialTiltDeg), "°"],
   ];
   $(".facts").innerHTML = facts
     .map(
@@ -203,12 +217,13 @@ function updateBodyInfo(id: BodyId) {
     `DESTINATION ${String(number).padStart(2, "0")} <i></i> ${id === "sun" ? "太阳系中心" : `第 ${String(number).padStart(2, "0")} 站`}`;
   $("#space-stage").setAttribute("aria-label", `${body.name}观测场景`);
   $(".top-coordinate").innerHTML =
-    `<span>SECTOR ${String(number).padStart(3, "0")}</span><span>太阳系 · ${body.name}</span>`;
+    `<span>SECTOR ${String(number).padStart(3, "0")}</span><span>${system.name} · ${body.name}</span>`;
   $(".earth-caption").innerHTML = `<i></i><span>${body.caption}</span>`;
-  $(".sun-label").hidden = id === "sun";
+  $(".sun-label").hidden = isStar;
+  $(".sun-label span").textContent = body.hostStarId ? `${getBody(body.hostStarId).name}光方向` : "太阳光方向";
   $("#error-panel h2").textContent = `暂时无法打开${body.name}场景`;
   const nightButton = $('[data-view="night"]');
-  nightButton.hidden = id === "sun";
+  nightButton.hidden = isStar;
   nightButton.innerHTML = `${icon("moon")} ${id === "earth" ? "夜景" : "背光"}`;
   $('.segmented [data-view="close"]').innerHTML =
     `${icon("compass")} ${id === "earth" ? "近地" : "近观"}`;
@@ -219,7 +234,7 @@ function updateBodyInfo(id: BodyId) {
       button.hidden = !body.layers.includes(layer);
       button.querySelector("span")!.textContent =
         layer === "atmosphere"
-          ? id === "sun"
+          ? isStar
             ? "日冕"
             : "大气"
           : ({ clouds: "云层", stars: "星空", rings: "环系" } as const)[layer];
@@ -228,6 +243,7 @@ function updateBodyInfo(id: BodyId) {
   document
     .querySelectorAll<HTMLButtonElement>("button[data-body]")
     .forEach((button) => {
+      button.hidden = getSystemGroup(button.dataset.body as BodyId) !== group;
       const selected = button.dataset.body === id;
       button.classList.toggle("active", selected);
       const name = getBody(button.dataset.body as BodyId).name;
@@ -341,6 +357,14 @@ document
       else void start(id);
     }),
   );
+$("#star-system").addEventListener("change", (event) => {
+  const id: BodyId = (event.target as HTMLSelectElement).value === "solar" ? "earth" : "alpha-centauri-a";
+  if (state.mode === "flight") {
+    state.body = id;
+    updateBodyInfo(id);
+    flight.target(id);
+  } else void start(id);
+});
 $("#satellite-target").addEventListener("change", (event) => {
   const id = (event.target as HTMLSelectElement).value;
   if (!isBodyId(id)) return;
@@ -474,7 +498,7 @@ $("#mode-flight").addEventListener("click", async () => {
   const version = ++requestVersion;
   setControlsReady(false);
   $("#loading-overlay").hidden = false;
-  $("#loading-overlay small").textContent = "准备飞船与太阳系航区";
+  $("#loading-overlay small").textContent = "准备飞船与恒星航区";
   try {
     const ready = await flight.launch(scene, state.body, (p) => {
       $("#loading-text").textContent = `正在准备航行 · ${p}%`;
@@ -484,7 +508,7 @@ $("#mode-flight").addEventListener("click", async () => {
     setControlsReady(true);
     $("#loading-overlay").hidden = true;
     $("#canvas-host").dataset.ready = "true";
-    toast("驾驶已就绪：按 W 出发，拖动或方向键转向");
+    toast("驾驶已就绪：按 W 出发，方向键转向（触屏可拖动）");
   } catch (error) {
     if (version === requestVersion)
       showError(
