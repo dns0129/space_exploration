@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { atmosphereScattering, atmosphereStrength } from "./atmosphere";
+import { surfaceProfile } from "../shared/surface.mjs";
 import type { CelestialBody, Layer } from "./solar-system";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
@@ -233,6 +235,7 @@ export const atmosphereFragment = /* glsl */ `
   varying vec3 vWorldPosition;
   varying vec3 vNormal;
   varying vec3 vLocalPosition;
+  ${atmosphereScattering}
   void main() {
     vec3 normal = normalize(vNormal);
     vec3 ray = normalize(vWorldPosition-cameraPosition);
@@ -243,39 +246,11 @@ export const atmosphereFragment = /* glsl */ `
       vec3 color = atmosphereColor*1.6;
       float opacity = envelope*strength*streamers*0.68;
     #else
-      // Four bounded density samples without a fullscreen volumetric pass.
       vec3 origin = (cameraPosition-planetCenter)/bodyRadius;
-      float b = dot(origin,ray);
-      float shell = 1.0+atmosphereHeight;
-      float discriminant = b*b-dot(origin,origin)+shell*shell;
-      if(discriminant<=0.0) discard;
-      float root = sqrt(discriminant);
-      float entry = max(0.0,-b-root), exitPoint = -b+root;
-      // Conservatively cover the faceted LOD silhouette; depth rejects the rest.
-      float ground = b*b-dot(origin,origin)+0.996*0.996;
-      if(ground>0.0) {
-        float hit = -b-sqrt(ground);
-        if(hit>0.0) discard;
-      }
-      float stepLength = max(0.0,exitPoint-entry)/4.0;
-      float scaleHeight = max(atmosphereHeight*0.22,0.0001);
-      vec3 scattered = vec3(0.0);
-      float optical = 0.0;
-      float mu = dot(ray,sunDirection);
-      float phase = 0.75*(1.0+mu*mu);
-      float forward = pow(max(mu,0.0),12.0)*0.45;
-      for(int i=0;i<4;i++) {
-        vec3 point = origin+ray*(entry+(float(i)+0.5)*stepLength);
-        float height = max(length(point)-1.0,0.0);
-        float density = exp(-height/scaleHeight)*stepLength/scaleHeight;
-        float sun = dot(normalize(point),sunDirection);
-        float daylight = smoothstep(-0.12,0.2,sun);
-        vec3 sunset = vec3(0.7,0.2,0.055)*exp(-sun*sun*160.0)*0.3;
-        scattered += density*(atmosphereColor*(0.025+daylight)*phase+sunset+vec3(forward*daylight));
-        optical += density;
-      }
-      vec3 color = scattered/max(optical,0.0001);
-      float opacity = (1.0-exp(-optical*strength*0.16))*0.85;
+      vec4 scattering = scatterAtmosphere(normalize(origin), max(0.0, length(origin)-1.0),
+        ray, 1.0, atmosphereHeight, sunDirection, atmosphereColor, strength);
+      vec3 color = scattering.rgb;
+      float opacity = scattering.a;
     #endif
     #include <logdepthbuf_fragment>
     gl_FragColor = vec4(color,opacity);
@@ -405,7 +380,7 @@ export function createPlanetModel(
   if (body.layers.includes("atmosphere")) {
     const solar = body.id === "sun" || body.kind === "star";
     const halo = new THREE.Mesh(
-      new THREE.SphereGeometry(solar ? 1.23 : 1 + Math.max(0.003, Math.min(0.035, (body.atmosphereKm ?? 90) / body.radiusKm)), 96, 64),
+      new THREE.SphereGeometry(solar ? 1.23 : 1 + (body.atmosphereKm ?? 90) / body.radiusKm, 96, 64),
       new THREE.ShaderMaterial({
         vertexShader: modelVertex,
         fragmentShader: atmosphereFragment,
@@ -415,10 +390,10 @@ export function createPlanetModel(
           planetCenter: { value: placement.center },
           bodyRadius: { value: placement.radius },
           atmosphereColor: {
-            value: new THREE.Color(solar ? body.id === "sun" ? "#ff8f2c" : body.color : body.atmosphereColor!),
+            value: new THREE.Color(solar ? body.id === "sun" ? "#ff8f2c" : body.color : surfaceProfile(body.id).sky),
           },
-          atmosphereHeight: { value: Math.max(0.003, Math.min(0.035, (body.atmosphereKm ?? 90) / body.radiusKm)) },
-          strength: { value: solar ? 0.95 : body.id === "mars" ? 0.35 : 0.75 },
+          atmosphereHeight: { value: (body.atmosphereKm ?? 90) / body.radiusKm },
+          strength: { value: solar ? 0.95 : atmosphereStrength(body.id) },
           uTime,
         },
         side: THREE.BackSide,

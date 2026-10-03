@@ -1,11 +1,13 @@
 import * as THREE from "three";
 import { surfaceProfile, terrainHeightKm } from "../shared/surface.mjs";
 import type { ShipDynamics } from "./ship-dynamics";
+import { atmosphereScattering, atmosphereStrength } from "./atmosphere";
 
 /** A small curved terrain tile near the pilot, independent of AU-scale GPU coordinates. */
 export class SurfaceScene {
   readonly group = new THREE.Group();
   readonly sky: THREE.Mesh;
+  spaceVisibility = 1;
   private terrain?: THREE.Mesh;
   private rocks?: THREE.InstancedMesh;
   private anchor = new THREE.Vector3();
@@ -16,23 +18,19 @@ export class SurfaceScene {
   private readonly light = new THREE.DirectionalLight(0xffead1, 2.2);
   private readonly ambient = new THREE.HemisphereLight(0xcbdce8, 0x3a3028, 0.8);
   private readonly skyMaterial = new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, depthTest: true,
+    transparent: true, depthWrite: false, depthTest: false,
     uniforms: { rotation: { value: new THREE.Matrix3() }, up: { value: new THREE.Vector3() },
       sun: { value: new THREE.Vector3() }, color: { value: new THREE.Color() },
-      opacity: { value: 0 }, daylight: { value: 1 }, aspect: { value: 1 }, fov: { value: 1 } },
+      altitude: { value: 0 }, radius: { value: 6371 }, height: { value: 160 }, strength: { value: 1.5 },
+      aspect: { value: 1 }, fov: { value: 1 } },
     vertexShader: `varying vec2 screen; void main() { screen = uv * 2.0 - 1.0; gl_Position = vec4(position.xy, 1.0, 1.0); }`,
     fragmentShader: `
       uniform mat3 rotation; uniform vec3 up, sun, color;
-      uniform float opacity, daylight, aspect, fov; varying vec2 screen;
+      uniform float altitude, radius, height, strength, aspect, fov; varying vec2 screen;
+      ${atmosphereScattering}
       void main() {
         vec3 ray = normalize(rotation * vec3(screen.x * aspect * fov, screen.y * fov, -1.0));
-        float elevation = dot(ray, up);
-        float haze = exp(-max(0.0, elevation) * 4.0);
-        vec3 skyColor = mix(color * 0.58, mix(color, vec3(0.86, 0.79, 0.69), 0.35), haze);
-        skyColor *= mix(0.025, 1.0, daylight);
-        float glow = pow(max(0.0, dot(ray, sun)), 90.0);
-        skyColor += vec3(1.0, 0.76, 0.44) * glow * daylight * 0.6;
-        gl_FragColor = vec4(skyColor, opacity);
+        gl_FragColor = scatterAtmosphere(up, altitude, ray, radius, height, sun, color, strength);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
@@ -57,25 +55,34 @@ export class SurfaceScene {
     this.groundDetail.needsUpdate = true;
     this.sky = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.skyMaterial);
     this.sky.frustumCulled = false;
-    this.sky.renderOrder = -100;
+    this.sky.renderOrder = 100;
     this.sky.visible = false;
     this.group.add(this.light, this.light.target, this.ambient);
     this.group.visible = false;
+  }
+  usesAtmosphere(ship: ShipDynamics) {
+    const env = ship.environment;
+    return !!env.body.atmosphereKm && env.altitudeKm < env.body.atmosphereKm * 4 && !ship.warping;
   }
   update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight) {
     const env = ship.environment;
     const center = new THREE.Vector3().fromArray(env.body.position);
     const sun = sunlight.position.clone().normalize();
     const day = THREE.MathUtils.smoothstep(env.outward.dot(sun), -0.18, 0.12);
-    const fraction = env.body.atmosphereKm ? Math.max(0, 1 - env.altitudeKm / env.body.atmosphereKm) : 0;
-    this.sky.visible = env.atmospheric && !ship.warping;
+    this.sky.visible = this.usesAtmosphere(ship);
+    const cameraRadial = ship.position.clone().sub(center).add(camera.position);
+    const cameraAltitudeKm = Math.max(0, (cameraRadial.length() - env.body.radius) * ship.config.unitsKm);
+    const depth = env.body.atmosphereKm ? 1 - cameraAltitudeKm / env.body.atmosphereKm : 0;
+    this.spaceVisibility = this.sky.visible ? 1 - day * THREE.MathUtils.smoothstep(depth, 0, 0.65) * 0.98 : 1;
     const uniforms = this.skyMaterial.uniforms;
     uniforms.rotation.value.setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(camera.quaternion));
-    uniforms.up.value.copy(env.outward);
+    uniforms.up.value.copy(cameraRadial).normalize();
     uniforms.sun.value.copy(sun);
     uniforms.color.value.set(env.profile.sky);
-    uniforms.opacity.value = THREE.MathUtils.smoothstep(fraction, 0, 0.8);
-    uniforms.daylight.value = day;
+    uniforms.altitude.value = cameraAltitudeKm;
+    uniforms.radius.value = env.body.radius * ship.config.unitsKm;
+    uniforms.height.value = env.body.atmosphereKm ?? 1;
+    uniforms.strength.value = atmosphereStrength(env.body.id);
     uniforms.aspect.value = camera.aspect;
     uniforms.fov.value = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
     this.group.visible = env.profile.solid && env.groundAltitudeKm < 20 && !ship.warping;
