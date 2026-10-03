@@ -1,6 +1,12 @@
 // Gameplay profiles: density and terrain are illustrative, not weather or elevation data.
 const profiles = {
   sun: { solid: false, sky: "#ff9b42", gravity: 274 },
+  "alpha-centauri-a": { solid: false, sky: "#fff1cf", gravity: 200 },
+  "alpha-centauri-b": { solid: false, sky: "#ffcb92", gravity: 300 },
+  "proxima-centauri": { solid: false, sky: "#ff805a", gravity: 1000 },
+  "proxima-b": { sky: "#af8976", ground: "#a2785c", gravity: 10, density: 0.6, scaleKm: 9 },
+  "proxima-c": { sky: "#93bdce", ground: "#81999f", gravity: 12, density: 1, scaleKm: 40 },
+  "proxima-d": { ground: "#aa8872", gravity: 5 },
   mercury: { sky: "#000000", ground: "#84796b", gravity: 3.7 },
   venus: { sky: "#d9a45c", ground: "#a16c3b", gravity: 8.87, density: 8, scaleKm: 16 },
   earth: { sky: "#72b8ef", ground: "#657d49", gravity: 9.81, density: 1, scaleKm: 8.5 },

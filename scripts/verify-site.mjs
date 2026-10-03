@@ -191,6 +191,29 @@ try {
       { timeout: 60000 },
     );
     await expect(page.locator("#flight-nearest")).toHaveText("火星");
+    await page.getByRole("combobox", { name: "恒星系统", exact: true }).selectOption("alpha-centauri");
+    await expect(page.locator("#flight-distance-unit")).toHaveText("光年");
+    await expect(page.locator("canvas")).toHaveAttribute("data-system", "solar");
+    await page.locator('button[data-body="proxima-b"]').click();
+    await page.locator("#flight-jump").click();
+    await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "transit", { timeout: 30000 });
+    await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 60000 });
+    await expect(page.locator("canvas")).toHaveAttribute("data-system", "proxima-centauri");
+    await expect(page.locator("canvas")).toHaveAttribute("data-background", "centauri-milky-way-4k.jpg");
+    await expect(page.locator("#flight-nearest")).toHaveText("比邻星 b");
+    await page.locator("#flight-pause").click();
+    await page.locator("#flight-save").click();
+    await expect(page.locator("#flight-storage")).toHaveText("已保存 · 本机");
+    const interstellarSave = await page.evaluate(() => JSON.parse(localStorage.getItem("voyager-flight-v1")));
+    assert.equal(interstellarSave.systemId, "proxima-centauri");
+    assert.equal(interstellarSave.target, "proxima-b");
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+    await expect(page.locator("#flight-resume")).toBeEnabled({ timeout: 45000 });
+    await page.locator("#flight-resume").click();
+    await expect(page.locator("canvas")).toHaveAttribute("data-system", "proxima-centauri");
+    await expect(page.locator("canvas")).toHaveAttribute("data-background", "centauri-milky-way-4k.jpg");
+    await expect(page.locator("#flight-target")).toHaveText("比邻星 b");
+    await page.screenshot({ path: resolve(output, `centauri-${name}.png`) });
     await verifySurfaceFlight(page);
     await page.screenshot({ path: resolve(output, `landed-${name}.png`) });
     // A changed deployment offers refresh and leaves the current flight intact.

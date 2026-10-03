@@ -1,4 +1,6 @@
-import moonData from "../shared/moons.json";
+import centauriData from "../shared/centauri.json" with { type: "json" };
+import worldData from "../shared/world.json" with { type: "json" };
+import moonData from "../shared/moons.json" with { type: "json" };
 export type BodyId =
   | "sun"
   | "mercury"
@@ -34,7 +36,15 @@ export type BodyId =
   | "larissa"
   | "proteus"
   | "triton"
-  | "nereid";
+  | "nereid"
+  | "alpha-centauri-a"
+  | "alpha-centauri-b"
+  | "proxima-centauri"
+  | "proxima-b"
+  | "proxima-c"
+  | "proxima-d";
+export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri";
+export type SystemGroupId = "solar" | "alpha-centauri";
 export type Layer = "clouds" | "atmosphere" | "stars" | "rings";
 
 export interface CelestialBody {
@@ -57,6 +67,11 @@ export interface CelestialBody {
   orbitRadiusKm?: number;
   surfaceStyle?: number;
   surfaceSeed?: number;
+  systemId?: SystemId;
+  kind?: "star" | "planet";
+  hostStarId?: BodyId;
+  temperatureK?: number;
+  spectralType?: string;
 }
 
 /** Single-body models use radius 1; real radii drive information and height readouts. */
@@ -237,7 +252,22 @@ export const MOONS: readonly CelestialBody[] = moonData.map((moon, index) => {
     atmosphereColor: moon.id === "titan" ? "#dfa350" : undefined,
   };
 });
-export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS];
+export const CENTAURI_BODIES: readonly CelestialBody[] = centauriData.map((body, index) => ({
+  ...body, id: body.id as BodyId, systemId: body.systemId as SystemId,
+  kind: body.kind as "star" | "planet", hostStarId: body.hostStarId as BodyId | undefined,
+  axialTiltDeg: 0, flattening: 1, distanceFromSunMillionKm: 0,
+  rotationSpeed: body.kind === "star" ? 0.018 : 0,
+  surfaceSeed: index * 13.17 + 33,
+  caption: body.english.replace("ALPHA CENTAURI", "ALPHA CEN").replace(" CENTAURI", ""),
+  layers: body.kind === "star" || body.atmosphereKm ? ["atmosphere", "stars"] : ["stars"],
+  atmosphereColor: body.color,
+}));
+export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES];
+export const STAR_SYSTEMS = worldData.systems;
+export const getBodySystem = (body: CelestialBody) =>
+  STAR_SYSTEMS.find(system => system.id === (body.systemId ?? "solar"))!;
+export const getSystemGroup = (id: BodyId): SystemGroupId =>
+  getBodySystem(getBody(id)).groupId as SystemGroupId;
 
 export const getBody = (id: BodyId): CelestialBody =>
   SOLAR_SYSTEM.find((body) => body.id === id)!;

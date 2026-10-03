@@ -88,5 +88,14 @@
     "height": 2048,
     "sourceSha256": "a1fc496b733a3a0d8ee95a9b163753cba2fead1ede3034f2d1167fd64a502e2a",
     "sha256": "5e6dbccafdec607a4155056c8a36cedf9f012c6be5ed38bfd879d97ef5d00112"
+  },
+  "centauri-milky-way-4k.jpg": {
+    "source": "scripts/generate-centauri-sky.py",
+    "credit": "Original procedural sky artwork for VOYAGER",
+    "license": "Project original artwork",
+    "changes": "New seeded spherical blue-violet dust-band panorama; not a retexture of the Solar System sky or a scientific survey",
+    "width": 4096,
+    "height": 2048,
+    "sha256": "42088064ff4a4b2805369f87e1700d5ba52cca438d2d3f8d28e4420542e7023a"
   }
 }

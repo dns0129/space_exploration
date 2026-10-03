@@ -50,7 +50,7 @@ test("all solid worlds descend continuously, touch terrain, stay landed and rest
 });
 test("landing rejects giant planets, the Sun, wrong targets and warp; manual input safely cancels descent", () => {
   const ship = new ShipDynamics();
-  for (const id of ["sun", "jupiter", "saturn", "uranus", "neptune"]) {
+  for (const id of ["sun", "jupiter", "saturn", "uranus", "neptune", "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri"]) {
     ship.jump(id);
     const before = ship.snapshot();
     assert(ship.startLanding());
@@ -98,4 +98,10 @@ test("density changes drag; unassisted near-surface flight feels gravity; malfor
   assert.equal(validateFlightState({ ...base, landedBody: "unknown" }), null);
   const earth = world.bodies.find(body => body.id === "earth");
   assert.equal(validateFlightState({ ...base, position: earth.position, landedBody: "earth" }), null);
+  const landed = new ShipDynamics();
+  place(landed, "proxima-b", 0.00001);
+  landed.startLanding();
+  landed.step(0.05, emptyInput());
+  assert.equal(landed.landedBody, "proxima-b");
+  assert.equal(validateFlightState({ ...landed.snapshot(), systemId: "solar" }), null);
 });

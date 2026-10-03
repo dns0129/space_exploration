@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
-import type { BodyId } from "./solar-system";
 import { surfaceProfile, terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
+import { bodySystem, systemBodies, systemDisplacement } from "../shared/world-navigation.mjs";
+import type { BodyId, SystemId } from "./solar-system";
 // Centimetre tolerance compensates for subtraction at AU-scale coordinates.
 const SURFACE_EPSILON_KM = 1e-5;
 export interface FlightInput {
@@ -29,6 +30,7 @@ export const emptyInput = (): FlightInput => ({
   mouseX: 0,
   mouseY: 0,
 });
+interface RoutePoint { systemId: SystemId; position: THREE.Vector3; }
 export class ShipDynamics {
   readonly position = new THREE.Vector3();
   readonly velocity = new THREE.Vector3();
@@ -38,6 +40,7 @@ export class ShipDynamics {
   deceleration = 0;
   private escapeBody: BodyId | null = null;
   target: BodyId = "earth";
+  systemId: SystemId = "solar";
   camera: "cockpit" | "chase" = "cockpit";
   assist = true;
   elapsed = 0;
@@ -50,7 +53,8 @@ export class ShipDynamics {
   warpProgress = 0;
   warpSpeedKm = 0;
   private warpClock = 0;
-  private warpRoute: THREE.Vector3[] = [];
+  private warpRoute: RoutePoint[] = [];
+  private warpTravelDistance = 0;
   private warpLength = 0;
   private warpTarget: BodyId = "earth";
   constructor(config: WorldConfig = world) {
@@ -65,9 +69,10 @@ export class ShipDynamics {
     this.escapeBody = null;
     this.deceleration = 0;
     const body = this.config.bodies.find((b) => b.id === id)!;
+    this.systemId = bodySystem(body);
     const center = new THREE.Vector3().fromArray(body.position);
     const side =
-      id === "sun"
+      id === "sun" || center.lengthSq() === 0
         ? new THREE.Vector3(0, 0.2, -1)
         : center
             .clone()
@@ -85,19 +90,21 @@ export class ShipDynamics {
   align() {
     this.angularVelocity.set(0, 0, 0);
     this.bank = 0;
-    const b = this.config.bodies.find((b) => b.id === this.target)!;
-    this.orientation.setFromRotationMatrix(
-      new THREE.Matrix4().lookAt(
-        this.position,
-        new THREE.Vector3().fromArray(b.position),
-        new THREE.Vector3(0, 1, 0),
-      ),
-    );
+    this.orientation.setFromRotationMatrix(new THREE.Matrix4().lookAt(
+      new THREE.Vector3(), this.targetRelative, new THREE.Vector3(0, 1, 0),
+    ));
+  }
+  get activeBodies() { return systemBodies(this.config, this.systemId); }
+  get targetRelative() {
+    const target = this.config.bodies.find(body => body.id === this.target)!;
+    return new THREE.Vector3().fromArray(systemDisplacement(this.config, this.systemId,
+      this.position.toArray(), bodySystem(target), target.position));
   }
   snapshot(): FlightState {
     return {
       version: 2,
       ...(this.landedBody ? { landedBody: this.landedBody } : {}),
+      systemId: this.systemId,
       ...(this.escapeBody ? { escapeBody: this.escapeBody } : {}),
       position: this.position.toArray(),
       velocity: this.velocity.toArray(),
@@ -114,6 +121,7 @@ export class ShipDynamics {
     this.resetWarp();
     this.escapeBody = null;
     this.deceleration = 0;
+    this.systemId = saved.systemId;
     this.position.fromArray(saved.position);
     this.velocity.fromArray(saved.velocity).clampLength(0, this.config.boostSpeed);
     this.orientation.fromArray(saved.orientation);
@@ -132,8 +140,8 @@ export class ShipDynamics {
     return true;
   }
   get environment() {
-    let body = this.config.bodies[0], altitudeKm = Infinity;
-    for (const candidate of this.config.bodies) {
+    let body = this.activeBodies[0], altitudeKm = Infinity;
+    for (const candidate of this.activeBodies) {
       const altitude = (Math.hypot(
         this.position.x - candidate.position[0],
         this.position.y - candidate.position[1],
@@ -257,7 +265,7 @@ export class ShipDynamics {
     // Check the swept path too: a fast frame cannot skip the low-speed zone.
     const travel = this.velocity.clone().multiplyScalar(dt);
     if (travel.lengthSq()) {
-      for (const body of this.config.bodies) {
+      for (const body of this.activeBodies) {
         const center = new THREE.Vector3().fromArray(body.position);
         // An outward departure may cross its own safety shell; other bodies still brake it.
         if (this.escapeBody === body.id && environment.escaping) continue;
@@ -293,8 +301,7 @@ export class ShipDynamics {
     const environment = this.environment;
     if (environment.altitudeKm <= this.config.flightSafety.nearSurfaceMinKm + SURFACE_EPSILON_KM) return "距天体表面 1000 km 内禁止跃迁，请先向太空离开";
     const target = this.config.bodies.find((body) => body.id === this.target)!;
-    const altitudeKm = (Math.hypot(...target.position.map((value, axis) => value - this.position.getComponent(axis)))
-      - target.radius) * this.config.unitsKm;
+    const altitudeKm = (this.targetRelative.length() - target.radius) * this.config.unitsKm;
     const minimumKm = Math.max(this.config.flightSafety.warpTargetMinKm,
       target.radius * this.config.unitsKm * this.config.flightSafety.warpTargetRadiusFactor);
     if (altitudeKm <= minimumKm + SURFACE_EPSILON_KM) return "距离目标太近，无法启动跃迁，请直接驾驶接近";
@@ -306,25 +313,55 @@ export class ShipDynamics {
     const target = this.config.bodies.find((b) => b.id === this.target)!;
     const destination = new ShipDynamics(this.config);
     destination.jump(this.target);
-    if (destination.position.distanceTo(this.position) < target.radius * 0.01)
+    if (destination.systemId === this.systemId && destination.position.distanceTo(this.position) < target.radius * 0.01)
       return "已在目标附近，可自由驾驶接近";
-    const points = [this.position.clone(), destination.position.clone()];
-    // Route around the actual solid bodies instead of teleporting through them.
-    let clear = false;
+    let points: RoutePoint[];
+    if (destination.systemId === this.systemId) {
+      const route = this.safeRoute(this.position, destination.position, this.systemId);
+      if (!route) return "当前航线无法安全跃迁，请调整位置";
+      points = route.map(position => ({ systemId: this.systemId, position }));
+    } else {
+      const direction = this.targetRelative.normalize();
+      const gateDistance = this.config.auKm * 100 / this.config.unitsKm;
+      const departure = this.position.clone().addScaledVector(direction, gateDistance);
+      const arrival = destination.position.clone().addScaledVector(direction, -gateDistance);
+      const leaving = this.safeRoute(this.position, departure, this.systemId);
+      const entering = this.safeRoute(arrival, destination.position, destination.systemId);
+      if (!leaving || !entering) return "跨恒星系统航线受阻，请先调整位置";
+      points = [...leaving.map(position => ({ systemId: this.systemId, position })),
+        ...entering.map(position => ({ systemId: destination.systemId, position }))];
+    }
+    this.warpRoute = points;
+    this.warpLength = points.slice(1).reduce((sum, point, i) => sum + this.routeDisplacement(points[i], point).length(), 0);
+    this.warpTravelDistance = 0;
+    this.warpTarget = this.target;
+    this.warpPhase = "charging";
+    this.warpClock = 0;
+    this.warpProgress = 0;
+    this.velocity.set(0, 0, 0);
+    this.align();
+    return null;
+  }
+  private routeDisplacement(a: RoutePoint, b: RoutePoint) {
+    return new THREE.Vector3().fromArray(systemDisplacement(this.config, a.systemId,
+      a.position.toArray(), b.systemId, b.position.toArray()));
+  }
+  private safeRoute(from: THREE.Vector3, to: THREE.Vector3, systemId: SystemId): THREE.Vector3[] | null {
+    const points = [from.clone(), to.clone()];
     for (let attempt = 0; attempt < 64; attempt++) {
       let obstacle = false;
       for (let i = 0; i < points.length - 1 && !obstacle; i++) {
         const a = points[i], b = points[i + 1];
         const line = b.clone().sub(a), lengthSq = line.lengthSq();
-        for (const body of this.config.bodies) {
+        if (!lengthSq) continue;
+        for (const body of systemBodies(this.config, systemId)) {
           const center = new THREE.Vector3().fromArray(body.position);
           const t = THREE.MathUtils.clamp(center.clone().sub(a).dot(line) / lengthSq, 0, 1);
           const closest = a.clone().addScaledVector(line, t);
-          const radius = Math.max(body.radius * (body.id === "sun" ? 1.3 : 1.005),
-            body.radius + Math.max(this.config.flightSafety.nearSurfaceMinKm / this.config.unitsKm,
-              body.radius * this.config.flightSafety.nearSurfaceRadiusFactor));
+          const radius = Math.max(body.radius * (body.kind === "star" ? 1.3 : 1.005),
+            body.radius + this.config.flightSafety.nearSurfaceMinKm / this.config.unitsKm);
           if (closest.distanceTo(center) >= radius) continue;
-          if (t <= 0 || t >= 1) return "请先离开天体表面的跃迁限制区";
+          if (t <= 0 || t >= 1) return null;
           const outward = closest.sub(center);
           if (outward.lengthSq() < 1e-12) outward.crossVectors(line, new THREE.Vector3(0, 1, 0));
           if (outward.lengthSq() < 1e-12) outward.set(1, 0, 0);
@@ -333,17 +370,8 @@ export class ShipDynamics {
           break;
         }
       }
-      if (!obstacle) { clear = true; break; }
+      if (!obstacle) return points;
     }
-    if (!clear) return "当前航线无法安全跃迁，请调整位置";
-    this.warpRoute = points;
-    this.warpLength = points.slice(1).reduce((sum, point, i) => sum + point.distanceTo(points[i]), 0);
-    this.warpTarget = this.target;
-    this.warpPhase = "charging";
-    this.warpClock = 0;
-    this.warpProgress = 0;
-    this.velocity.set(0, 0, 0);
-    this.align();
     return null;
   }
   cancelWarp() {
@@ -363,27 +391,40 @@ export class ShipDynamics {
     this.warpProgress = Math.min(1, this.warpClock / duration);
     this.warpSpeedKm = 0;
     if (this.warpPhase === "transit") {
-      const previous = this.position.clone();
       const t = this.warpProgress;
-      let distance = t * t * (3 - 2 * t) * this.warpLength;
+      const travelled = t * t * (3 - 2 * t) * this.warpLength;
+      let distance = travelled;
       for (let i = 0; i < this.warpRoute.length - 1; i++) {
         const a = this.warpRoute[i], b = this.warpRoute[i + 1];
-        const length = a.distanceTo(b);
+        const displacement = this.routeDisplacement(a, b), length = displacement.length();
         if (distance <= length || i === this.warpRoute.length - 2) {
-          this.position.copy(a).lerp(b, Math.min(1, distance / length));
-          this.orientation.setFromRotationMatrix(new THREE.Matrix4().lookAt(a, b, new THREE.Vector3(0, 1, 0)));
+          const blend = length ? Math.min(1, distance / length) : 1;
+          // Interpolate from the closer local origin. The final approach never
+          // subtracts two light-year-scale coordinates to recover a small height.
+          if (a.systemId === b.systemId || blend <= 0.5) {
+            this.systemId = a.systemId;
+            this.position.copy(a.position).addScaledVector(displacement, blend);
+          } else {
+            this.systemId = b.systemId;
+            this.position.copy(b.position).addScaledVector(displacement, -(1 - blend));
+          }
+          this.orientation.setFromRotationMatrix(new THREE.Matrix4().lookAt(
+            new THREE.Vector3(), displacement, new THREE.Vector3(0, 1, 0)));
           break;
         }
         distance -= length;
       }
-      this.warpSpeedKm = previous.distanceTo(this.position) * this.config.unitsKm / dt;
+      this.warpSpeedKm = (travelled - this.warpTravelDistance) * this.config.unitsKm / dt;
+      this.warpTravelDistance = travelled;
     }
     if (this.warpProgress < 1) return;
     this.warpClock = 0;
     this.warpProgress = 0;
     if (this.warpPhase === "charging") this.warpPhase = "transit";
     else if (this.warpPhase === "transit") {
-      this.position.copy(this.warpRoute[this.warpRoute.length - 1]);
+      const arrival = this.warpRoute[this.warpRoute.length - 1];
+      this.systemId = arrival.systemId;
+      this.position.copy(arrival.position);
       this.target = this.warpTarget;
       this.align();
       this.warpSpeedKm = 0;
@@ -400,12 +441,12 @@ export class ShipDynamics {
     const travel = this.position.clone().sub(previous);
     let earliest = 1,
       hit: { id: BodyId; center: THREE.Vector3; radius: number; gentle: boolean } | undefined;
-    for (const body of this.config.bodies) {
+    for (const body of this.activeBodies) {
       const center = new THREE.Vector3().fromArray(body.position);
       const solid = surfaceProfile(body.id).solid;
       const gentle = solid && this.velocity.length() * this.config.unitsKm <= 0.3;
       const normal = this.position.clone().sub(center).normalize();
-      const shieldRadius = body.radius * (body.id === "sun" ? 1.24 : 1.002) + 0.000002;
+      const shieldRadius = body.radius * (body.kind === "star" ? 1.24 : 1.002) + 0.000002;
       // Once inside the outer shield, never push a departing ship back out to orbit.
       const radius = solid && (gentle || previous.distanceTo(center) < shieldRadius)
         ? body.radius + (terrainHeightKm(body.id, normal.toArray()) + LANDING_CLEARANCE_KM) / this.config.unitsKm
@@ -448,7 +489,7 @@ export class ShipDynamics {
   get landingBlockReason(): string | null {
     if (this.warping) return "跃迁期间无法着陆";
     const environment = this.environment;
-    if (!environment.profile.solid) return environment.body.id === "sun" ? "太阳无法着陆" : "气态或冰巨行星没有可降落的固体地表，请选择卫星";
+    if (!environment.profile.solid) return environment.body.kind === "star" ? "恒星无法着陆" : "气态或冰巨行星没有可降落的固体地表，请选择卫星";
     if (environment.body.id !== this.target) return "请先接近并选择要着陆的天体";
     if (environment.altitudeKm > Math.max(environment.body.radius * this.config.unitsKm * 5, 2000))
       return "距离地表太远，请先跃迁或驾驶接近目标";

@@ -43,10 +43,10 @@ export class SurfaceScene {
     this.group.add(this.light, this.light.target, this.ambient);
     this.group.visible = false;
   }
-  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera) {
+  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight) {
     const env = ship.environment;
     const center = new THREE.Vector3().fromArray(env.body.position);
-    const sun = ship.position.clone().negate().normalize();
+    const sun = sunlight.position.clone().normalize();
     const day = THREE.MathUtils.smoothstep(env.outward.dot(sun), -0.18, 0.12);
     const fraction = env.body.atmosphereKm ? Math.max(0, 1 - env.altitudeKm / env.body.atmosphereKm) : 0;
     this.sky.visible = env.atmospheric && !ship.warping;
@@ -67,6 +67,7 @@ export class SurfaceScene {
     }
     this.group.position.copy(this.anchor).sub(ship.position);
     this.light.position.copy(sun).multiplyScalar(10);
+    this.light.color.copy(sunlight.color);
     this.light.intensity = 2.2 * day;
     this.ambient.intensity = 0.12 + day * 0.55;
     this.ambient.position.copy(env.outward);

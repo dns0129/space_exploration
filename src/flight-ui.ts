@@ -1,5 +1,5 @@
 import { FlightStore } from "./flight-store";
-import { getBody } from "./solar-system";
+import { getBody, STAR_SYSTEMS } from "./solar-system";
 import type { BodyId } from "./solar-system";
 import type { SolarScene, FlightStats, FlightTrackingStats } from "./planet-scene";
 import type { FlightState } from "../shared/flight-state.mjs";
@@ -34,7 +34,7 @@ export class FlightInterface {
     document.querySelector(".main")!.insertAdjacentHTML(
       "beforeend",
       `<section id="flight-ui" class="flight-ui" aria-label="飞船驾驶台" hidden>
-  <div class="flight-title"><span class="eyebrow">REAL SCALE / 真实太阳系</span><h2>VOYAGER <b>01</b></h2><span id="flight-status">手动驾驶 · 引擎待命</span></div>
+  <div class="flight-title"><span class="eyebrow">REAL SCALE / 星际航行</span><h2>VOYAGER <b>01</b></h2><span id="flight-system" class="flight-system">当前位置 · 太阳系</span><span id="flight-status">手动驾驶 · 引擎待命</span></div>
   <div class="flight-toolbar"><button id="flight-camera" aria-pressed="false">切换外部视角 <kbd>C</kbd></button><button id="flight-assist" aria-pressed="true">驾驶辅助：开</button><button id="flight-pause" aria-pressed="false">暂停航行</button><button id="flight-save">保存航行</button><button id="flight-resume" disabled>恢复存档</button><select id="flight-quality" aria-label="航行画质"><option value="high">高清</option><option value="standard">标准</option></select></div>
   <aside class="flight-navigation"><span class="eyebrow">导航目标 / DESTINATION</span><h3 id="flight-target">地球</h3><p><strong id="flight-distance">—</strong><small id="flight-distance-unit"> km</small></p><small id="flight-distance-au"></small><div><button id="flight-align">对准目标</button><button id="flight-jump">启动跃迁 <kbd>J</kbd></button></div><button id="flight-land">自动着陆（L）</button><small class="flight-nav-note">真实距离 · 1 AU ≈ 1.496 亿 km</small></aside>
   <aside class="warp-engine" id="warp-engine" data-phase="ready" aria-label="跃迁引擎"><span class="eyebrow">HYPERDRIVE / 跃迁引擎</span><strong id="warp-label">引擎就绪</strong><div class="warp-track"><i id="warp-progress"></i></div><small id="warp-hint">选择目的地，按 J 蓄能启航</small><button id="warp-cancel" hidden>中止跃迁</button></aside>
@@ -245,10 +245,13 @@ export class FlightInterface {
       ? (stats.speedKm / 299792.458).toLocaleString("zh-CN", { maximumFractionDigits: 1 })
       : (stats.speedKm * (metres ? 1000 : 1)).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
     $("#flight-speed-unit").textContent = lightspeed ? "× 光速" : metres ? "m/s" : "km/s";
-    const useAu = stats.distanceKm > 1_000_000;
-    $("#flight-distance").textContent = useAu ? (stats.distanceKm / 149597870.7).toFixed(3) : number(stats.distanceKm);
-    $("#flight-distance-unit").textContent = useAu ? " AU" : " km";
-    $("#flight-distance-au").textContent = useAu ? `${number(stats.distanceKm)} km` : `${(stats.distanceKm / 149597870.7).toFixed(6)} AU`;
+    const lightYearKm = 9460730472580.8;
+    const useLy = stats.distanceKm >= lightYearKm * 0.05;
+    const useAu = !useLy && stats.distanceKm > 1_000_000;
+    $("#flight-distance").textContent = useLy ? (stats.distanceKm / lightYearKm).toFixed(3) : useAu ? (stats.distanceKm / 149597870.7).toFixed(3) : number(stats.distanceKm);
+    $("#flight-distance-unit").textContent = useLy ? " 光年" : useAu ? " AU" : " km";
+    $("#flight-distance-au").textContent = useLy ? `${(stats.distanceKm / 149597870.7).toLocaleString("zh-CN", { maximumFractionDigits: 1 })} AU` : useAu ? `${number(stats.distanceKm)} km` : `${(stats.distanceKm / 149597870.7).toFixed(6)} AU`;
+    $("#flight-system").textContent = `当前位置 · ${STAR_SYSTEMS.find(system => system.id === stats.systemId)!.name}`;
     const labels = { ready: "引擎就绪", charging: "引擎蓄能", transit: "跃迁航行", arrival: "减速抵达", cooldown: "引擎冷却" };
     const activeWarp = ["charging", "transit", "arrival"].includes(stats.warpPhase);
     if (stats.landingPhase === "landed" && this.landingPhase !== "landed") this.notify(`已在${getBody(stats.nearest).name}地表着陆，按 L 或 R 起飞`);
@@ -290,7 +293,7 @@ export class FlightInterface {
     $("#flight-jump").title = stats.warpBlockReason ?? "启动跃迁（J）";
     $<HTMLButtonElement>("#flight-align").disabled = activeWarp || stats.landingPhase !== "manual";
     $<HTMLButtonElement>("#flight-resume").disabled = activeWarp || !this.saved;
-    document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("[data-body], #satellite-target").forEach((button) => { button.disabled = activeWarp; });
+    document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("[data-body], #satellite-target, #star-system").forEach((button) => { button.disabled = activeWarp; });
     $("#flight-nearest").textContent = getBody(stats.nearest).name;
     $("#flight-altitude").textContent = `${number(stats.altitudeKm)} km 高度`;
     $("#flight-heading").textContent =
