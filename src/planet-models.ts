@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import type { CelestialBody, Layer } from "./solar-system";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { SURFACE_MAPS } from "./body-textures";
+import type { SurfaceMap } from "./body-textures";
 
 export interface PlanetModel {
   body: CelestialBody;
@@ -10,6 +12,20 @@ export interface PlanetModel {
   spinning: { object: THREE.Object3D; rate: number }[];
   timeUniforms: THREE.IUniform<number>[];
   ringsEnabled?: THREE.IUniform<number>;
+  /** Photographic or concept map shared by the surface (or Venus cloud deck) material. */
+  surfaceMap?: SurfaceMap;
+  mapUniforms?: SurfaceMapUniforms;
+}
+
+export interface SurfaceMapUniforms {
+  detailMap: THREE.IUniform<THREE.Texture | null>;
+  mapSize: THREE.IUniform<THREE.Vector2>;
+  mapReady: THREE.IUniform<number>;
+  mapTint: THREE.IUniform<THREE.Vector3>;
+  mapOffset: THREE.IUniform<number>;
+  mapRelief: THREE.IUniform<number>;
+  mapGrain: THREE.IUniform<number>;
+  mapStreaks: THREE.IUniform<number>;
 }
 
 export const modelVertex = /* glsl */ `
@@ -19,9 +35,16 @@ export const modelVertex = /* glsl */ `
   varying vec3 vLocalPosition;
   varying vec3 vWorldPosition;
   varying vec3 vNormal;
+  varying vec3 vAxisX;
+  varying vec3 vAxisY;
+  varying vec3 vAxisZ;
   void main() {
     vUv = uv;
     vLocalPosition = position;
+    // Object axes in world space let fragments turn map-space slopes into lighting normals.
+    vAxisX = normalize(mat3(modelMatrix)[0]);
+    vAxisY = normalize(mat3(modelMatrix)[1]);
+    vAxisZ = normalize(mat3(modelMatrix)[2]);
     vec4 world = modelMatrix * vec4(position, 1.0);
     vWorldPosition = world.xyz;
     vec3 n = normalMatrix * normal;
@@ -31,7 +54,7 @@ export const modelVertex = /* glsl */ `
   }
 `;
 
-const noise = /* glsl */ `
+export const noise = /* glsl */ `
   float hash(vec3 p) {
     p = fract(p * 0.1031);
     p += dot(p, p.yzx + 33.33);
@@ -75,9 +98,88 @@ const noise = /* glsl */ `
   }
 `;
 
+/** Shared map filtering for planets, moons, stars and Earth. */
+export const mapSampling = /* glsl */ `
+  float mapLuminance(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+  vec4 bsplineWeights(float v) {
+    vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
+    vec4 s = n * n * n;
+    float x = s.x, y = s.y - 4.0 * s.x, z = s.z - 4.0 * s.y + 6.0 * s.x;
+    return vec4(x, y, z, 6.0 - x - y - z) / 6.0;
+  }
+  // Gradients taken across the longitude wrap keep the map seam at full resolution.
+  void seamGradients(vec2 uv, out vec2 gx, out vec2 gy) {
+    gx = dFdx(uv); gy = dFdy(uv);
+    vec2 wrapped = vec2(fract(uv.x + 0.5), uv.y);
+    vec2 wx = dFdx(wrapped), wy = dFdy(wrapped);
+    if (abs(wx.x) < abs(gx.x)) gx.x = wx.x;
+    if (abs(wy.x) < abs(gy.x)) gy.x = wy.x;
+  }
+  // A cubic B-spline from four bilinear taps replaces the blocky texel grid of magnified maps.
+  vec4 sampleMap(sampler2D map, vec2 uv, vec2 size, vec2 gx, vec2 gy) {
+    vec4 linear = textureGrad(map, uv, gx, gy);
+    float texels = max(length(gx * size), length(gy * size));
+    if (texels >= 1.0) return linear;
+    vec2 coord = uv * size - 0.5;
+    vec2 f = fract(coord);
+    coord -= f;
+    vec4 xw = bsplineWeights(f.x), yw = bsplineWeights(f.y);
+    vec4 s = vec4(xw.xz + xw.yw, yw.xz + yw.yw);
+    vec4 offset = (coord.xxyy + vec2(-0.5, 1.5).xyxy + vec4(xw.yw, yw.yw) / s) / size.xxyy;
+    vec4 a = textureGrad(map, offset.xz, gx, gy), b = textureGrad(map, offset.yz, gx, gy);
+    vec4 c = textureGrad(map, offset.xw, gx, gy), d = textureGrad(map, offset.yw, gx, gy);
+    float sx = s.x / (s.x + s.y), sy = s.z / (s.z + s.w);
+    vec4 cubic = mix(mix(d, c, sx), mix(b, a, sx), sy);
+    return mix(cubic, linear, smoothstep(0.5, 1.0, texels));
+  }
+  // The same B-spline at a fixed mip level, used to read block-averaged texels.
+  vec4 sampleMapLod(sampler2D map, vec2 uv, vec2 size, float lod) {
+    vec2 levelSize = size / exp2(lod);
+    vec2 coord = uv * levelSize - 0.5;
+    vec2 f = fract(coord);
+    coord -= f;
+    vec4 xw = bsplineWeights(f.x), yw = bsplineWeights(f.y);
+    vec4 s = vec4(xw.xz + xw.yw, yw.xz + yw.yw);
+    vec4 offset = (coord.xxyy + vec2(-0.5, 1.5).xyxy + vec4(xw.yw, yw.yw) / s) / levelSize.xxyy;
+    vec4 a = textureLod(map, offset.xz, lod), b = textureLod(map, offset.yz, lod);
+    vec4 c = textureLod(map, offset.xw, lod), d = textureLod(map, offset.yw, lod);
+    float sx = s.x / (s.x + s.y), sy = s.z / (s.z + s.w);
+    return mix(mix(d, c, sx), mix(b, a, sx), sy);
+  }
+  // Value noise with its analytic gradient, so detail normals need no screen derivatives.
+  vec4 noised(vec3 x) {
+    vec3 i = floor(x), f = fract(x);
+    vec3 u = f * f * (3.0 - 2.0 * f), du = 6.0 * f * (1.0 - f);
+    float a = hash(i), b = hash(i + vec3(1, 0, 0)), c = hash(i + vec3(0, 1, 0)), d = hash(i + vec3(1, 1, 0));
+    float e = hash(i + vec3(0, 0, 1)), g = hash(i + vec3(1, 0, 1)), h = hash(i + vec3(0, 1, 1)), k = hash(i + vec3(1, 1, 1));
+    float k1 = b - a, k2 = c - a, k3 = e - a, k4 = a - b - c + d, k5 = a - c - e + h, k6 = a - b - e + g;
+    float k7 = -a + b + c - d + e - g - h + k;
+    return vec4(a + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y + k5 * u.y * u.z + k6 * u.z * u.x + k7 * u.x * u.y * u.z,
+      du * vec3(k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z, k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x, k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y));
+  }
+  // Sub-texel detail revealed only while a map is magnified: x = albedo variation, yzw = object-space slope.
+  vec4 surfaceGrain(vec3 p, float texelFrequency, float footprint, float magnify, vec3 stretch, float seed) {
+    vec4 total = vec4(0.0);
+    float frequency = texelFrequency, amplitude = 1.0;
+    for (int i = 0; i < 4; i++) {
+      float weight = clamp(1.5 - footprint * frequency * 2.0, 0.0, 1.0) * magnify;
+      if (weight > 0.0) {
+        vec4 n = noised(p * stretch * frequency + vec3(float(i) * 17.31 + seed));
+        total += weight * vec4(amplitude * (n.x - 0.5), n.yzw * stretch);
+      }
+      frequency *= 2.0;
+      amplitude *= 0.62;
+    }
+    return total;
+  }
+`;
+
 const planetFragment = /* glsl */ `
   #include <logdepthbuf_pars_fragment>
   uniform sampler2D detailMap;
+  uniform vec2 mapSize;
+  uniform vec3 mapTint;
+  uniform float mapReady, mapOffset, mapRelief, mapGrain, mapStreaks;
   uniform vec3 sunDirection;
   uniform vec3 planetAxis;
   uniform vec3 planetCenter;
@@ -92,12 +194,55 @@ const planetFragment = /* glsl */ `
   varying vec3 vLocalPosition;
   varying vec3 vWorldPosition;
   varying vec3 vNormal;
+  varying vec3 vAxisX;
+  varying vec3 vAxisY;
+  varying vec3 vAxisZ;
   ${noise}
+  ${mapSampling}
   void main() {
     vec3 p = normalize(vLocalPosition);
     float height = 0.0;
     vec3 color = vec3(0.5);
-    #ifndef PHOTOGRAPHIC_MAP
+    #ifdef SURFACE_MAP
+      vec2 uv = vec2(vUv.x + mapOffset, vUv.y);
+      vec2 gx, gy;
+      seamGradients(uv, gx, gy);
+      float texels = max(length(gx * mapSize), length(gy * mapSize));
+      float footprint = max(length(dFdx(p)), length(dFdy(p)));
+      float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
+    #endif
+    #if BODY_KIND == 7
+      float terrain = fbm(p*5.0);
+      vec3 plasma = p*20.0+vec3(0.0,uTime*0.008,0.0);
+      float granules = fbm(plasma+(terrain-0.5)*1.4);
+      float fine = noise3(p*170.0+uTime*0.006);
+      color = mix(vec3(1.5,0.25,0.007),vec3(3.0,1.6,0.22),smoothstep(0.24,0.70,granules))*(0.84+fine*0.23);
+      if (stellarIllustration > 0.5) color = stellarTint * (1.2+granules*2.4) * (0.84+fine*0.23);
+      float sunspots = smoothstep(0.69,0.78,fbm(p*8.0+vec3(17.0)));
+      color *= 1.0-sunspots*0.85;
+      #ifdef SURFACE_MAP
+        if (mapReady > 0.001) {
+          vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy).rgb;
+          vec4 grain = surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, vec3(1.0), moonSeed);
+          // Illustrated stars keep the map's granulation and spots in their own temperature colour.
+          vec3 stellar = stellarIllustration > 0.5
+            ? stellarTint * 1.5 * pow(max(mapLuminance(photo) * mapTint.x, 0.0), 3.0)
+            : photo * 1.7;
+          color = mix(color, stellar * (1.0 + grain.x * mapGrain * 2.0), mapReady);
+        }
+      #endif
+      vec3 viewDirection = normalize(cameraPosition-vWorldPosition);
+      color *= 0.55+0.45*pow(max(dot(normalize(vNormal),viewDirection),0.0),0.3);
+      #include <logdepthbuf_fragment>
+      gl_FragColor = vec4(color,1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+      return;
+    #else
+    #ifdef SURFACE_MAP
+    // Procedural surfaces only fill in until the map has loaded and faded in.
+    if (mapReady < 0.999) {
+    #endif
     float terrain = fbm(p*5.0);
     float detail = noise3(p*180.0);
     height = terrain*0.03;
@@ -141,24 +286,6 @@ const planetFragment = /* glsl */ `
       vec2 spot = vec2(mod(vUv.x-0.22+0.5,1.0)-0.5,vUv.y-0.44)/vec2(0.045,0.035);
       color *= 1.0-(1.0-smoothstep(0.6,1.2,length(spot)))*0.4;
       height = detail*0.001;
-    #elif BODY_KIND == 7
-      vec3 plasma = p*20.0+vec3(0.0,uTime*0.008,0.0);
-      float granules = fbm(plasma+(terrain-0.5)*1.4);
-      float fine = noise3(p*170.0+uTime*0.006);
-      color = mix(vec3(1.5,0.25,0.007),vec3(3.0,1.6,0.22),smoothstep(0.24,0.70,granules))*(0.84+fine*0.23);
-      if (stellarIllustration > 0.5) color = stellarTint * (1.2+granules*2.4) * (0.84+fine*0.23);
-      float sunspots = smoothstep(0.69,0.78,fbm(p*8.0+vec3(17.0)));
-      color *= 1.0-sunspots*0.85;
-      #ifdef PHOTOGRAPHIC_MAP
-        color = texture2D(detailMap,vUv).rgb*1.7;
-      #endif
-      vec3 viewDirection = normalize(cameraPosition-vWorldPosition);
-      color *= 0.55+0.45*pow(max(dot(normalize(vNormal),viewDirection),0.0),0.3);
-      #include <logdepthbuf_fragment>
-    gl_FragColor = vec4(color,1.0);
-      #include <tonemapping_fragment>
-      #include <colorspace_fragment>
-      return;
     #elif BODY_KIND == 9
       height += crater(vUv,28.0)*0.2;
       color = moonColor*(0.48+terrain*0.7+detail*0.08);
@@ -179,32 +306,43 @@ const planetFragment = /* glsl */ `
       if (moonStyle == 3.0) color = moonColor*(0.8+fbm(p*vec3(12.0,4.0,12.0))*0.35);
       if (moonStyle == 4.0) color *= mix(0.18,1.3,smoothstep(-0.1,0.12,p.x));
     #endif
+    #ifdef SURFACE_MAP
+    }
     #endif
-    #ifdef PHOTOGRAPHIC_MAP
-      color = texture2D(detailMap,vUv).rgb;
-      #if BODY_KIND == 7
-        color *= 1.7;
-        vec3 view = normalize(cameraPosition-vWorldPosition);
-        color *= 0.55+0.45*pow(max(dot(normalize(vNormal),view),0.0),0.3);
-        #include <logdepthbuf_fragment>
-        gl_FragColor = vec4(color,1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-        return;
-      #elif BODY_KIND <= 2
-        float footprint = max(length(dFdx(p)),length(dFdy(p)));
-        float micro = (noise3(p*280.0)-0.5)*exp(-footprint*280.0);
-        color *= 1.0+micro*0.07;
-        height = dot(color,vec3(0.2126,0.7152,0.0722))*0.004+micro*0.0004;
-      #endif
-    #endif
-    vec3 normal = normalize(vNormal);
+    vec3 geometric = normalize(vNormal);
+    vec3 normal = geometric;
     vec3 dpdx = dFdx(vWorldPosition), dpdy = dFdy(vWorldPosition);
     vec3 r1 = cross(dpdy,normal), r2 = cross(normal,dpdx);
     float determinant = dot(dpdx,r1);
     vec3 gradient = sign(determinant)*(dFdx(height)*r1+dFdy(height)*r2);
     normal = normalize(max(abs(determinant),0.0000001)*normal-0.012*bodyRadius*gradient);
-    float diffuse = max(dot(normal,sunDirection),0.0);
+    #ifdef SURFACE_MAP
+      if (mapReady > 0.001) {
+        vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy).rgb;
+        vec3 stretch = mix(vec3(1.0), vec3(0.3, 2.6, 0.3), mapStreaks);
+        vec4 grain = surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, stretch, moonSeed);
+        vec3 slope = grain.yzw * mapGrain * 2.5;
+        if (mapRelief > 0.0) {
+          // Map brightness read as relief, differenced in texture space: smooth per-pixel normals, no 2x2 blocks.
+          float stepTexels = max(1.0, texels);
+          vec2 du = vec2(stepTexels / mapSize.x, 0.0), dv = vec2(0.0, stepTexels / mapSize.y);
+          float contrast = 1.0 / (mapLuminance(photo) + 0.04);
+          float east = (mapLuminance(textureGrad(detailMap, uv + du, gx, gy).rgb) - mapLuminance(textureGrad(detailMap, uv - du, gx, gy).rgb)) * contrast;
+          float north = (mapLuminance(textureGrad(detailMap, uv + dv, gx, gy).rgb) - mapLuminance(textureGrad(detailMap, uv - dv, gx, gy).rgb)) * contrast;
+          float ring = length(p.xz);
+          vec3 eastward = vec3(p.z, 0.0, -p.x) / max(ring, 0.0001);
+          vec3 northward = cross(p, eastward);
+          slope += mapRelief * (east * mapSize.x / (12.566 * max(ring, 0.15) * stepTexels) * eastward
+            + north * mapSize.y / (6.2832 * stepTexels) * northward);
+        }
+        slope -= p * dot(slope, p);
+        vec3 photoNormal = normalize(geometric - mat3(vAxisX, vAxisY, vAxisZ) * slope);
+        color = mix(color, photo * mapTint * (1.0 + grain.x * mapGrain * 2.2), mapReady);
+        normal = normalize(mix(normal, photoNormal, mapReady));
+      }
+    #endif
+    // Detail normals never light terrain beyond the geometric terminator.
+    float diffuse = max(dot(normal,sunDirection),0.0)*smoothstep(-0.12,0.04,dot(geometric,sunDirection));
     #if BODY_KIND == 4
       float planeAngle = dot(sunDirection,planetAxis);
       if(abs(planeAngle)>0.001) {
@@ -218,6 +356,7 @@ const planetFragment = /* glsl */ `
     gl_FragColor = vec4(max(color*(0.018+diffuse*1.05),vec3(0.0)),1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
+    #endif
   }
 `;
 
@@ -342,6 +481,30 @@ const ringFragment = /* glsl */ `
   }
 `;
 
+function createMapUniforms(surfaceMap: SurfaceMap, map?: THREE.Texture): SurfaceMapUniforms {
+  return {
+    detailMap: { value: map ?? null },
+    mapSize: { value: textureSize(map, surfaceMap) },
+    mapReady: { value: map ? 1 : 0 },
+    mapTint: { value: new THREE.Vector3(...(surfaceMap.tint ?? [1, 1, 1])) },
+    mapOffset: { value: surfaceMap.offset ?? 0 },
+    mapRelief: { value: surfaceMap.relief },
+    mapGrain: { value: surfaceMap.grain },
+    mapStreaks: { value: surfaceMap.streaks ? 1 : 0 },
+  };
+}
+function textureSize(map: THREE.Texture | null | undefined, surfaceMap: SurfaceMap) {
+  const image = map?.image as { width?: number; height?: number } | undefined;
+  return new THREE.Vector2(image?.width || surfaceMap.width, image?.height || surfaceMap.width / 2);
+}
+/** Swap a model's map in place; ready fades from procedural (0) to the map (1). */
+export function setSurfaceMap(model: PlanetModel, map: THREE.Texture | null, ready: number) {
+  if (!model.mapUniforms || !model.surfaceMap) return;
+  model.mapUniforms.detailMap.value = map;
+  model.mapUniforms.mapSize.value.copy(textureSize(map, model.surfaceMap));
+  model.mapUniforms.mapReady.value = map ? ready : 0;
+}
+
 export function createPlanetModel(
   body: CelestialBody,
   sunDirection: THREE.Vector3,
@@ -368,14 +531,18 @@ export function createPlanetModel(
   );
   const uTime = { value: 0 },
     ringsEnabled = { value: 1 };
+  const surfaceMap = SURFACE_MAPS[body.id];
+  const mapUniforms = surfaceMap ? createMapUniforms(surfaceMap, map) : undefined;
+  // Venus shows its imaged cloud deck; the procedural surface stays beneath it.
+  const mapOnSurface = mapUniforms && body.id !== "venus";
   const surface = new THREE.Mesh(
     new THREE.SphereGeometry(1, 192, 128),
     new THREE.ShaderMaterial({
       vertexShader: modelVertex,
       fragmentShader: planetFragment,
-      defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(map ? { PHOTOGRAPHIC_MAP: 1 } : {}) },
+      defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(mapOnSurface ? { SURFACE_MAP: 1 } : {}) },
       uniforms: {
-        detailMap: { value: map ?? null },
+        ...(mapOnSurface ? mapUniforms : {}),
         sunDirection: { value: sunDirection },
         planetAxis: { value: axis },
         planetCenter: { value: placement.center },
@@ -401,11 +568,14 @@ export function createPlanetModel(
     spinning: [{ object: surface, rate: body.rotationSpeed }],
     timeUniforms: [uTime],
     ringsEnabled,
+    surfaceMap,
+    mapUniforms,
   };
   if (body.layers.includes("atmosphere")) {
     const solar = body.id === "sun" || body.kind === "star";
+    // The shell slightly circumscribes the analytic atmosphere so coarse distant meshes never facet its edge.
     const halo = new THREE.Mesh(
-      new THREE.SphereGeometry(solar ? 1.23 : 1 + Math.max(0.003, Math.min(0.035, (body.atmosphereKm ?? 90) / body.radiusKm)), 96, 64),
+      new THREE.SphereGeometry((solar ? 1.23 : 1 + Math.max(0.003, Math.min(0.035, (body.atmosphereKm ?? 90) / body.radiusKm))) * 1.02, 96, 64),
       new THREE.ShaderMaterial({
         vertexShader: modelVertex,
         fragmentShader: atmosphereFragment,
@@ -445,15 +615,20 @@ export function createPlanetModel(
         depthWrite: false,
       }),
     );
-    if (map && body.id === "venus") {
+    if (mapUniforms && body.id === "venus") {
       clouds.material.fragmentShader = planetFragment;
-      clouds.material.defines = { BODY_KIND: 1, PHOTOGRAPHIC_MAP: 1 };
-      clouds.material.uniforms.detailMap = { value: map };
-      clouds.material.uniforms.planetAxis = { value: axis };
-      clouds.material.uniforms.planetCenter = { value: placement.center };
-      clouds.material.uniforms.bodyRadius = { value: placement.radius };
-      clouds.material.uniforms.ringsEnabled = ringsEnabled;
-      surface.material.defines = { BODY_KIND: 1 };
+      clouds.material.defines = { BODY_KIND: 1, SURFACE_MAP: 1 };
+      Object.assign(clouds.material.uniforms, mapUniforms, {
+        planetAxis: { value: axis },
+        planetCenter: { value: placement.center },
+        bodyRadius: { value: placement.radius },
+        ringsEnabled,
+        moonColor: { value: new THREE.Color(body.color) },
+        moonSeed: { value: body.surfaceSeed ?? 0 },
+        moonStyle: { value: 0 },
+        stellarTint: { value: new THREE.Color(body.color) },
+        stellarIllustration: { value: 0 },
+      });
     }
     clouds.scale.y = body.flattening;
     group.add(clouds);

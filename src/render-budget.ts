@@ -1,4 +1,4 @@
-/** Adaptive resolution with slow recovery, targeting a 60 Hz frame budget. */
+/** Adaptive resolution with a sharpness floor and steady recovery, targeting a 60 Hz frame budget. */
 export class RenderBudget {
   ratio = 1;
   private ceiling = 1;
@@ -7,8 +7,9 @@ export class RenderBudget {
   private healthySeconds = 0;
   private slowFrames = 0;
   private sampledFrames = 0;
-  private minimumRatio = 0.25;
-  configure(high: boolean, deviceRatio: number, width: number, height: number, minimumRatio = 0.25) {
+  private minimumRatio = 0.5;
+  private holdSeconds = 0;
+  configure(high: boolean, deviceRatio: number, width: number, height: number, minimumRatio = 0.5) {
     this.minimumRatio = minimumRatio;
     const pixelLimit = high ? 2_100_000 : 1_200_000;
     this.ceiling = Math.min(high ? Math.min(deviceRatio, 1.5) : 1,
@@ -19,8 +20,16 @@ export class RenderBudget {
     this.healthySeconds = 0;
     this.slowFrames = this.sampledFrames = 0;
   }
+  /** Ignore frames briefly, e.g. while a large texture uploads, so one stall doesn't blur the view. */
+  hold(seconds: number) {
+    this.holdSeconds = Math.max(this.holdSeconds, seconds);
+  }
   sample(seconds: number) {
     if (seconds <= 0 || seconds > 0.25) return false;
+    if (this.holdSeconds > 0) {
+      this.holdSeconds -= seconds;
+      return false;
+    }
     this.averageMs += (seconds * 1000 - this.averageMs) * (1 - Math.exp(-seconds * 2));
     this.sampledFrames++;
     if (seconds > 0.024) this.slowFrames++;
@@ -34,8 +43,9 @@ export class RenderBudget {
       this.ratio = Math.max(Math.min(this.minimumRatio, this.ceiling), this.ratio * 0.82);
       this.healthySeconds = 0;
     } else if (this.averageMs < 17.2 && missedFraction <= 0.02) {
-      if (++this.healthySeconds >= 6) {
-        this.ratio = Math.min(this.ceiling, this.ratio * 1.06);
+      // Recover sharpness steadily once frames are healthy again.
+      if (++this.healthySeconds >= 3) {
+        this.ratio = Math.min(this.ceiling, this.ratio * 1.08);
         this.healthySeconds = 0;
       }
     } else this.healthySeconds = 0;

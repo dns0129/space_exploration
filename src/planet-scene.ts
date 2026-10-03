@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { EARTH, getBody, STAR_SYSTEMS } from "./solar-system";
 import type { BodyId, Layer, SystemId } from "./solar-system";
-import { createPlanetModel, atmosphereFragment } from "./planet-models";
+import { createPlanetModel, atmosphereFragment, mapSampling, noise, setSurfaceMap } from "./planet-models";
+import { SURFACE_MAPS } from "./body-textures";
 import type { PlanetModel } from "./planet-models";
 import { bodySystem, systemConfig } from "../shared/world-navigation.mjs";
 import { ShipDynamics } from "./ship-dynamics";
@@ -57,11 +58,19 @@ const surfaceVertex = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vWorldPosition;
   varying vec3 vNormal;
+  varying vec3 vLocalPosition;
+  varying vec3 vAxisX;
+  varying vec3 vAxisY;
+  varying vec3 vAxisZ;
   void main() {
     vUv = uv;
+    vLocalPosition = position;
     vec4 world = modelMatrix * vec4(position, 1.0);
     vWorldPosition = world.xyz;
     vNormal = normalize(mat3(modelMatrix) * normal);
+    vAxisX = normalize(mat3(modelMatrix)[0]);
+    vAxisY = normalize(mat3(modelMatrix)[1]);
+    vAxisZ = normalize(mat3(modelMatrix)[2]);
     gl_Position = projectionMatrix * viewMatrix * world;
     #include <logdepthbuf_vertex>
   }
@@ -74,6 +83,7 @@ const surfaceFragment = /* glsl */ `
   uniform sampler2D heightMap;
   uniform sampler2D waterMap;
   uniform sampler2D cloudMap;
+  uniform vec2 mapSize;
   uniform float cloudsEnabled;
   uniform float cloudOffset;
   uniform float flatClouds;
@@ -82,40 +92,99 @@ const surfaceFragment = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vWorldPosition;
   varying vec3 vNormal;
+  varying vec3 vLocalPosition;
+  varying vec3 vAxisX;
+  varying vec3 vAxisY;
+  varying vec3 vAxisZ;
+  ${noise}
+  ${mapSampling}
   void main() {
     vec3 normal = normalize(vNormal);
-    // Derivative-based terrain shading keeps mountains subtle at planetary scale.
+    vec3 p = normalize(vLocalPosition);
+    vec2 gx, gy;
+    seamGradients(vUv, gx, gy);
+    float texels = max(length(gx * mapSize), length(gy * mapSize));
+    float footprint = max(length(dFdx(p)), length(dFdy(p)));
+    float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
     vec3 terrainNormal = normal;
+    float water = 0.0, landGrain = 0.0;
     if(terrainDetail>0.5) {
-      float height = texture2D(heightMap, vUv).r;
-      vec3 dpdx = dFdx(vWorldPosition), dpdy = dFdy(vWorldPosition);
-      vec3 r1 = cross(dpdy, normal), r2 = cross(normal, dpdx);
-      float determinant = dot(dpdx, r1);
-      vec3 gradient = sign(determinant) * (dFdx(height) * r1 + dFdy(height) * r2);
-      terrainNormal = normalize(max(abs(determinant),0.0000001) * normal - 0.004 * gradient);
+      water = sampleMap(waterMap, vUv, mapSize, gx, gy).r;
+      // Relief differenced in texture space keeps mountains smooth at any zoom, without texel facets.
+      float stepTexels = max(1.0, texels);
+      vec2 du = vec2(stepTexels / mapSize.x, 0.0), dv = vec2(0.0, stepTexels / mapSize.y);
+      float east = textureGrad(heightMap, vUv + du, gx, gy).r - textureGrad(heightMap, vUv - du, gx, gy).r;
+      float north = textureGrad(heightMap, vUv + dv, gx, gy).r - textureGrad(heightMap, vUv - dv, gx, gy).r;
+      float ring = length(p.xz);
+      vec3 eastward = vec3(p.z, 0.0, -p.x) / max(ring, 0.0001);
+      vec3 northward = cross(p, eastward);
+      vec3 slope = 0.0035 * (east * mapSize.x / (12.566 * max(ring, 0.15) * stepTexels) * eastward
+        + north * mapSize.y / (6.2832 * stepTexels) * northward);
+      vec4 grain = surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, vec3(1.0), 3.7);
+      float land = 1.0 - water;
+      slope += grain.yzw * 0.05 * land;
+      landGrain = grain.x * land;
+      slope -= p * dot(slope, p);
+      terrainNormal = normalize(normal - mat3(vAxisX, vAxisY, vAxisZ) * slope);
     }
     float daylight = dot(normal, sunDirection);
-    float diffuse = max(dot(terrainNormal, sunDirection), 0.0);
-    vec3 day = texture2D(dayMap, vUv).rgb;
-    vec3 night = daylight<0.12 ? texture2D(nightMap, vUv).rgb : vec3(0.0);
-    float water = terrainDetail>0.5 ? texture2D(waterMap, vUv).r : 0.0;
+    float diffuse = max(dot(terrainNormal, sunDirection), 0.0) * smoothstep(-0.12, 0.04, daylight);
+    // The deep-blue day map stays the colour layer at every distance; land grain only adds texture.
+    vec3 day = sampleMap(dayMap, vUv, mapSize, gx, gy).rgb;
+    // Open ocean holds faint 8x8 JPEG blocks; when magnified, read it from the block-averaged mip.
+    float smoothOcean = water * (1.0 - smoothstep(0.25, 0.6, texels));
+    if(smoothOcean > 0.0) day = mix(day, sampleMapLod(dayMap, vUv, mapSize, 3.0).rgb, smoothOcean);
+    day *= 1.0 + landGrain * 0.12;
+    vec3 night = daylight<0.12 ? sampleMap(nightMap, vUv, mapSize, gx, gy).rgb : vec3(0.0);
     vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
     vec3 halfwayDirection = normalize(sunDirection + viewDirection);
     float specular = pow(max(dot(terrainNormal, halfwayDirection), 0.0), 72.0);
     float nightWeight = 1.0 - smoothstep(-0.15, 0.12, daylight);
-    vec2 cloudUv = vec2(fract(vUv.x + cloudOffset),vUv.y);
-    vec4 cloud = texture2D(cloudMap,cloudUv);
+    vec4 cloud = sampleMap(cloudMap, vec2(vUv.x + cloudOffset, vUv.y), mapSize, gx, gy);
     float cloudCover = cloud.a * cloudsEnabled;
     vec3 color = day * (0.015 + diffuse * 1.08 * (1.0-cloudCover*0.26));
     // Isolate the warm city lights from the blue-tinted night-map terrain.
     float cityLight = max(night.r - night.b * 0.7, 0.0);
     color += vec3(1.0, 0.65, 0.32) * pow(cityLight, 0.7) * nightWeight * 5.0;
     color += vec3(0.9, 0.95, 1.0) * specular * water * smoothstep(0.0, 0.15, daylight) * 0.12;
-    color = mix(color,cloud.rgb*(0.035+diffuse*1.1),cloudCover*flatClouds*0.82);
+    color = mix(color,cloud.rgb*(0.035+max(daylight,0.0)*1.1),cloudCover*flatClouds*0.82);
     float rim = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color += vec3(0.035, 0.22, 0.55) * rim * smoothstep(-0.3, 0.6, daylight) * 0.35;
     #include <logdepthbuf_fragment>
     gl_FragColor = vec4(color, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
+
+/** Separate cloud shell, shaded exactly like the merged distant clouds so Earth's colours never shift. */
+const earthCloudFragment = /* glsl */ `
+  #include <logdepthbuf_pars_fragment>
+  uniform sampler2D cloudMap;
+  uniform vec2 mapSize;
+  uniform vec3 sunDirection;
+  varying vec2 vUv;
+  varying vec3 vNormal;
+  varying vec3 vLocalPosition;
+  ${noise}
+  ${mapSampling}
+  void main() {
+    vec3 p = normalize(vLocalPosition);
+    vec2 gx, gy;
+    seamGradients(vUv, gx, gy);
+    float texels = max(length(gx * mapSize), length(gy * mapSize));
+    float footprint = max(length(dFdx(p)), length(dFdy(p)));
+    float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
+    vec4 cloud = sampleMap(cloudMap, vUv, mapSize, gx, gy);
+    float cover = cloud.a;
+    if(magnify > 0.0) {
+      // Sub-texel wisps sharpen partly covered texels instead of showing soft magnified blobs.
+      vec4 grain = surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, vec3(1.0, 1.6, 1.0), 9.1);
+      cover = clamp(cover + grain.x * 2.0 * cover * (1.0 - cover), 0.0, 1.0);
+    }
+    float daylight = max(dot(normalize(vNormal), sunDirection), 0.0);
+    #include <logdepthbuf_fragment>
+    gl_FragColor = vec4(cloud.rgb * (0.035 + daylight * 1.1), cover * 0.82);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -146,6 +215,12 @@ export class SolarScene {
   private starsEnabled = true;
   private spacePromise?: Promise<void>;
   private readonly planetMaps = new Map<BodyId, THREE.Texture>();
+  /** Moon, star and exoplanet maps load on approach and are released when unused, keyed by file. */
+  private readonly lazyMaps = new Map<string, { texture?: THREE.Texture; loading?: Promise<void>; failedAt?: number; used: number }>();
+  private readonly mapFades = new Set<PlanetModel>();
+  private mapCheck = 0;
+  private readonly compactTextures = window.matchMedia("(pointer: coarse)").matches
+    || ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4;
   private flightModels: PlanetModel[] = [];
   private readonly distantSphere = new THREE.SphereGeometry(1, 32, 24);
   private readonly mediumSphere = new THREE.SphereGeometry(1, 64, 48);
@@ -153,7 +228,7 @@ export class SolarScene {
   private readonly largeSphere = new THREE.SphereGeometry(1, 128, 80);
   private readonly renderBudget = new RenderBudget();
   private highQuality = true;
-  private minimumRenderRatio = 0.25;
+  private minimumRenderRatio = 0.5;
   private readonly flightGeometries = new Map<THREE.Mesh, THREE.BufferGeometry>();
   private readonly flightSpheres = new Map<PlanetModel, THREE.Mesh[]>();
   private dynamics?: ShipDynamics;
@@ -199,9 +274,10 @@ export class SolarScene {
     private readonly onStats: (stats: SceneStats) => void,
     private readonly onError: (message: string) => void,
   ) {
+    // MSAA smooths planet limbs and atmosphere edges; software rasterizers skip it to stay responsive.
     this.renderer = new THREE.WebGLRenderer({
       logarithmicDepthBuffer: true,
-      antialias: false,
+      antialias: !SolarScene.softwareRendering(),
       alpha: false,
       powerPreference: "high-performance",
     });
@@ -273,15 +349,18 @@ export class SolarScene {
     await this.loadSpaceTextures();
     const maps =
       id === "earth" ? await this.loadEarthTextures(onProgress) : undefined;
+    if (id !== "earth" && this.isLazyMap(id)) onProgress(40);
+    const lazyMap = id !== "earth" ? await this.loadSurfaceMap(id) : null;
     if (this.destroyed || version !== this.selectionVersion) return false;
     let model = this.models.get(id);
     if (!model) {
       model =
         id === "earth"
           ? this.createEarthModel(maps!)
-          : createPlanetModel(getBody(id), this.sunDirection, undefined, this.planetMaps.get(id));
+          : createPlanetModel(getBody(id), this.sunDirection, undefined, this.planetMaps.get(id) ?? lazyMap ?? undefined);
       this.models.set(id, model);
-    }
+    } else if (lazyMap && model.mapUniforms?.detailMap.value !== lazyMap) setSurfaceMap(model, lazyMap, 1);
+    this.mapFades.delete(model);
     this.planet.clear();
     this.planet.add(model.group);
     this.currentModel = model;
@@ -305,17 +384,14 @@ export class SolarScene {
   private loadSpaceTextures(): Promise<void> {
     if (this.galaxy) return Promise.resolve();
     if (this.spacePromise) return this.spacePromise;
-    const loader = new THREE.TextureLoader();
-    const ids = ["mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "sun"] as const;
+    const ids = (Object.keys(SURFACE_MAPS) as BodyId[]).filter(id => SURFACE_MAPS[id]!.core);
     const skyFiles = [...new Set(STAR_SYSTEMS.map(system => system.backgroundFile))];
-    const files = [...skyFiles, ...ids.map((id) => `${id}-real.jpg`)];
+    const files = [...skyFiles, ...ids.map((id) => SURFACE_MAPS[id]!.file)];
     const batch: THREE.Texture[] = [];
     let failed = false;
-    this.spacePromise = Promise.all(files.map(async (file) => {
-      const texture = await loader.loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
+    this.spacePromise = Promise.all(files.map(async (file, index) => {
+      const texture = await this.loadTexture(file, index >= skyFiles.length);
       if (this.destroyed || failed) { texture.dispose(); throw new Error("场景已关闭或贴图加载失败"); }
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       batch.push(texture);
       return texture;
     })).then((maps) => {
@@ -334,6 +410,118 @@ export class SolarScene {
       throw error;
     }).finally(() => { this.spacePromise = undefined; });
     return this.spacePromise;
+  }
+
+  private static softwareRendering() {
+    try {
+      const gl = document.createElement("canvas").getContext("webgl2");
+      if (!gl) return false;
+      const debug = gl.getExtension("WEBGL_debug_renderer_info");
+      const name = debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) : "";
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+      return /swiftshader|llvmpipe|software/i.test(name);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Decoded before upload so large maps don't stall a frame; surface maps wrap in longitude. */
+  private async loadTexture(file: string, surface: boolean) {
+    const texture = await new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
+    const image = texture.image as HTMLImageElement;
+    await image.decode?.().catch(() => undefined);
+    if (surface && this.compactTextures && image.width > 2048) {
+      // Low-memory devices keep 2K copies: a quarter of the GPU memory of a 4K map.
+      const canvas = document.createElement("canvas");
+      canvas.width = 2048;
+      canvas.height = Math.round(2048 * image.height / image.width);
+      const context = canvas.getContext("2d")!;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      texture.image = canvas;
+    }
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = surface ? this.renderer.capabilities.getMaxAnisotropy() : Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+    if (surface) texture.wrapS = THREE.RepeatWrapping;
+    texture.needsUpdate = true;
+    return texture;
+  }
+
+  private isLazyMap(id: BodyId) {
+    const surfaceMap = SURFACE_MAPS[id];
+    return !!surfaceMap && !surfaceMap.core;
+  }
+
+  /** Marks a body's map as in use and starts loading it if it isn't resident. */
+  private touchSurfaceMap(id: BodyId) {
+    const surfaceMap = SURFACE_MAPS[id];
+    if (!surfaceMap || surfaceMap.core) return;
+    const now = performance.now();
+    const file = surfaceMap.file;
+    let entry = this.lazyMaps.get(file);
+    if (!entry) this.lazyMaps.set(file, entry = { used: now });
+    entry.used = now;
+    if (entry.texture || entry.loading || (entry.failedAt && now - entry.failedAt < 20000)) return;
+    const loading = entry;
+    loading.loading = this.loadTexture(file, true).then((texture) => {
+      if (this.destroyed || this.lazyMaps.get(file) !== loading) { texture.dispose(); return; }
+      loading.texture = texture;
+      this.textures.add(texture);
+      this.renderer.initTexture(texture);
+      // Upload stalls are not a sign of a slow GPU; don't let them lower the resolution.
+      this.renderBudget.hold(0.75);
+      for (const model of this.allModels())
+        if (model.surfaceMap?.file === file && model.mapUniforms?.detailMap.value !== texture) {
+          const immediate = !this.flying && model === this.currentModel;
+          setSurfaceMap(model, texture, immediate ? 1 : 0);
+          if (!immediate) this.mapFades.add(model);
+        }
+      this.releaseSurfaceMaps();
+    }).catch((error) => {
+      loading.failedAt = performance.now();
+      console.warn(`Surface map ${file} unavailable; keeping the procedural surface.`, error);
+    }).finally(() => { loading.loading = undefined; });
+  }
+
+  private async loadSurfaceMap(id: BodyId): Promise<THREE.Texture | null> {
+    if (!this.isLazyMap(id)) return null;
+    this.touchSurfaceMap(id);
+    const entry = this.lazyMaps.get(SURFACE_MAPS[id]!.file);
+    await entry?.loading;
+    return entry?.texture ?? null;
+  }
+
+  private allModels() {
+    return [...this.flightModels, ...this.models.values()];
+  }
+
+  /** Keeps GPU memory bounded: the least recently seen maps return to their procedural fallback. */
+  private releaseSurfaceMaps() {
+    const limit = this.compactTextures ? 3 : 6;
+    const now = performance.now();
+    const resident = [...this.lazyMaps].filter(([, entry]) => entry.texture).sort((a, b) => a[1].used - b[1].used);
+    for (const [file, entry] of resident) {
+      if (resident.filter(([, item]) => item.texture).length <= limit || now - entry.used < 8000) break;
+      for (const model of this.allModels())
+        if (model.surfaceMap?.file === file) { setSurfaceMap(model, null, 0); this.mapFades.delete(model); }
+      this.textures.delete(entry.texture!);
+      entry.texture!.dispose();
+      entry.texture = undefined;
+      this.lazyMaps.delete(file);
+    }
+  }
+
+  private updateSurfaceMaps(delta: number, time: number) {
+    for (const model of this.mapFades) {
+      const ready = model.mapUniforms!.mapReady;
+      ready.value = Math.min(1, ready.value + delta / 0.7);
+      if (ready.value >= 1) this.mapFades.delete(model);
+    }
+    if (!this.flying && this.currentModel) this.touchSurfaceMap(this.currentModel.body.id);
+    if (time - this.mapCheck > 3000) {
+      this.mapCheck = time;
+      this.releaseSurfaceMaps();
+    }
   }
 
   private useSystemBackground(id: SystemId) {
@@ -377,10 +565,9 @@ export class SolarScene {
           texture.dispose();
           throw new Error("场景已关闭");
         }
-        texture.anisotropy = Math.min(
-          this.renderer.capabilities.getMaxAnisotropy(),
-          4,
-        );
+        texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+        texture.wrapS = THREE.RepeatWrapping;
+        await (texture.image as HTMLImageElement).decode?.().catch(() => undefined);
         this.textures.add(texture);
         batch.push(texture);
         onProgress(Math.round((++loaded / files.length) * 100));
@@ -429,6 +616,7 @@ export class SolarScene {
           heightMap: { value: maps[2] },
           waterMap: { value: maps[3] },
           cloudMap: { value: maps[4] },
+          mapSize: { value: new THREE.Vector2(maps[0].image.width, maps[0].image.height) },
           cloudsEnabled: { value: 1 },
           cloudOffset: { value: 0 },
           flatClouds: { value: 0 },
@@ -440,12 +628,16 @@ export class SolarScene {
     surface.rotation.y = -1.8;
     const clouds = new THREE.Mesh(
       new THREE.SphereGeometry(1.0018, 128, 96),
-      new THREE.MeshPhongMaterial({
-        map: maps[4],
+      new THREE.ShaderMaterial({
+        vertexShader: surfaceVertex,
+        fragmentShader: earthCloudFragment,
+        uniforms: {
+          cloudMap: { value: maps[4] },
+          mapSize: { value: new THREE.Vector2(maps[4].image.width, maps[4].image.height) },
+          sunDirection: { value: sunDirection },
+        },
         transparent: true,
-        opacity: 0.82,
         depthWrite: false,
-        shininess: 5,
       }),
     );
     clouds.rotation.y = surface.rotation.y;
@@ -482,7 +674,8 @@ export class SolarScene {
     if (model.body.id !== "earth") return;
     const uniforms = (model.surface.material as THREE.ShaderMaterial).uniforms;
     const clouds = model.layers.clouds!;
-    uniforms.cloudOffset.value = (model.surface.rotation.y-clouds.rotation.y)/(Math.PI*2);
+    const turns = (model.surface.rotation.y-clouds.rotation.y)/(Math.PI*2);
+    uniforms.cloudOffset.value = turns - Math.floor(turns);
     uniforms.cloudsEnabled.value = Number(clouds.visible || uniforms.flatClouds.value>0);
   }
   private createStars() {
@@ -571,6 +764,7 @@ export class SolarScene {
       : 0;
     this.lastTime = time;
     if ((!this.flying || !this.flightPaused) && this.renderBudget.sample(delta)) this.applyRenderBudget();
+    this.updateSurfaceMaps(delta, time);
     if (this.flying) {
       this.animateFlight(delta, time);
       this.renderer.render(this.scene, this.camera);
@@ -658,7 +852,7 @@ export class SolarScene {
             : createPlanetModel(getBody(body.id), light, {
                 center,
                 radius: body.radius,
-              }, this.planetMaps.get(body.id));
+              }, this.planetMaps.get(body.id) ?? this.lazyMaps.get(SURFACE_MAPS[body.id]?.file ?? "")?.texture);
         const spheres: THREE.Mesh[] = [];
         model.group.traverse((object) => {
           if (object instanceof THREE.Mesh && object.geometry instanceof THREE.SphereGeometry) {
@@ -754,6 +948,8 @@ export class SolarScene {
   }
   setDestination(id: BodyId) {
     if (this.dynamics && !this.dynamics.warping) this.dynamics.target = id;
+    // Prefetch so the destination is already high resolution on arrival.
+    this.touchSurfaceMap(id);
   }
   alignFlight() {
     if (this.dynamics?.landingPhase !== "manual") return;
@@ -797,6 +993,8 @@ export class SolarScene {
       const angularRadius = body.radius / Math.max(model.group.position.length(), 1e-9);
       const pixelRadius = angularRadius * pixelsPerRadian;
       model.group.visible = pixelRadius > 0.65;
+      // Maps stream in as bodies grow beyond a few pixels; far ones keep the procedural fallback.
+      if (pixelRadius > 4) this.touchSurfaceMap(model.body.id);
       const lod = pixelRadius < 8 ? this.tinySphere : pixelRadius < 100 ? this.distantSphere : pixelRadius < 280 ? this.mediumSphere : pixelRadius < 700 ? this.largeSphere : undefined;
       for (const sphere of this.flightSpheres.get(model)!) sphere.geometry = lod ?? this.flightGeometries.get(sphere)!;
       // The local curved tile adds detail above the coarse globe; clouds stay overhead.

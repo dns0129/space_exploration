@@ -2,6 +2,7 @@ import "./style.css";
 import { watchSiteVersion } from "./site-version";
 import { FlightInterface } from "./flight-ui";
 import { SolarScene } from "./planet-scene";
+import { surfaceMapLabel } from "./body-textures";
 import type { View } from "./planet-scene";
 import { SOLAR_SYSTEM, PRIMARY_BODIES, MOONS, CENTAURI_BODIES, getBodySystem, getSystemGroup, getBody, isBodyId } from "./solar-system";
 import type { BodyId, Layer } from "./solar-system";
@@ -83,7 +84,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <footer class="footer"><span><i></i><span id="render-status">准备观测系统</span></span><span class="footer-center">探索，始于仰望。</span><span>地表着陆 · 阶段 05 <b>V 0.5</b></span></footer>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">观测太阳、八颗行星及其主要卫星，或切换到自由航行驾驶飞船。航行时点击天体导航选择目标，用“对准目标”确定航向，再按 W 出发；按 J 启动跃迁引擎，蓄能后沿航线抵达。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳、八颗行星和 26 颗主要卫星均可观测；“恒星系统”可切换半人马座 α，访问南门二 A/B、比邻星及比邻星行星。各系统使用独立星空背景；半人马座背景和系外行星地表为探索美术示意。点击顶部“自由航行”驾驶飞船：W 前进，S 减速（停稳后倒车），A/D 平移，R/F 升降，Q/E 翻滚，方向键转向，触屏按住拖动、松手回正，Shift 加速，空格刹车，C 切换视角，J 启动跃迁，L 自动着陆或起飞。接近岩石行星和卫星后可连续下降到程序化地表；着陆后按 L 或 R 起飞，空格或手动操纵中止自动下降。气态与冰巨行星没有可着陆的固体地表。辅助驾驶让速度方向平滑跟随船头。距天体表面 1000 km 内通常最高 100 km/s；100 km 内朝向太空可使用行星引擎离地，持续向外直到安全区外，近地不能跃迁。航行距离和天体半径按真实公里比例呈现，行星位置采用静态轨道示意，支持简化惯性与防撞护盾；保存与恢复使用服务端或本机存档。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。银河背景、水星与火星贴图：Solar System Scope（CC BY 4.0）；木星、土星与海王星：Askaniy Anpilogov、NASA/JPL-Caltech、Björn Jónsson 等，收录于 CelestiaContent（CC BY 3.0）；金星与天王星：Oleg Pluton / Helleformer（CC BY 4.0）；太阳：Ruslan Kabatsayev、NASA/SDO HMI，收录于 Stellarium（CC BY-SA 4.0）。背景和太阳影像缩小到 4K，部分贴图转换格式。完整作者、修改、来源与许可见项目 ASSETS.md。</p></details></dialog>
+    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">观测太阳、八颗行星及其主要卫星，或切换到自由航行驾驶飞船。航行时点击天体导航选择目标，用“对准目标”确定航向，再按 W 出发；按 J 启动跃迁引擎，蓄能后沿航线抵达。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳、八颗行星和 26 颗主要卫星均可观测；“恒星系统”可切换半人马座 α，访问南门二 A/B、比邻星及比邻星行星。各系统使用独立星空背景；半人马座背景、恒星与系外行星地表为高清概念示意。点击顶部“自由航行”驾驶飞船：W 前进，S 减速（停稳后倒车），A/D 平移，R/F 升降，Q/E 翻滚，方向键转向，触屏按住拖动、松手回正，Shift 加速，空格刹车，C 切换视角，J 启动跃迁，L 自动着陆或起飞。接近岩石行星和卫星后可连续下降到程序化地表；着陆后按 L 或 R 起飞，空格或手动操纵中止自动下降。气态与冰巨行星没有可着陆的固体地表。辅助驾驶让速度方向平滑跟随船头。距天体表面 1000 km 内通常最高 100 km/s；100 km 内朝向太空可使用行星引擎离地，持续向外直到安全区外，近地不能跃迁。航行距离和天体半径按真实公里比例呈现，行星位置采用静态轨道示意，支持简化惯性与防撞护盾；保存与恢复使用服务端或本机存档。</p><details class="credits"><summary>影像与素材来源</summary><p>4K 地表与夜间影像：NASA Earth imagery，收录于 <a href="https://github.com/vasturiano/three-globe" target="_blank" rel="noopener noreferrer">three-globe</a>；云层、地形与海洋贴图收录于 <a href="https://github.com/turban/webgl-earth" target="_blank" rel="noopener noreferrer">Bjorn Sandvik / WebGL Earth</a>。银河背景、水星、金星云顶、火星、天王星与月球贴图：Solar System Scope（CC BY 4.0）；木星、土星、海王星、木卫一、木卫三、土卫六、土卫七与海卫一：Askaniy Anpilogov、ItzImcool、NASA/JPL-Caltech/USGS、Björn Jónsson 等，收录于 CelestiaContent（CC BY 3.0 / 4.0）；天王星卫星：ItzImcool、Paul Schenk、Ted Stryk（CC BY-SA 4.0）；其余土星卫星、木卫二与木卫四：Paul Schenk、John van Vliet 等，收录于 CelestiaContent；太阳：Ruslan Kabatsayev、NASA/SDO HMI，收录于 Stellarium（CC BY-SA 4.0）。海王星小卫星、海卫二、半人马座恒星与比邻星行星为 cubicApocalypse、MrSpace43、AstroChara、Askaniy Anpilogov 与 Solar System Scope 的高清概念图（CC BY 4.0 / CC BY-SA 4.0 / CC BY 3.0），不是实测照片。部分影像缩小到 4K 并转换格式，未拍摄半球为示意填补。完整作者、修改、来源与许可见项目 ASSETS.md。</p></details></dialog>
   </div>
 `;
 
@@ -320,8 +321,7 @@ async function start(id: BodyId = state.body) {
     setControlsReady(true);
     $("#loading-overlay").hidden = true;
     $("#connection-text").textContent = `${getBody(id).name}观测在线`;
-    $("#render-status").textContent =
-      id === "earth" ? "4K 地表 · 实时 3D 渲染" : "程序化材质 · 实时 3D 渲染";
+    $("#render-status").textContent = `${surfaceMapLabel(id)} · 实时 3D 渲染`;
     $("#canvas-host").dataset.ready = "true";
     $("#canvas-host").dataset.body = id;
   } catch (error) {
