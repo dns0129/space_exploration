@@ -13,7 +13,8 @@
     "test": "playwright test",
     "test:server": "node --test server/*.test.mjs",
     "export": "node scripts/export-standalone.mjs",
-    "test:offline": "npm run export && node scripts/verify-standalone.mjs"
+    "test:offline": "npm run export && node scripts/verify-standalone.mjs",
+    "test:performance": "npm run build && node scripts/verify-performance.mjs"
   },
   "dependencies": {
     "three": "0.180.0"

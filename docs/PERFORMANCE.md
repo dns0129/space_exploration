@@ -1,0 +1,26 @@
+# 近轨道性能验证
+
+Chromium 使用 SwiftShader（纯 CPU WebGL）和软件页面合成，云环境没有可用的独立显卡。这些成绩不能代表玩家显卡，也不是对所有设备的 60 FPS 保证。
+
+地球与火星高度为 1100 km，木星为 3000 km。座舱沿地平线观察，速度为零，高清画质开启；每个场景预热 12 秒，再采样 8 秒 requestAnimationFrame 间隔。桌面视口为 1440 × 960，手机视口为 412 × 915、设备像素比 2.625。
+
+| 视口 / 目的地 | 平均 FPS | P95 帧耗时 | 内部 3D 画布 |
+| --- | ---: | ---: | --- |
+| 桌面 / 地球 | 59.8 | 16.8 ms | 293 × 181 |
+| 桌面 / 火星 | 60.1 | 16.7 ms | 379 × 234 |
+| 桌面 / 木星 | 60.1 | 16.7 ms | 240 × 148 |
+| 手机 / 地球 | 60 | 16.8 ms | 173 × 312 |
+| 手机 / 火星 | 60.1 | 16.7 ms | 211 × 380 |
+| 手机 / 木星 | 60.1 | 16.7 ms | 163 × 294 |
+
+为了保持操作响应，软件渲染采用明显较低的 3D 分辨率；驾驶界面文字仍按浏览器原分辨率绘制。不能把上述 FPS 与全分辨率画质同时作为测得的结果。独立显卡是否能在更高清晰度下稳定达到 60 FPS，需要实际设备测量。
+
+控制器同时检测持续平均帧耗时与漏帧比例，按秒降低分辨率，并在持续健康的帧耗时下缓慢恢复。五档球面网格、低于像素大小的天体裁剪、小尺寸地球云层合并、影像材质简化及日珥合并绘制减少渲染开销；源影像尺寸保持不变。
+
+```sh
+npm run test:performance
+npm run test:performance -- --hardware
+npm run test:performance -- --baseline /path/to/baseline/dist
+```
+
+`--hardware` 使用系统图形后端，报告中的 `graphicsRenderer` 记录实际驱动；用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 可指定 Chrome/Chromium 路径，或先执行 `npx playwright install chromium`。结果与截图写入 `test-results/performance/`。回归门槛为平均至少 55 FPS、P95 不超过 22 ms；渲染目标仍为 60 Hz。浏览器交互结果另写入 `test-results/browser/`。

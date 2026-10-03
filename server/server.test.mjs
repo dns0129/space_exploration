@@ -716,4 +716,8 @@ test("render budget lowers sustained slow resolution and recovers slowly within 
   for(let i=0;i<3000;i++)budget.sample(1/60);
   assert(budget.ratio>low);assert(budget.ratio<=initial);
   const previous=budget.ratio;budget.sample(0);budget.sample(5);assert.equal(budget.ratio,previous);
+  const jitter=new RenderBudget();jitter.configure(true,1,1440,960);
+  const sharp=jitter.ratio;
+  for(let i=0;i<600;i++)jitter.sample(i%15===0?1/30:1/60);
+  assert(jitter.ratio<sharp,"regular missed frames must reduce resolution even with a decent average FPS");
 });

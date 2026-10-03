@@ -50,9 +50,9 @@ License links: [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), [CC BY
 
 ## Generated geometry and rendering
 
-Atmospheric shells, Saturn's rings and analytic shadows, solar prominences, spacecraft geometry, UI, and warp tunnel effects are original generated geometry/shaders. Venus's cloud switch reveals a procedural illustration of its normally obscured surface. Cloud motion, exposure, and illumination are simplified; maps combine observations/artwork from different dates and are not live imagery.
+The seeded 128 × 128 terrain grain/bump texture is generated locally from original code; no additional downloaded assets are used. Atmospheric shells, Saturn's rings and analytic shadows, solar prominences, spacecraft geometry, UI, and warp tunnel effects are original generated geometry/shaders. Venus's cloud switch reveals a procedural illustration of its normally obscured surface. Cloud motion, exposure, and illumination are simplified; maps combine observations/artwork from different dates and are not live imagery.
 
-Flight uses real mean radii and mean Sun distances in kilometres, with double-precision positions and a floating render origin. Planetary directions are a fixed illustrative layout, not an ephemeris. The observer fits each individual body into its own view. Propulsion, shields and faster-than-light travel are fictional gameplay; gravity and orbit integration are not implemented.
+Flight uses real mean radii and mean Sun distances in kilometres, with double-precision positions and a floating render origin. Planetary directions are a fixed illustrative layout, not an ephemeris. The observer fits each individual body into its own view. Propulsion, shields and faster-than-light travel are fictional gameplay; near-surface gravity is simplified and full orbit integration is not implemented.
 
 ## Alpha Centauri system artwork
 

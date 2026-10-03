@@ -505,13 +505,13 @@ export function createPlanetModel(
       const b = normal.clone().multiplyScalar(1.11 + Math.sin(i * 2.1) * 0.035);
       const c = normal.clone().addScaledVector(tangent, 0.055).normalize();
       flareGeometries.push(
-          new THREE.TubeGeometry(
-            new THREE.QuadraticBezierCurve3(a, b, c),
-            32,
-            0.0025,
-            6,
-            false,
-          ),
+        new THREE.TubeGeometry(
+          new THREE.QuadraticBezierCurve3(a, b, c),
+          32,
+          0.0025,
+          6,
+          false,
+        ),
       );
     }
     flares.add(new THREE.Mesh(mergeGeometries(flareGeometries)!, material));

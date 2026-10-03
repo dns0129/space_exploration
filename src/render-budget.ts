@@ -5,6 +5,8 @@ export class RenderBudget {
   private averageMs = 16.7;
   private windowSeconds = 0;
   private healthySeconds = 0;
+  private slowFrames = 0;
+  private sampledFrames = 0;
   private minimumRatio = 0.25;
   configure(high: boolean, deviceRatio: number, width: number, height: number, minimumRatio = 0.25) {
     this.minimumRatio = minimumRatio;
@@ -15,18 +17,23 @@ export class RenderBudget {
     this.averageMs = 16.7;
     this.windowSeconds = -1.5;
     this.healthySeconds = 0;
+    this.slowFrames = this.sampledFrames = 0;
   }
   sample(seconds: number) {
     if (seconds <= 0 || seconds > 0.25) return false;
     this.averageMs += (seconds * 1000 - this.averageMs) * (1 - Math.exp(-seconds * 2));
+    this.sampledFrames++;
+    if (seconds > 0.024) this.slowFrames++;
     this.windowSeconds += seconds;
     if (this.windowSeconds < 1) return false;
     this.windowSeconds = 0;
+    const missedFraction = this.slowFrames / this.sampledFrames;
+    this.slowFrames = this.sampledFrames = 0;
     const previous = this.ratio;
-    if (this.averageMs > 21) {
+    if (this.averageMs > 19 || missedFraction > 0.045) {
       this.ratio = Math.max(Math.min(this.minimumRatio, this.ceiling), this.ratio * 0.82);
       this.healthySeconds = 0;
-    } else if (this.averageMs < 17.5) {
+    } else if (this.averageMs < 17.2 && missedFraction <= 0.02) {
       if (++this.healthySeconds >= 6) {
         this.ratio = Math.min(this.ceiling, this.ratio * 1.06);
         this.healthySeconds = 0;
