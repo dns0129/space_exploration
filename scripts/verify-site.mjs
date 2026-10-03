@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { chromium, expect, devices } from "@playwright/test";
 import { PNG } from "pngjs";
+import { verifySurfaceFlight } from "./verify-surface.mjs";
 
 const root = fileURLToPath(new URL("../dist-site/", import.meta.url));
 const output = fileURLToPath(new URL("../test-results/site/", import.meta.url));
@@ -161,7 +162,7 @@ try {
       Math.hypot(...saved.velocity) > 0,
       "Saved flight must include actual movement",
     );
-    await page.reload();
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
     await expect(page.locator("#canvas-host")).toHaveAttribute(
       "data-mode",
       "flight",
@@ -190,6 +191,8 @@ try {
       { timeout: 60000 },
     );
     await expect(page.locator("#flight-nearest")).toHaveText("火星");
+    await verifySurfaceFlight(page);
+    await page.screenshot({ path: resolve(output, `landed-${name}.png`) });
     // A changed deployment offers refresh and leaves the current flight intact.
     await page.route("**/version.json?*", (route) =>
       route.fulfill({

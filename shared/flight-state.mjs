@@ -1,4 +1,5 @@
 import world from "./world.json" with { type: "json" };
+import { surfaceProfile, terrainHeightKm, LANDING_CLEARANCE_KM } from "./surface.mjs";
 export { world };
 const ids = new Set(world.bodies.map((body) => body.id));
 // Stage 03 used a compressed world. Re-anchor old saves relative to their destination.
@@ -44,8 +45,19 @@ export function validateFlightState(value) {
     ? value.position.map((n, i) => body.position[i] + (n - old[1][i]) / old[0] * body.radius)
     : [...value.position];
   if (!vector(position, 3, 1e8)) return null;
+  if (value.landedBody !== undefined) {
+    const ground = world.bodies.find((b) => b.id === value.landedBody);
+    if (value.version !== 2 || !ground || !surfaceProfile(ground.id).solid || Math.hypot(...value.velocity) > 1e-9) return null;
+    const offset = position.map((n, i) => n - ground.position[i]);
+    const distance = Math.hypot(...offset);
+    if (distance === 0) return null;
+    const altitude = (distance - ground.radius) * world.unitsKm;
+    const height = terrainHeightKm(ground.id, offset.map((n) => n / distance)) + LANDING_CLEARANCE_KM;
+    if (Math.abs(altitude - height) > 0.0001) return null;
+  }
   return {
     version: 2,
+    ...(value.landedBody ? { landedBody: value.landedBody } : {}),
     ...(value.version === 2 && ids.has(value.escapeBody) ? { escapeBody: value.escapeBody } : {}),
     position,
     velocity: value.version === 1 ? [0, 0, 0] : [...value.velocity],

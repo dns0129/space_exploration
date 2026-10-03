@@ -82,12 +82,14 @@ html = html.replace(
     `<link rel="icon" href="data:image/svg+xml;base64,${favicon.toString("base64")}">`,
 );
 
-const instructions = `远航 VOYAGER · 写实太阳系与跃迁引擎（阶段 04）
+const instructions = `远航 VOYAGER · 大气、地表与着陆（阶段 05）
 
 立即驾驶：解压后将 voyager-warp.html 拖入 Chrome 或 Edge。
 点击顶部“自由航行”，从当前行星附近出发。
 W 前进，S 减速（停稳后倒车），A/D 平移，R/F 升降，Q/E 翻滚，方向键转向；触屏按住拖动，松手回正。
-Shift 加速，空格刹车，C 切换座舱/外部视角，J 启动跃迁。手机使用触屏驾驶按钮。
+Shift 加速，空格刹车，C 切换座舱/外部视角，J 启动跃迁，L 自动着陆/起飞/中止。手机使用触屏驾驶按钮。
+选择并靠近岩石行星或卫星，按 L 连续下降并展开起落架；着陆后 L 或 R 起飞，升至离地 2 km 恢复手动驾驶。空格或手动操纵中止自动下降/起飞，暂停冻结进度。太阳和巨行星没有可着陆的固体地表。
+近地具有程序化曲面地形、颗粒与碰撞，大气天空随高度和昼夜变化，大气密度影响阻力。辅助驾驶补偿近地重力；关闭后需自行施加升力。地形是游戏示意，不是真实测绘，地球局部不区分全球海陆。地表存档可恢复着陆状态。
 常规推进自动切换：近地轨道引擎 1–100 km/s、行星引擎 100–10000 km/s、星际引擎 10000–50000 km/s；达到 100 或 10000 km/s 时升级，减速时切回，最高 50000 km/s。可刹车至停止。
 距天体表面 1000 km 内通常最高 100 km/s；100 km 内船头朝向太空（朝外夹角小于约 75°）且没有向内漂移时，可以启动行星引擎，最高 10000 km/s，并持续向外穿过安全区。转向内侧立即限速。1000 km 内禁止跃迁，离开后自动解锁。
 卫星导航提供月球及木星 4、土星 8、天王星 5、海王星 8 颗主要卫星。每颗具有独立冰壳、撞击坑或火山程序材质；半径及平均轨道距离采用公里比例，位置为静态示意。减速时显示琥珀色制动脉冲。
@@ -175,6 +177,7 @@ const zip = archive([
     await readFile(join(project, "shared/flight-state.mjs")),
   ],
   ["shared/world.json", await readFile(join(project, "shared/world.json"))],
+  ["shared/surface.mjs", await readFile(join(project, "shared/surface.mjs"))],
   ["ASSETS.md", await readFile(join(project, "ASSETS.md"))],
   ["THIRD_PARTY_NOTICES.md", await readFile(join(project, "THIRD_PARTY_NOTICES.md"))],
   ["public/textures/provenance.json", await readFile(join(project, "public/textures/provenance.json"))],

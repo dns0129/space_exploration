@@ -2113,3 +2113,36 @@ dialog h2 {
   .satellite-navigation select { padding: 4px 6px; max-width: 164px; }
 }
 @media (prefers-reduced-motion: reduce) { .flight-deceleration::before { display: none; } }
+
+.flight-surface {
+  position: absolute;
+  left: 34px;
+  bottom: 190px;
+  z-index: 2;
+  display: grid;
+  gap: 7px;
+  max-width: 275px;
+  padding: 16px;
+  border-left: 2px solid #80b6bf;
+  background: linear-gradient(90deg, rgba(8, 22, 31, 0.85), rgba(8, 22, 31, 0.3));
+  pointer-events: none;
+}
+.flight-surface strong { font-size: 13px; color: #d2e5e7; }
+.flight-surface b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.flight-surface small { font-size: 10px; line-height: 1.6; color: #a9bec5; }
+.flight-surface[data-phase="landed"] { border-color: #7fe6b5; }
+.flight-surface[data-phase="descending"] { border-color: #f2bd79; }
+.flight-navigation > #flight-land { margin-top: 8px; width: 100%; }
+@media (min-width: 701px) and (max-height: 850px) {
+  .flight-surface { left: auto; right: 32px; top: 140px; bottom: auto; }
+}
+@media (min-width: 701px) and (max-height: 620px) {
+  .flight-surface { display: none; }
+}
+@media (max-width: 700px) {
+  .flight-surface { top: 310px; bottom: auto; left: 20px; max-width: 170px; padding: 10px; gap: 4px; }
+  .flight-surface .eyebrow { font-size: 8px; }
+  .flight-surface b { font-size: 14px; }
+  .flight-surface strong { font-size: 10px; }
+  .flight-surface small { font-size: 9px; }
+}

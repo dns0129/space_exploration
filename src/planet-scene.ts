@@ -8,6 +8,7 @@ import { ShipDynamics } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
 import { createShip } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
+import { SurfaceScene } from "./surface-scene";
 import { projectFlightTarget } from "./flight-target";
 import type { FlightTargetStats } from "./flight-target";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
@@ -25,6 +26,7 @@ export interface FlightStats {
   warpPhase: ShipDynamics["warpPhase"];
   warpProgress: number;
   speedKm: number;
+  speedLimitKm: number;
   altitudeKm: number;
   nearest: BodyId;
   distanceKm: number;
@@ -33,6 +35,8 @@ export interface FlightStats {
   elapsed: number;
   boosting: boolean;
   collision: BodyId | null;
+  landingPhase: ShipDynamics["landingPhase"];
+  landingBlockReason: string | null;
 }
 export interface FlightTrackingStats extends FlightTargetStats {
   target: BodyId;
@@ -143,6 +147,7 @@ export class SolarScene {
   private readonly shipSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
   private readonly shipScale = 0.000015 * 0.16;
   private readonly warpEffect = createWarpEffect();
+  private readonly surfaceScene = new SurfaceScene();
   private galaxy?: THREE.Texture;
   private spacePromise?: Promise<void>;
   private readonly planetMaps = new Map<BodyId, THREE.Texture>();
@@ -230,6 +235,7 @@ export class SolarScene {
     this.scene.add(this.stars);
     this.observeSun.position.set(-3, 1.8, 4);
     this.flightRoot.visible = false;
+    this.scene.add(this.surfaceScene.group, this.surfaceScene.sky);
     this.flightSun.visible = false;
     this.shipScene.add(
       this.ship.group,
@@ -604,6 +610,8 @@ export class SolarScene {
         });
         model.group.position.copy(center);
         model.group.scale.setScalar(body.radius);
+        // Collision uses the mean-radius sphere. Match rocky flight surfaces to it.
+        if (body.id !== "sun" && !["jupiter", "saturn", "uranus", "neptune"].includes(body.id)) model.surface.scale.y = 1;
         this.flightGeometries.set(model.surface, model.surface.geometry);
         this.flightRoot.add(model.group);
         this.flightModels.push(model);
@@ -648,6 +656,8 @@ export class SolarScene {
     this.planet.visible = true;
     this.flightRoot.visible = false;
     this.observeSun.visible = true;
+    this.surfaceScene.group.visible = false;
+    this.surfaceScene.sky.visible = false;
     this.flightSun.visible = false;
     this.controls.enabled = true;
     this.stars.position.set(0, 0, 0);
@@ -682,6 +692,7 @@ export class SolarScene {
     if (this.dynamics && !this.dynamics.warping) this.dynamics.target = id;
   }
   alignFlight() {
+    if (this.dynamics?.landingPhase !== "manual") return;
     this.dynamics?.align();
     this.flightControls?.clear();
   }
@@ -692,6 +703,13 @@ export class SolarScene {
     return error;
   }
   cancelWarp() { this.dynamics?.cancelWarp(); }
+  landFlight(): string | null {
+    if (!this.dynamics) return "飞船尚未就绪";
+    this.flightControls?.clear();
+    if (this.dynamics.landingPhase === "landed") return this.dynamics.takeOff();
+    if (this.dynamics.landingPhase !== "manual") { this.dynamics.cancelLanding(); return null; }
+    return this.dynamics.startLanding();
+  }
   setFlightCamera(view: "cockpit" | "chase") {
     if (this.dynamics) {
       this.dynamics.camera = view;
@@ -703,6 +721,7 @@ export class SolarScene {
   }
   private updateFlightCamera(blend: number) {
     const ship = this.dynamics!;
+    const environment = ship.environment;
     // CPU positions remain in double precision. GPU objects are relative to the ship.
     for (const model of this.flightModels) {
       const body = ship.config.bodies.find((b) => b.id === model.body.id)!;
@@ -710,6 +729,8 @@ export class SolarScene {
       const angularRadius = body.radius / Math.max(model.group.position.length(), 1e-9);
       model.group.visible = angularRadius > 0.00001;
       model.surface.geometry = angularRadius < 0.005 ? this.distantSphere : this.flightGeometries.get(model.surface)!;
+      // The local curved tile adds detail above the coarse globe; clouds stay overhead.
+      if (model.layers.atmosphere) model.layers.atmosphere.visible = model.body.id !== environment.body.id || !environment.atmospheric;
     }
     this.flightSun.position.fromArray(ship.config.bodies[0].position).sub(ship.position);
     const scale = 0.000015; // Approximately 25 m hull with a close chase camera.
@@ -737,6 +758,8 @@ export class SolarScene {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
     }
+    this.surfaceScene.update(ship, this.camera);
+    this.ship.gear.visible = ship.landingPhase !== "manual" || (environment.profile.solid && environment.groundAltitudeKm < 1);
   }
   private animateFlight(delta: number, time: number) {
     const ship = this.dynamics!;
@@ -745,8 +768,9 @@ export class SolarScene {
       ship.step(delta, input);
       if (!this.paused)
         for (const model of this.flightModels) {
+          // Keep surface features fixed in the collision frame while flying; clouds still drift.
           for (const { object, rate } of model.spinning)
-            object.rotation.y += rate * delta;
+            if (object !== model.surface) object.rotation.y += rate * delta;
           for (const uniform of model.timeUniforms) uniform.value += delta;
         }
     }
@@ -775,6 +799,7 @@ export class SolarScene {
       warpPhase: ship.warpPhase,
       warpProgress: ship.warpProgress,
       speedKm: ship.warping ? ship.warpSpeedKm : ship.velocity.length() * ship.config.unitsKm,
+      speedLimitKm: ship.speedLimit * ship.config.unitsKm,
       altitudeKm: environment.altitudeKm,
       nearest: environment.body.id,
       distanceKm:
@@ -787,6 +812,8 @@ export class SolarScene {
       elapsed: ship.elapsed,
       boosting: input.boost,
       collision: ship.collision,
+      landingPhase: ship.landingPhase,
+      landingBlockReason: ship.landingBlockReason,
     });
   }
 
@@ -864,6 +891,7 @@ export class SolarScene {
   };
 
   dispose() {
+    this.surfaceScene.dispose();
     this.destroyed = true;
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();

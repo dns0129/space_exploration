@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
 import type { BodyId } from "./solar-system";
+import { surfaceProfile, terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 // Centimetre tolerance compensates for subtraction at AU-scale coordinates.
 const SURFACE_EPSILON_KM = 1e-5;
 export interface FlightInput {
@@ -41,6 +42,9 @@ export class ShipDynamics {
   assist = true;
   elapsed = 0;
   collision: BodyId | null = null;
+  landedBody: BodyId | null = null;
+  landingPhase: "manual" | "descending" | "landed" | "ascending" = "manual";
+  private landingBody: BodyId | null = null;
   readonly config: WorldConfig;
   warpPhase: "ready" | "charging" | "transit" | "arrival" | "cooldown" = "ready";
   warpProgress = 0;
@@ -55,6 +59,9 @@ export class ShipDynamics {
   }
   jump(id: BodyId) {
     this.resetWarp();
+    this.landedBody = null;
+    this.landingBody = null;
+    this.landingPhase = "manual";
     this.escapeBody = null;
     this.deceleration = 0;
     const body = this.config.bodies.find((b) => b.id === id)!;
@@ -90,6 +97,7 @@ export class ShipDynamics {
   snapshot(): FlightState {
     return {
       version: 2,
+      ...(this.landedBody ? { landedBody: this.landedBody } : {}),
       ...(this.escapeBody ? { escapeBody: this.escapeBody } : {}),
       position: this.position.toArray(),
       velocity: this.velocity.toArray(),
@@ -116,6 +124,9 @@ export class ShipDynamics {
     this.camera = saved.camera;
     this.assist = saved.assist;
     this.elapsed = saved.elapsed;
+    this.landedBody = saved.landedBody ?? null;
+    this.landingBody = this.landedBody;
+    this.landingPhase = this.landedBody ? "landed" : "manual";
     this.resolveCollision(this.position.clone());
     this.velocity.clampLength(0, this.speedLimit);
     return true;
@@ -133,15 +144,22 @@ export class ShipDynamics {
     const nearHeightKm = this.config.flightSafety.nearSurfaceMinKm;
     const atmospheric = !!body.atmosphereKm && altitudeKm <= body.atmosphereKm;
     const outward = this.position.clone().sub(new THREE.Vector3().fromArray(body.position)).normalize();
+    const profile = surfaceProfile(body.id);
+    const groundHeightKm = terrainHeightKm(body.id, outward.toArray());
+    const groundAltitudeKm = Math.max(0, altitudeKm - groundHeightKm - LANDING_CLEARANCE_KM);
+    const density = atmospheric ? profile.density * Math.exp(-Math.max(0, altitudeKm) / profile.scaleKm) : 0;
     const headingOut = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation).dot(outward) > 0.25;
     const movingOut = this.velocity.dot(outward) >= -1e-9;
     const escaping = altitudeKm <= nearHeightKm + SURFACE_EPSILON_KM && headingOut && movingOut
       && (altitudeKm <= 100 + SURFACE_EPSILON_KM || this.escapeBody === body.id);
     const restricted = altitudeKm <= nearHeightKm + SURFACE_EPSILON_KM && !escaping;
-    return { body, altitudeKm: Math.max(0, altitudeKm), atmospheric, restricted, nearHeightKm, escaping };
+    return { body, altitudeKm: Math.max(0, altitudeKm), atmospheric, restricted, nearHeightKm, escaping,
+      profile, density, groundHeightKm, groundAltitudeKm, outward };
   }
   get speedLimit() {
     const environment = this.environment;
+    if (environment.profile.solid && environment.groundAltitudeKm < 5)
+      return Math.min(100, 0.02 + environment.groundAltitudeKm * 4) / this.config.unitsKm;
     return (environment.restricted ? this.config.engines[0].maxSpeedKm
       : environment.escaping ? this.config.engines[1].maxSpeedKm
       : this.config.boostSpeed * this.config.unitsKm) / this.config.unitsKm;
@@ -168,6 +186,17 @@ export class ShipDynamics {
       this.warpClock += dt;
       this.warpProgress = Math.min(1, this.warpClock / this.config.warp.cooldownSeconds);
       if (this.warpProgress >= 1) this.resetWarp();
+    }
+    if (this.landingPhase === "landed") {
+      this.elapsed += dt;
+      this.velocity.set(0, 0, 0);
+      if (input.lift > 0) this.takeOff();
+      return;
+    }
+    if (this.landingPhase === "descending" || this.landingPhase === "ascending") {
+      if (input.brake || input.throttle || input.strafe || input.lift || input.yaw || input.pitch || input.roll || input.mouseX || input.mouseY)
+        this.cancelLanding();
+      else { this.stepLanding(dt); return; }
     }
     const turn = new THREE.Vector3(
       THREE.MathUtils.clamp(input.pitch - input.mouseY, -1, 1) * 1.25,
@@ -214,6 +243,10 @@ export class ShipDynamics {
           / this.config.unitsKm,
       );
     this.velocity.addScaledVector(acceleration, dt);
+    if (environment.atmospheric) this.velocity.multiplyScalar(Math.exp(-Math.min(4, environment.density * 0.45) * dt));
+    // Assisted near-ground flight counters local gravity; inertial flight must use lift.
+    if (!this.assist && environment.profile.solid && environment.groundAltitudeKm < 5)
+      this.velocity.addScaledVector(environment.outward, -environment.profile.gravity / 1000 / this.config.unitsKm * dt);
     if (input.brake || slowing) this.velocity.multiplyScalar(Math.exp(-(input.brake ? 8 : 2.8) * dt));
     else if (this.assist) {
       this.velocity.multiplyScalar(Math.exp(-0.1 * dt));
@@ -255,6 +288,7 @@ export class ShipDynamics {
     this.warpRoute = [];
   }
   get warpBlockReason(): string | null {
+    if (this.landingPhase !== "manual") return "请先起飞或中止着陆，再启动跃迁";
     if (this.warpPhase !== "ready") return "跃迁引擎正在工作或冷却";
     const environment = this.environment;
     if (environment.altitudeKm <= this.config.flightSafety.nearSurfaceMinKm + SURFACE_EPSILON_KM) return "距天体表面 1000 km 内禁止跃迁，请先向太空离开";
@@ -362,12 +396,20 @@ export class ShipDynamics {
   }
   private resolveCollision(previous: THREE.Vector3) {
     this.collision = null;
+    if (this.landedBody) return;
     const travel = this.position.clone().sub(previous);
     let earliest = 1,
-      hit: { id: BodyId; center: THREE.Vector3; radius: number } | undefined;
+      hit: { id: BodyId; center: THREE.Vector3; radius: number; gentle: boolean } | undefined;
     for (const body of this.config.bodies) {
       const center = new THREE.Vector3().fromArray(body.position);
-      const radius = body.radius * (body.id === "sun" ? 1.24 : 1.002) + 0.000002;
+      const solid = surfaceProfile(body.id).solid;
+      const gentle = solid && this.velocity.length() * this.config.unitsKm <= 0.3;
+      const normal = this.position.clone().sub(center).normalize();
+      const shieldRadius = body.radius * (body.id === "sun" ? 1.24 : 1.002) + 0.000002;
+      // Once inside the outer shield, never push a departing ship back out to orbit.
+      const radius = solid && (gentle || previous.distanceTo(center) < shieldRadius)
+        ? body.radius + (terrainHeightKm(body.id, normal.toArray()) + LANDING_CLEARANCE_KM) / this.config.unitsKm
+        : shieldRadius;
       const offset = previous.clone().sub(center);
       const c = offset.lengthSq() - radius * radius;
       if (c < 0) {
@@ -378,16 +420,17 @@ export class ShipDynamics {
           .addScaledVector(normal.normalize(), radius + 0.0000002);
         this.velocity.set(0, 0, 0);
         this.collision = body.id;
+        if (gentle) this.touchDown(body.id);
         return;
       }
       const a = travel.lengthSq(),
         b = 2 * offset.dot(travel),
         disc = b * b - 4 * a * c;
-      if (a > 1e-12 && disc >= 0) {
+      if (a > 1e-24 && disc >= 0) {
         const t = (-b - Math.sqrt(disc)) / (2 * a);
         if (t >= 0 && t <= earliest) {
           earliest = t;
-          hit = { id: body.id, center, radius };
+          hit = { id: body.id, center, radius, gentle };
         }
       }
     }
@@ -397,6 +440,87 @@ export class ShipDynamics {
       this.position.addScaledVector(normal, 0.0000002);
       this.velocity.set(0, 0, 0);
       this.collision = hit.id;
+      if (hit.gentle)
+        this.touchDown(hit.id);
     }
+  }
+
+  get landingBlockReason(): string | null {
+    if (this.warping) return "跃迁期间无法着陆";
+    const environment = this.environment;
+    if (!environment.profile.solid) return environment.body.id === "sun" ? "太阳无法着陆" : "气态或冰巨行星没有可降落的固体地表，请选择卫星";
+    if (environment.body.id !== this.target) return "请先接近并选择要着陆的天体";
+    if (environment.altitudeKm > Math.max(environment.body.radius * this.config.unitsKm * 5, 2000))
+      return "距离地表太远，请先跃迁或驾驶接近目标";
+    return null;
+  }
+  startLanding(): string | null {
+    const blocked = this.landingBlockReason;
+    if (blocked) return blocked;
+    this.landingBody = this.environment.body.id;
+    this.landingPhase = "descending";
+    this.landedBody = null;
+    this.escapeBody = null;
+    this.collision = null;
+    this.velocity.set(0, 0, 0);
+    this.angularVelocity.set(0, 0, 0);
+    this.bank = 0;
+    return null;
+  }
+  cancelLanding() {
+    if (this.landingPhase === "landed") return;
+    this.landingPhase = "manual";
+    this.landingBody = null;
+    this.velocity.set(0, 0, 0);
+  }
+  takeOff(): string | null {
+    if (!this.landedBody) return "请先在地表着陆";
+    this.landingBody = this.landedBody;
+    this.landedBody = null;
+    this.landingPhase = "ascending";
+    this.collision = null;
+    this.velocity.set(0, 0, 0);
+    return null;
+  }
+  private surfaceAttitude(normal: THREE.Vector3, ascending = false) {
+    let forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation).projectOnPlane(normal);
+    if (forward.lengthSq() < 1e-8) forward = new THREE.Vector3(0, 1, 0).cross(normal);
+    if (forward.lengthSq() < 1e-8) forward.set(1, 0, 0);
+    forward.normalize();
+    const up = ascending ? forward.clone().negate() : normal;
+    const target = ascending ? normal : forward;
+    this.orientation.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), target, up));
+  }
+  private touchDown(id: BodyId) {
+    const body = this.config.bodies.find((candidate) => candidate.id === id)!;
+    const center = new THREE.Vector3().fromArray(body.position);
+    const normal = this.position.clone().sub(center).normalize();
+    const height = terrainHeightKm(id, normal.toArray()) + LANDING_CLEARANCE_KM;
+    this.position.copy(center).addScaledVector(normal, body.radius + height / this.config.unitsKm);
+    this.surfaceAttitude(normal);
+    this.landedBody = id;
+    this.landingBody = id;
+    this.landingPhase = "landed";
+    this.velocity.set(0, 0, 0);
+    this.angularVelocity.set(0, 0, 0);
+    this.bank = 0;
+    this.collision = null;
+  }
+  private stepLanding(dt: number) {
+    const body = this.config.bodies.find((candidate) => candidate.id === this.landingBody)!;
+    const center = new THREE.Vector3().fromArray(body.position);
+    const normal = this.position.clone().sub(center).normalize();
+    const ground = terrainHeightKm(body.id, normal.toArray()) + LANDING_CLEARANCE_KM;
+    const altitude = (this.position.distanceTo(center) - body.radius) * this.config.unitsKm - ground;
+    const ascending = this.landingPhase === "ascending";
+    this.surfaceAttitude(normal, ascending);
+    const speedKm = ascending ? Math.min(0.5, Math.max(0.015, altitude * 0.8))
+      : Math.min(2500, Math.max(0.005, altitude * 0.65));
+    const nextAltitude = ascending ? altitude + speedKm * dt : Math.max(0, altitude - speedKm * dt);
+    this.position.copy(center).addScaledVector(normal, body.radius + (ground + nextAltitude) / this.config.unitsKm);
+    this.velocity.copy(normal).multiplyScalar((ascending ? 1 : -1) * speedKm / this.config.unitsKm);
+    this.elapsed += dt;
+    if (!ascending && nextAltitude <= 0.00001) this.touchDown(body.id);
+    else if (ascending && nextAltitude >= 2) { this.landingPhase = "manual"; this.landingBody = null; }
   }
 }

@@ -68,5 +68,15 @@ export function createShip() {
   exhaust.add(new THREE.Mesh(mergeGeometries(flames)!, glow));
   flames.forEach((geometry) => geometry.dispose());
   group.add(exhaust);
-  return { group, exhaust };
+  const gear = new THREE.Group();
+  for (const [x, z] of [[-0.42, 0.15], [0.42, 0.15], [0, -0.4]]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.021, 0.24, 8), dark);
+    leg.position.set(x, -0.25, z);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.025, 0.15), trim);
+    foot.position.set(x, -0.38, z);
+    gear.add(leg, foot);
+  }
+  gear.visible = false;
+  group.add(gear);
+  return { group, exhaust, gear };
 }

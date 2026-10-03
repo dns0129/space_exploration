@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import { chromium } from "@playwright/test";
 import { PNG } from "pngjs";
+import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { createServer } from "node:http";
 
 const html = await readFile(
@@ -120,10 +121,11 @@ try {
   );
   await page.getByRole("button", { name: "切换外部视角" }).click();
   assert.equal(await page.locator("canvas").count(), 1);
+  await verifySurfaceFlight(page);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(
-    "PASS: all 35 models, free flight, thrust, warp, camera and local save/restore; zero HTTP requests or browser errors.",
+    "PASS: all 35 models, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
   );
 } finally {
   await browser.close();

@@ -9,6 +9,7 @@ export interface FlightState {
   assist: boolean;
   elapsed: number;
   escapeBody?: BodyId;
+  landedBody?: BodyId;
 }
 export interface WorldConfig {
   version: number;

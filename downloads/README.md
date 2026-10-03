@@ -1,6 +1,6 @@
-# 写实太阳系与跃迁引擎
+# 大气、地表与着陆
 
-下载 **`voyager-warp.zip`**，完整解压，将 `voyager-warp.html` 拖入 Chrome 或 Edge。点击顶部“自由航行”，按 W 出发，方向键转向（鼠标不操控飞船），Shift 加速，空格刹车，C 切换视角，J 启动跃迁引擎。手机使用触屏驾驶按钮。
+下载 **`voyager-warp.zip`**，完整解压，将 `voyager-warp.html` 拖入 Chrome 或 Edge。点击顶部“自由航行”，按 W 出发，方向键转向（鼠标不操控飞船），Shift 加速，空格刹车，C 切换视角，J 启动跃迁引擎，L 自动着陆/起飞/中止。手机使用触屏驾驶按钮。
 
 卫星导航包括月球及四颗巨行星的 25 颗主要卫星，共 35 个天体。距表面 1000 km 内通常最高 100 km/s；100 km 内朝太空可用行星引擎离开，近地仍禁止跃迁。制动时有琥珀色减速脉冲。
 
@@ -10,4 +10,6 @@
 
 浏览器需要支持 WebGL 2 并启用图形加速，性能不足时可选择标准画质。完整说明见 ZIP 中的中文打开说明和仓库 README。
 
-`voyager-flight.zip` 为阶段 03 自由航行包，`voyager-solar-system.zip` 与 `voyager-earth.zip` 为前两阶段观测存档。新版写实空间与跃迁引擎在 `voyager-warp.zip`。
+`voyager-flight.zip` 为阶段 03 自由航行包，`voyager-solar-system.zip` 与 `voyager-earth.zip` 为前两阶段观测存档。新版大气、程序化地表与着陆系统在 `voyager-warp.zip`。
+
+靠近岩石行星或卫星后按 L 连续下降到地表；落地后 L 或 R 起飞，空格或手动操纵可中止辅助。太阳和巨行星不能地表着陆。地形与大气属于游戏模拟，并非真实测绘或天气；地表状态支持保存恢复。
