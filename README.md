@@ -10,6 +10,8 @@
 
 ## 下载即玩
 
+**本次飞船比例与轨道改动的离线 ZIP 尚待同步，当前下载文件仍为此前版本。请在网站部署完成后进入 [在线游戏](https://dns0129.github.io/space_exploration/game.html) 体验本次更新。**
+
 下载 [自由航行游戏包](https://github.com/dns0129/space_exploration/raw/refs/heads/main/downloads/voyager-warp.zip)，解压后将 **`voyager-warp.html`** 拖入 Chrome 或 Edge。点击顶部“自由航行”，再按 **W** 出发。
 
 独立 HTML 内嵌全部程序、样式与地球的五张 4K 地球贴图、4K 银河背景与新增行星影像，无需安装 Node.js 或联网即可驾驶；保存与恢复使用本机存档。浏览器需要 WebGL 2 与图形加速。
