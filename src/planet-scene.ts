@@ -869,7 +869,7 @@ export class SolarScene {
       this.camera.position.copy(offset);
       this.camera.quaternion.slerp(attitude, blend);
     }
-    const strength = ship.warpPhase === "transit" ? Math.sin(ship.warpProgress * Math.PI) * 0.65 + 0.35 : ship.warpPhase === "charging" ? ship.warpProgress * 0.15 : ship.warpPhase === "arrival" ? (1 - ship.warpProgress) * 0.35 : 0;
+    const strength = ship.warpPhase === "transit" ? Math.sin(ship.warpProgress * Math.PI) * 0.65 + 0.35 : ship.warpPhase === "charging" ? ship.warpProgress * 0.15 : ship.warpPhase === "arrival" ? (1 - ship.warpProgress) ** 2 * 0.35 : 0;
     this.warpEffect.mesh.visible = strength > 0;
     this.warpEffect.material.uniforms.strength.value = strength;
     this.warpEffect.material.uniforms.time.value = ship.elapsed;
