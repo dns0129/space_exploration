@@ -31,6 +31,12 @@ export const emptyInput = (): FlightInput => ({
   mouseY: 0,
 });
 interface RoutePoint { systemId: SystemId; position: THREE.Vector3; }
+interface WarpApproach {
+  center: THREE.Vector3;
+  radial: THREE.Vector3;
+  entryRadius: number;
+  endRadius: number;
+}
 export class ShipDynamics {
   readonly position = new THREE.Vector3();
   readonly velocity = new THREE.Vector3();
@@ -56,7 +62,7 @@ export class ShipDynamics {
   private warpRoute: RoutePoint[] = [];
   private warpLength = 0;
   private warpTarget: BodyId = "earth";
-  private warpApproach?: THREE.CubicBezierCurve3;
+  private warpApproach?: WarpApproach;
   private readonly warpUp = new THREE.Vector3(0, 1, 0);
   private warpApproachSpeed = 0;
   private warpTransitSeconds = 7;
@@ -323,21 +329,40 @@ export class ShipDynamics {
       target.radius * (target.kind === "star" ? 1.35 : target.id === "saturn" ? 2.45 : 1.015));
     const end = center.clone().addScaledVector(radial, radius);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
-    const tangent = new THREE.Vector3().crossVectors(up, radial);
-    if (tangent.lengthSq() < 1e-8) tangent.crossVectors(
-      Math.abs(radial.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1), radial);
-    tangent.normalize();
-    this.warpUp.copy(radial);
-    const approachLength = Math.max(800 / this.config.unitsKm, radius * 0.35);
-    const entry = end.clone().addScaledVector(radial, approachLength);
-    const approach = new THREE.CubicBezierCurve3(entry,
-      entry.clone().addScaledVector(radial, -approachLength * 0.5),
-      end.clone().addScaledVector(tangent, -approachLength * 0.2).addScaledVector(radial, approachLength * 0.04), end);
-    const samples = approach.getPoints(48);
-    for (let i = 1; i < samples.length; i++) {
-      const segment = this.safeRoute(samples[i - 1], samples[i], destinationSystem);
-      if (!segment || segment.length !== 2) return "入轨航线受阻，请先调整位置";
+    this.warpUp.copy(up);
+    const departureRadius = this.targetRelative.length();
+    // Begin braking while the planet is still a small disc. Nearby departures
+    // keep their actual scale instead of travelling away to manufacture a zoom.
+    let entryRadius = departureRadius <= radius ? departureRadius
+      : Math.min(Math.max(target.radius * 32, radius * 8), radius + (departureRadius - radius) * 0.75);
+    const approachSpeed = (distance: number) =>
+      (distance > radius ? 2 * distance * Math.log(distance / radius) : 3 * (radius - distance)) / this.config.warp.arrivalSeconds;
+    if (destinationSystem === this.systemId && departureRadius > radius) {
+      const facing = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(
+        new THREE.Vector3(), radial.clone().negate(), up));
+      const steeringSeconds = Math.min(this.config.warp.travelSeconds,
+        this.orientation.angleTo(facing) / 1.8 + 1);
+      // Complete transit steering before the straight approach locks attitude.
+      // Reserve enough distance to join it at the same speed, even on short hops.
+      let low = radius, high = entryRadius;
+      for (let i = 0; i < 32; i++) {
+        const candidate = (low + high) / 2;
+        if (approachSpeed(candidate) * steeringSeconds <= departureRadius - candidate) low = candidate;
+        else high = candidate;
+      }
+      entryRadius = low;
     }
+    let entry = center.clone().addScaledVector(radial, entryRadius);
+    let clearApproach = false;
+    for (let i = 0; i < 24; i++) {
+      const segment = this.safeRoute(entry, end, destinationSystem);
+      if (segment?.length === 2) { clearApproach = true; break; }
+      // A moon or parent planet may obstruct a long radial approach. Keep the
+      // safe, uninterrupted final section; transit handles any earlier detour.
+      entryRadius = (entryRadius + radius) / 2;
+      entry = center.clone().addScaledVector(radial, entryRadius);
+    }
+    if (!clearApproach) return "接近航线受阻，请先调整位置";
     let points: RoutePoint[];
     if (destinationSystem === this.systemId) {
       const route = this.safeRoute(this.position, entry, this.systemId);
@@ -356,10 +381,10 @@ export class ShipDynamics {
     }
     this.warpRoute = points;
     this.warpLength = points.slice(1).reduce((sum, point, i) => sum + this.routeDisplacement(points[i], point).length(), 0);
-    this.warpApproach = approach;
-    this.warpApproachSpeed = 4.5 * approachLength / this.config.warp.arrivalSeconds;
-    if (this.warpLength < 1e-8) return "已在入轨航段附近，请直接驾驶接近";
-    this.warpTransitSeconds = Math.min(this.config.warp.travelSeconds, this.warpLength / this.warpApproachSpeed);
+    this.warpApproach = { center, radial, entryRadius, endRadius: radius };
+    this.warpApproachSpeed = approachSpeed(entryRadius);
+    this.warpTransitSeconds = this.warpLength < 1e-8 ? 0
+      : Math.min(this.config.warp.travelSeconds, this.warpLength / this.warpApproachSpeed);
     this.warpTarget = this.target;
     this.warpPhase = "charging";
     this.warpClock = 0;
@@ -436,7 +461,9 @@ export class ShipDynamics {
             this.systemId = b.systemId;
             this.position.copy(b.position).addScaledVector(displacement, -(1 - blend));
           }
-          this.faceWarpDirection(displacement, dt);
+          // Keep the destination visible after an avoidance detour. Finish
+          // transit steering here; the arrival approach never changes attitude.
+          this.faceWarpDirection(i === this.warpRoute.length - 2 ? this.targetRelative : displacement, dt);
           break;
         }
         distance -= length;
@@ -444,20 +471,21 @@ export class ShipDynamics {
       this.warpSpeedKm = (6 * t * (1 - t) + slope * (3 * t * t - 2 * t)) * this.warpLength * this.config.unitsKm / duration;
     } else if (this.warpPhase === "arrival" && this.warpApproach) {
       const t = this.warpProgress;
-      const u = 1 - Math.pow(1 - t, 3);
-      const curve = this.warpApproach;
-      this.position.copy(curve.getPoint(u));
-      const derivative = curve.v1.clone().sub(curve.v0).multiplyScalar(3 * (1 - u) ** 2)
-        .addScaledVector(curve.v2.clone().sub(curve.v1), 6 * (1 - u) * u)
-        .addScaledVector(curve.v3.clone().sub(curve.v2), 3 * u * u);
-      this.warpSpeedKm = derivative.length() * 3 * (1 - t) ** 2 * this.config.unitsKm / duration;
-      this.faceWarpDirection(derivative, dt, this.warpUp);
+      const approach = this.warpApproach;
+      const ratio = Math.log(approach.entryRadius / approach.endRadius);
+      // Ease distance logarithmically so angular size grows throughout the
+      // approach, with continuous entry speed and a complete stop at the end.
+      const distance = ratio > 0 ? approach.endRadius * Math.exp(ratio * (1 - t) ** 2)
+        : approach.endRadius + (approach.entryRadius - approach.endRadius) * (1 - t) ** 3;
+      this.position.copy(approach.center).addScaledVector(approach.radial, distance);
+      this.warpSpeedKm = (ratio > 0 ? distance * 2 * ratio * (1 - t)
+        : 3 * (approach.endRadius - approach.entryRadius) * (1 - t) ** 2) * this.config.unitsKm / duration;
       this.deceleration = 0.45 * (1 - t);
     }
     if (this.warpProgress < 1) return;
     this.warpClock = 0;
     this.warpProgress = 0;
-    if (this.warpPhase === "charging") this.warpPhase = "transit";
+    if (this.warpPhase === "charging") this.warpPhase = this.warpTransitSeconds > 0 ? "transit" : "arrival";
     else if (this.warpPhase === "transit") {
       const arrival = this.warpRoute[this.warpRoute.length - 1];
       this.systemId = arrival.systemId;
@@ -471,9 +499,9 @@ export class ShipDynamics {
       this.resolveCollision(this.position.clone());
     }
   }
-  private faceWarpDirection(direction: THREE.Vector3, dt: number, up = new THREE.Vector3(0, 1, 0)) {
+  private faceWarpDirection(direction: THREE.Vector3, dt: number) {
     const facing = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(
-      new THREE.Vector3(), direction, up));
+      new THREE.Vector3(), direction, this.warpUp));
     const angle = this.orientation.angleTo(facing);
     this.orientation.slerp(facing, Math.min(1 - Math.exp(-dt * 6), angle > 1e-9 ? dt * 1.8 / angle : 1));
   }

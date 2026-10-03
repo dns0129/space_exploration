@@ -77,7 +77,7 @@
     },
     {
       "id": "earth",
-      "atmosphereKm": 90,
+      "atmosphereKm": 160,
       "radius": 1.0,
       "position": [
         1.43780060831906e-12,

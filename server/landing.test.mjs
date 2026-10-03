@@ -12,6 +12,20 @@ function place(ship, id, clearanceKm, normal = new THREE.Vector3(0, 0, -1)) {
   ship.position.fromArray(body.position).addScaledVector(normal, body.radius + (height + clearanceKm) / world.unitsKm);
   return body;
 }
+test("Earth's 100 km entry uses the same kilometre shell as the sky, with thin aerodynamic density", () => {
+  const ship = new ShipDynamics();
+  const earth = world.bodies.find(body => body.id === "earth");
+  ship.jump("earth");
+  for (const altitude of [20, 100, 159.9, 160.1, 500]) {
+    ship.position.fromArray(earth.position).add(new THREE.Vector3(0, 0, -earth.radius - altitude / world.unitsKm));
+    assert(Math.abs(ship.environment.altitudeKm - altitude) < 0.000001);
+    assert.equal(ship.environment.atmospheric, altitude < 160);
+    if (altitude === 100) {
+      assert(ship.environment.density > 0 && ship.environment.density < 0.001);
+      assert(ship.startWarp(), "entering the visual atmosphere must preserve the near-surface warp restriction");
+    }
+  }
+});
 test("all solid worlds descend continuously, touch terrain, stay landed and restore a valid surface save", () => {
   for (const body of world.bodies.filter((candidate) => surfaceProfile(candidate.id).solid)) {
     const ship = new ShipDynamics();

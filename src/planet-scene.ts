@@ -11,6 +11,8 @@ import { FlightControls } from "./flight-controls";
 import { createShip, SHIP_LENGTH_KM } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
 import { SurfaceScene } from "./surface-scene";
+import { atmosphereStrength } from "./atmosphere";
+import { surfaceProfile } from "../shared/surface.mjs";
 import { projectFlightTarget } from "./flight-target";
 import type { FlightTargetStats } from "./flight-target";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
@@ -537,9 +539,9 @@ export class SolarScene {
     const background = this.starsEnabled ? texture : null;
     if (this.backgroundSystem !== id || this.scene.background !== background) {
       this.scene.background = background;
-      this.scene.backgroundIntensity = system.backgroundIntensity;
       this.scene.backgroundRotation.fromArray(system.backgroundRotation as [number, number, number]);
     }
+    this.scene.backgroundIntensity = system.backgroundIntensity;
     this.backgroundSystem = id;
     this.stars.visible = this.starsEnabled && !texture;
     if (this.renderer.domElement.dataset.system !== id) this.renderer.domElement.dataset.system = id;
@@ -649,14 +651,14 @@ export class SolarScene {
     );
     clouds.rotation.y = surface.rotation.y;
     const atmosphere = new THREE.Mesh(
-      new THREE.SphereGeometry(1 + 90 / 6371, 128, 96),
+      new THREE.SphereGeometry(1 + EARTH.atmosphereKm! / EARTH.radiusKm, 128, 96),
       new THREE.ShaderMaterial({
         vertexShader: surfaceVertex,
         fragmentShader: atmosphereFragment,
         uniforms: { sunDirection: { value: sunDirection },
           planetCenter: { value: group.position }, bodyRadius: { value: 1 },
-          atmosphereColor: { value: new THREE.Color("#639eff") },
-          atmosphereHeight: { value: 90 / 6371 }, strength: { value: 0.8 }, uTime: { value: 0 } },
+          atmosphereColor: { value: new THREE.Color(surfaceProfile("earth").sky) },
+          atmosphereHeight: { value: EARTH.atmosphereKm! / EARTH.radiusKm }, strength: { value: atmosphereStrength("earth") }, uTime: { value: 0 } },
         side: THREE.BackSide,
         blending: THREE.AdditiveBlending,
         transparent: true,
@@ -881,7 +883,10 @@ export class SolarScene {
         model.group.position.copy(center);
         model.group.scale.setScalar(body.radius);
         // Collision uses the mean-radius sphere. Match rocky flight surfaces to it.
-        if (body.id !== "sun" && !["jupiter", "saturn", "uranus", "neptune"].includes(body.id)) model.surface.scale.y = 1;
+        if (body.id !== "sun" && !["jupiter", "saturn", "uranus", "neptune"].includes(body.id)) {
+          model.surface.scale.y = 1;
+          model.layers.atmosphere?.traverse(object => { if (object instanceof THREE.Mesh) object.scale.y = object.scale.x; });
+        }
         this.flightSpheres.set(model,spheres);
         this.flightRoot.add(model.group);
         this.flightModels.push(model);
@@ -1011,7 +1016,7 @@ export class SolarScene {
       const lod = pixelRadius < 8 ? this.tinySphere : pixelRadius < 100 ? this.distantSphere : pixelRadius < 280 ? this.mediumSphere : pixelRadius < 700 ? this.largeSphere : undefined;
       for (const sphere of this.flightSpheres.get(model)!) sphere.geometry = lod ?? this.flightGeometries.get(sphere)!;
       // The local curved tile adds detail above the coarse globe; clouds stay overhead.
-      if (model.layers.atmosphere) model.layers.atmosphere.visible = pixelRadius > 12 && (model.body.id !== environment.body.id || !environment.atmospheric);
+      if (model.layers.atmosphere) model.layers.atmosphere.visible = pixelRadius > 12 && (model.body.id !== environment.body.id || !this.surfaceScene.usesAtmosphere(ship));
       if (model.layers.clouds) model.layers.clouds.visible = pixelRadius > 12;
       if (body.id === "earth") {
         const uniforms = (model.surface.material as THREE.ShaderMaterial).uniforms;
@@ -1042,13 +1047,40 @@ export class SolarScene {
     const offset = new THREE.Vector3(0,ship.camera === "chase" ? chaseY : 0,ship.camera === "chase" ? chaseZ : 0).multiplyScalar(cameraScale).applyQuaternion(ship.orientation);
     if (ship.camera === "chase") {
       this.camera.position.lerp(offset, blend);
+      // Keep the chase camera in the pilot's altitude band, including a steep descent.
+      // A several-hundred-km hull framing offset must not move the sky back into space.
+      if (environment.body.atmosphereKm && environment.altitudeKm < environment.body.atmosphereKm * 4) {
+        const relative = ship.position.clone().sub(new THREE.Vector3().fromArray(environment.body.position));
+        const near = 1 - THREE.MathUtils.smoothstep(environment.altitudeKm, environment.body.atmosphereKm, environment.body.atmosphereKm * 4);
+        const maxOffsetKm = THREE.MathUtils.lerp(1200, Math.max(0.02, environment.altitudeKm * 0.15), near);
+        const limit = maxOffsetKm / ship.config.unitsKm;
+        const radialOffset = this.camera.position.dot(environment.outward);
+        if (Math.abs(radialOffset) > limit) {
+          const distance = this.camera.position.length();
+          const tangent = this.camera.position.clone().addScaledVector(environment.outward, -radialOffset);
+          if (tangent.lengthSq() < 1e-12) tangent.set(1, 0, 0).applyQuaternion(attitude).projectOnPlane(environment.outward);
+          const radial = THREE.MathUtils.clamp(radialOffset, -limit, limit);
+          this.camera.position.copy(tangent.normalize().multiplyScalar(Math.sqrt(Math.max(0, distance * distance - radial * radial))))
+            .addScaledVector(environment.outward, radial);
+        }
+        const cameraRadial = relative.clone().add(this.camera.position);
+        const minRadius = environment.body.radius + Math.max(environment.groundHeightKm + 0.002, environment.altitudeKm - maxOffsetKm) / ship.config.unitsKm;
+        const maxRadius = environment.body.radius + (environment.altitudeKm + maxOffsetKm) / ship.config.unitsKm;
+        cameraRadial.clampLength(minRadius, Math.max(minRadius, maxRadius));
+        this.camera.position.copy(cameraRadial.sub(relative));
+      }
       this.camera.up.set(0, 1, 0).applyQuaternion(attitude);
-      this.camera.lookAt(new THREE.Vector3(0, 0, -5 * cameraScale).applyQuaternion(ship.orientation));
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.orientation);
+      const nearAtmosphere = environment.body.atmosphereKm
+        ? 1 - THREE.MathUtils.smoothstep(environment.altitudeKm, environment.body.atmosphereKm, environment.body.atmosphereKm * 4) : 0;
+      this.camera.up.lerp(environment.outward, nearAtmosphere * Math.pow(forward.dot(environment.outward), 2)).normalize();
+      const lookAhead = 5 * cameraScale * (1 - nearAtmosphere * Math.abs(forward.dot(environment.outward)) * 0.92);
+      this.camera.lookAt(forward.multiplyScalar(lookAhead));
     } else {
       this.camera.position.copy(offset);
       this.camera.quaternion.slerp(attitude, blend);
     }
-    const strength = ship.warpPhase === "transit" ? Math.sin(ship.warpProgress * Math.PI) * 0.65 + 0.35 : ship.warpPhase === "charging" ? ship.warpProgress * 0.15 : ship.warpPhase === "arrival" ? (1 - ship.warpProgress) * 0.35 : 0;
+    const strength = ship.warpPhase === "transit" ? Math.sin(ship.warpProgress * Math.PI) * 0.65 + 0.35 : ship.warpPhase === "charging" ? ship.warpProgress * 0.15 : ship.warpPhase === "arrival" ? (1 - ship.warpProgress) ** 2 * 0.35 : 0;
     this.warpEffect.mesh.visible = strength > 0;
     this.warpEffect.material.uniforms.strength.value = strength;
     this.warpEffect.material.uniforms.time.value = ship.elapsed;
@@ -1059,6 +1091,7 @@ export class SolarScene {
       this.camera.updateProjectionMatrix();
     }
     this.surfaceScene.update(ship, this.camera, this.flightSun);
+    this.scene.backgroundIntensity *= this.surfaceScene.spaceVisibility;
     this.ship.gear.visible = ship.landingPhase !== "manual" || (environment.profile.solid && environment.groundAltitudeKm < 1);
   }
   private animateFlight(delta: number, time: number) {
