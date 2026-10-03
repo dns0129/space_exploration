@@ -2,17 +2,18 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { EARTH, getBody, STAR_SYSTEMS } from "./solar-system";
 import type { BodyId, Layer, SystemId } from "./solar-system";
-import { createPlanetModel } from "./planet-models";
+import { createPlanetModel, atmosphereFragment } from "./planet-models";
 import type { PlanetModel } from "./planet-models";
 import { bodySystem, systemConfig } from "../shared/world-navigation.mjs";
 import { ShipDynamics } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
-import { createShip } from "./ship-model";
+import { createShip, SHIP_LENGTH_KM } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
 import { SurfaceScene } from "./surface-scene";
 import { projectFlightTarget } from "./flight-target";
 import type { FlightTargetStats } from "./flight-target";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
+import { RenderBudget } from "./render-budget";
 
 export type View = "overview" | "close" | "night";
 export interface SceneStats {
@@ -72,6 +73,11 @@ const surfaceFragment = /* glsl */ `
   uniform sampler2D nightMap;
   uniform sampler2D heightMap;
   uniform sampler2D waterMap;
+  uniform sampler2D cloudMap;
+  uniform float cloudsEnabled;
+  uniform float cloudOffset;
+  uniform float flatClouds;
+  uniform float terrainDetail;
   uniform vec3 sunDirection;
   varying vec2 vUv;
   varying vec3 vWorldPosition;
@@ -79,53 +85,37 @@ const surfaceFragment = /* glsl */ `
   void main() {
     vec3 normal = normalize(vNormal);
     // Derivative-based terrain shading keeps mountains subtle at planetary scale.
-    float height = texture2D(heightMap, vUv).r;
-    vec3 dpdx = dFdx(vWorldPosition);
-    vec3 dpdy = dFdy(vWorldPosition);
-    vec3 r1 = cross(dpdy, normal);
-    vec3 r2 = cross(normal, dpdx);
-    float determinant = dot(dpdx, r1);
-    vec3 gradient = sign(determinant) * (dFdx(height) * r1 + dFdy(height) * r2);
-    vec3 terrainNormal = normalize(abs(determinant) * normal - 0.0025 * gradient);
+    vec3 terrainNormal = normal;
+    if(terrainDetail>0.5) {
+      float height = texture2D(heightMap, vUv).r;
+      vec3 dpdx = dFdx(vWorldPosition), dpdy = dFdy(vWorldPosition);
+      vec3 r1 = cross(dpdy, normal), r2 = cross(normal, dpdx);
+      float determinant = dot(dpdx, r1);
+      vec3 gradient = sign(determinant) * (dFdx(height) * r1 + dFdy(height) * r2);
+      terrainNormal = normalize(max(abs(determinant),0.0000001) * normal - 0.004 * gradient);
+    }
     float daylight = dot(normal, sunDirection);
     float diffuse = max(dot(terrainNormal, sunDirection), 0.0);
     vec3 day = texture2D(dayMap, vUv).rgb;
-    vec3 night = texture2D(nightMap, vUv).rgb;
-    float water = texture2D(waterMap, vUv).r;
+    vec3 night = daylight<0.12 ? texture2D(nightMap, vUv).rgb : vec3(0.0);
+    float water = terrainDetail>0.5 ? texture2D(waterMap, vUv).r : 0.0;
     vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
     vec3 halfwayDirection = normalize(sunDirection + viewDirection);
     float specular = pow(max(dot(terrainNormal, halfwayDirection), 0.0), 72.0);
     float nightWeight = 1.0 - smoothstep(-0.15, 0.12, daylight);
-    vec3 color = day * (0.015 + diffuse * 1.08);
+    vec2 cloudUv = vec2(fract(vUv.x + cloudOffset),vUv.y);
+    vec4 cloud = texture2D(cloudMap,cloudUv);
+    float cloudCover = cloud.a * cloudsEnabled;
+    vec3 color = day * (0.015 + diffuse * 1.08 * (1.0-cloudCover*0.26));
     // Isolate the warm city lights from the blue-tinted night-map terrain.
     float cityLight = max(night.r - night.b * 0.7, 0.0);
     color += vec3(1.0, 0.65, 0.32) * pow(cityLight, 0.7) * nightWeight * 5.0;
     color += vec3(0.9, 0.95, 1.0) * specular * water * smoothstep(0.0, 0.15, daylight) * 0.12;
+    color = mix(color,cloud.rgb*(0.035+diffuse*1.1),cloudCover*flatClouds*0.82);
     float rim = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color += vec3(0.035, 0.22, 0.55) * rim * smoothstep(-0.3, 0.6, daylight) * 0.35;
     #include <logdepthbuf_fragment>
     gl_FragColor = vec4(color, 1.0);
-    #include <tonemapping_fragment>
-    #include <colorspace_fragment>
-  }
-`;
-
-const atmosphereFragment = /* glsl */ `
-  #include <logdepthbuf_pars_fragment>
-  uniform vec3 sunDirection;
-  varying vec3 vWorldPosition;
-  varying vec3 vNormal;
-  void main() {
-    vec3 normal = normalize(vNormal);
-    vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-    float facing = abs(dot(normal, viewDirection));
-    float glow = pow(1.0 - facing, 4.5);
-    float sun = dot(normal, sunDirection);
-    float daylight = smoothstep(-0.4, 0.8, sun);
-    vec3 blue = mix(vec3(0.035, 0.15, 0.4), vec3(0.2, 0.55, 1.0), daylight);
-    vec3 sunset = vec3(0.7, 0.23, 0.065) * exp(-pow(sun * 7.0, 2.0)) * 0.2;
-    #include <logdepthbuf_fragment>
-    gl_FragColor = vec4(blue + sunset, glow * (0.08 + daylight * 0.7));
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -147,7 +137,7 @@ export class SolarScene {
   private readonly shipScene = new THREE.Scene();
   private readonly shipCamera = new THREE.PerspectiveCamera(58, 1, 0.01, 200);
   private readonly shipSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
-  private readonly shipScale = 0.000015 * 0.16;
+  private shipScale = SHIP_LENGTH_KM / (6371 * this.ship.hullLength);
   private readonly warpEffect = createWarpEffect();
   private readonly surfaceScene = new SurfaceScene();
   private galaxy?: THREE.Texture;
@@ -158,7 +148,14 @@ export class SolarScene {
   private readonly planetMaps = new Map<BodyId, THREE.Texture>();
   private flightModels: PlanetModel[] = [];
   private readonly distantSphere = new THREE.SphereGeometry(1, 32, 24);
+  private readonly mediumSphere = new THREE.SphereGeometry(1, 64, 48);
+  private readonly tinySphere = new THREE.SphereGeometry(1, 16, 12);
+  private readonly largeSphere = new THREE.SphereGeometry(1, 128, 80);
+  private readonly renderBudget = new RenderBudget();
+  private highQuality = true;
+  private minimumRenderRatio = 0.25;
   private readonly flightGeometries = new Map<THREE.Mesh, THREE.BufferGeometry>();
+  private readonly flightSpheres = new Map<PlanetModel, THREE.Mesh[]>();
   private dynamics?: ShipDynamics;
   private flightControls?: FlightControls;
   private flying = false;
@@ -204,15 +201,22 @@ export class SolarScene {
   ) {
     this.renderer = new THREE.WebGLRenderer({
       logarithmicDepthBuffer: true,
-      antialias: true,
-      alpha: true,
+      antialias: false,
+      alpha: false,
       powerPreference: "high-performance",
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const gl = this.renderer.getContext();
+    const debug = gl.getExtension("WEBGL_debug_renderer_info");
+    const graphicsRenderer = debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) : "unavailable";
+    const software = /swiftshader|llvmpipe|software/i.test(graphicsRenderer);
+    this.renderer.domElement.dataset.graphicsRenderer = graphicsRenderer;
+    if (software) this.minimumRenderRatio = 0.125;
+    this.renderer.domElement.dataset.softwareRenderer = String(software);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
-    this.renderer.setClearColor(0x000000, 0);
+    this.renderer.setClearColor(0x000000, 1);
     this.renderer.domElement.setAttribute(
       "aria-label",
       "交互式 3D 天体：拖动旋转视角，滚轮或双指缩放",
@@ -311,7 +315,7 @@ export class SolarScene {
       const texture = await loader.loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
       if (this.destroyed || failed) { texture.dispose(); throw new Error("场景已关闭或贴图加载失败"); }
       texture.colorSpace = THREE.SRGBColorSpace;
-      texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+      texture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
       batch.push(texture);
       return texture;
     })).then((maps) => {
@@ -375,7 +379,7 @@ export class SolarScene {
         }
         texture.anisotropy = Math.min(
           this.renderer.capabilities.getMaxAnisotropy(),
-          16,
+          4,
         );
         this.textures.add(texture);
         batch.push(texture);
@@ -424,13 +428,18 @@ export class SolarScene {
           nightMap: { value: maps[1] },
           heightMap: { value: maps[2] },
           waterMap: { value: maps[3] },
+          cloudMap: { value: maps[4] },
+          cloudsEnabled: { value: 1 },
+          cloudOffset: { value: 0 },
+          flatClouds: { value: 0 },
+          terrainDetail: { value: 1 },
           sunDirection: { value: sunDirection },
         },
       }),
     );
     surface.rotation.y = -1.8;
     const clouds = new THREE.Mesh(
-      new THREE.SphereGeometry(1.008, 128, 96),
+      new THREE.SphereGeometry(1.0018, 128, 96),
       new THREE.MeshPhongMaterial({
         map: maps[4],
         transparent: true,
@@ -441,11 +450,14 @@ export class SolarScene {
     );
     clouds.rotation.y = surface.rotation.y;
     const atmosphere = new THREE.Mesh(
-      new THREE.SphereGeometry(1.014, 128, 96),
+      new THREE.SphereGeometry(1 + 90 / 6371, 128, 96),
       new THREE.ShaderMaterial({
         vertexShader: surfaceVertex,
         fragmentShader: atmosphereFragment,
-        uniforms: { sunDirection: { value: sunDirection } },
+        uniforms: { sunDirection: { value: sunDirection },
+          planetCenter: { value: group.position }, bodyRadius: { value: 1 },
+          atmosphereColor: { value: new THREE.Color("#639eff") },
+          atmosphereHeight: { value: 90 / 6371 }, strength: { value: 0.8 }, uTime: { value: 0 } },
         side: THREE.BackSide,
         blending: THREE.AdditiveBlending,
         transparent: true,
@@ -466,6 +478,13 @@ export class SolarScene {
     };
   }
 
+  private updateCloudShadow(model: PlanetModel) {
+    if (model.body.id !== "earth") return;
+    const uniforms = (model.surface.material as THREE.ShaderMaterial).uniforms;
+    const clouds = model.layers.clouds!;
+    uniforms.cloudOffset.value = (model.surface.rotation.y-clouds.rotation.y)/(Math.PI*2);
+    uniforms.cloudsEnabled.value = Number(clouds.visible || uniforms.flatClouds.value>0);
+  }
   private createStars() {
     // Seeded positions make screenshots reproducible and keep the sky independent of assets.
     let seed = 83;
@@ -531,7 +550,17 @@ export class SolarScene {
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    this.configureRenderBudget();
   };
+
+  private configureRenderBudget() {
+    this.renderBudget.configure(this.highQuality, window.devicePixelRatio, this.flightWidth, this.flightHeight, this.minimumRenderRatio);
+    this.applyRenderBudget();
+  }
+  private applyRenderBudget() {
+    this.renderer.setPixelRatio(this.renderBudget.ratio);
+    this.renderer.domElement.dataset.renderScale = this.renderBudget.ratio.toFixed(2);
+  }
 
   private readonly animate = (time: number) => {
     if (this.destroyed) return;
@@ -541,11 +570,12 @@ export class SolarScene {
       ? Math.min((time - this.lastTime) / 1000, 0.25)
       : 0;
     this.lastTime = time;
+    if ((!this.flying || !this.flightPaused) && this.renderBudget.sample(delta)) this.applyRenderBudget();
     if (this.flying) {
       this.animateFlight(delta, time);
       this.renderer.render(this.scene, this.camera);
       if (this.ship.group.visible) {
-        // Meter-scale hull details need their own depth range in an AU-scale world.
+        // The hull pass uses the same physical scale as the world camera.
         const camera = this.shipCamera;
         if (camera.aspect !== this.camera.aspect || camera.fov !== this.camera.fov) {
           camera.aspect = this.camera.aspect;
@@ -565,6 +595,7 @@ export class SolarScene {
     if (!this.paused && this.currentModel) {
       for (const { object, rate } of this.currentModel.spinning)
         object.rotation.y += delta * rate * this.speed;
+      this.updateCloudShadow(this.currentModel);
       for (const uniform of this.currentModel.timeUniforms)
         uniform.value += delta * this.speed;
     }
@@ -628,7 +659,15 @@ export class SolarScene {
                 center,
                 radius: body.radius,
               }, this.planetMaps.get(body.id));
+        const spheres: THREE.Mesh[] = [];
         model.group.traverse((object) => {
+          if (object instanceof THREE.Mesh && object.geometry instanceof THREE.SphereGeometry) {
+            const radius = object.geometry.parameters.radius;
+            object.geometry.scale(1/radius,1/radius,1/radius);
+            object.scale.multiplyScalar(radius);
+            this.flightGeometries.set(object,object.geometry);
+            spheres.push(object);
+          }
           if (object instanceof THREE.Mesh && object.material instanceof THREE.ShaderMaterial && object.material.uniforms.planetCenter)
             object.material.uniforms.planetCenter.value = model.group.position;
         });
@@ -636,12 +675,14 @@ export class SolarScene {
         model.group.scale.setScalar(body.radius);
         // Collision uses the mean-radius sphere. Match rocky flight surfaces to it.
         if (body.id !== "sun" && !["jupiter", "saturn", "uranus", "neptune"].includes(body.id)) model.surface.scale.y = 1;
-        this.flightGeometries.set(model.surface, model.surface.geometry);
+        this.flightSpheres.set(model,spheres);
         this.flightRoot.add(model.group);
         this.flightModels.push(model);
       }
     }
     this.dynamics = new ShipDynamics(config);
+    this.shipScale = SHIP_LENGTH_KM / (config.unitsKm * this.ship.hullLength);
+    this.renderer.domElement.dataset.shipLengthKm = String(SHIP_LENGTH_KM);
     this.dynamics.jump(id);
     this.flightBoost = 0;
     this.flightMetrics = 0;
@@ -717,6 +758,7 @@ export class SolarScene {
   alignFlight() {
     if (this.dynamics?.landingPhase !== "manual") return;
     this.dynamics?.align();
+    if (this.flying && this.dynamics) this.updateFlightCamera(1);
     this.flightControls?.clear();
   }
   jumpFlight(): string | null {
@@ -745,16 +787,28 @@ export class SolarScene {
   private updateFlightCamera(blend: number) {
     const ship = this.dynamics!;
     const environment = ship.environment;
+    const pixelsPerRadian = this.flightHeight * this.renderer.getPixelRatio()
+      / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)));
     // CPU positions remain in double precision. GPU objects are relative to the ship.
     for (const model of this.flightModels) {
       const body = ship.config.bodies.find((b) => b.id === model.body.id)!;
       if (bodySystem(body) !== ship.systemId) { model.group.visible = false; continue; }
       model.group.position.fromArray(body.position).sub(ship.position);
       const angularRadius = body.radius / Math.max(model.group.position.length(), 1e-9);
-      model.group.visible = angularRadius > 0.00001;
-      model.surface.geometry = angularRadius < 0.005 ? this.distantSphere : this.flightGeometries.get(model.surface)!;
+      const pixelRadius = angularRadius * pixelsPerRadian;
+      model.group.visible = pixelRadius > 0.65;
+      const lod = pixelRadius < 8 ? this.tinySphere : pixelRadius < 100 ? this.distantSphere : pixelRadius < 280 ? this.mediumSphere : pixelRadius < 700 ? this.largeSphere : undefined;
+      for (const sphere of this.flightSpheres.get(model)!) sphere.geometry = lod ?? this.flightGeometries.get(sphere)!;
       // The local curved tile adds detail above the coarse globe; clouds stay overhead.
-      if (model.layers.atmosphere) model.layers.atmosphere.visible = model.body.id !== environment.body.id || !environment.atmospheric;
+      if (model.layers.atmosphere) model.layers.atmosphere.visible = pixelRadius > 12 && (model.body.id !== environment.body.id || !environment.atmospheric);
+      if (model.layers.clouds) model.layers.clouds.visible = pixelRadius > 12;
+      if (body.id === "earth") {
+        const uniforms = (model.surface.material as THREE.ShaderMaterial).uniforms;
+        uniforms.flatClouds.value = Number(pixelRadius < 280);
+        uniforms.terrainDetail.value = Number(pixelRadius >= 280);
+        model.layers.clouds!.visible = pixelRadius >= 280;
+        this.updateCloudShadow(model);
+      }
     }
     const stars = ship.activeBodies.filter(body => body.kind === "star");
     const light = stars.reduce((closest, body) =>
@@ -764,17 +818,21 @@ export class SolarScene {
     this.flightSun.color.set(getBody(light.id).color);
     this.shipSun.color.copy(this.flightSun.color);
     this.useSystemBackground(ship.systemId);
-    const scale = 0.000015; // Approximately 25 m hull with a close chase camera.
-    this.ship.group.position.set(0, 0, 0);
+    const scale = this.shipScale;
+    const surfaceView = environment.profile.solid ? 1-THREE.MathUtils.smoothstep(environment.groundAltitudeKm,20,50) : 0;
+    this.ship.group.position.set(0,this.ship.landingFootOffset*surfaceView,0).applyQuaternion(ship.orientation);
     this.ship.group.scale.setScalar(1);
     const attitude = ship.orientation.clone().multiply(this.bankRotation.setFromAxisAngle(this.flightAxis, ship.bank));
     this.ship.group.quaternion.copy(attitude);
     this.ship.group.visible = ship.camera === "chase" && !ship.warping;
-    const offset = new THREE.Vector3(0, ship.camera === "chase" ? 0.19 : 0, ship.camera === "chase" ? 0.72 + this.flightBoost * 0.1 : 0).multiplyScalar(scale).applyQuaternion(ship.orientation);
+    const cameraScale = THREE.MathUtils.lerp(scale,0.000015,surfaceView);
+    const chaseY = THREE.MathUtils.lerp(1.2,0.19,surfaceView);
+    const chaseZ = THREE.MathUtils.lerp(9+this.flightBoost*0.6,0.72,surfaceView);
+    const offset = new THREE.Vector3(0,ship.camera === "chase" ? chaseY : 0,ship.camera === "chase" ? chaseZ : 0).multiplyScalar(cameraScale).applyQuaternion(ship.orientation);
     if (ship.camera === "chase") {
       this.camera.position.lerp(offset, blend);
       this.camera.up.set(0, 1, 0).applyQuaternion(attitude);
-      this.camera.lookAt(new THREE.Vector3(0, 0, -5 * scale).applyQuaternion(ship.orientation));
+      this.camera.lookAt(new THREE.Vector3(0, 0, -5 * cameraScale).applyQuaternion(ship.orientation));
     } else {
       this.camera.position.copy(offset);
       this.camera.quaternion.slerp(attitude, blend);
@@ -802,6 +860,7 @@ export class SolarScene {
           // Keep surface features fixed in the collision frame while flying; clouds still drift.
           for (const { object, rate } of model.spinning)
             if (object !== model.surface) object.rotation.y += rate * delta;
+          this.updateCloudShadow(model);
           for (const uniform of model.timeUniforms) uniform.value += delta;
         }
     }
@@ -884,6 +943,7 @@ export class SolarScene {
     const object =
       layer === "stars" ? this.stars : this.currentModel?.layers[layer];
     if (object) object.visible = visible;
+    if (layer === "clouds" && this.currentModel) this.updateCloudShadow(this.currentModel);
     if (layer === "stars") {
       this.starsEnabled = visible;
       this.useSystemBackground(this.backgroundSystem);
@@ -892,10 +952,8 @@ export class SolarScene {
       this.currentModel.ringsEnabled.value = Number(visible);
   }
   setQuality(high: boolean) {
-    this.renderer.setPixelRatio(
-      high ? Math.min(window.devicePixelRatio, 2) : 1,
-    );
-    this.resize();
+    this.highQuality = high;
+    this.configureRenderBudget();
   }
   zoom(factor: number) {
     this.targetPosition = null;
@@ -936,6 +994,9 @@ export class SolarScene {
     this.controls.dispose();
     const geometries = new Set<THREE.BufferGeometry>();
     geometries.add(this.distantSphere);
+    geometries.add(this.mediumSphere);
+    geometries.add(this.tinySphere);
+    geometries.add(this.largeSphere);
     this.flightGeometries.forEach((geometry) => geometries.add(geometry));
     const materials = new Set<THREE.Material>();
     const collect = (object: THREE.Object3D) => {

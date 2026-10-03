@@ -63,6 +63,7 @@ export interface CelestialBody {
   caption: string;
   layers: readonly Layer[];
   atmosphereColor?: string;
+  atmosphereKm?: number;
   parentId?: BodyId;
   orbitRadiusKm?: number;
   surfaceStyle?: number;
@@ -262,7 +263,9 @@ export const CENTAURI_BODIES: readonly CelestialBody[] = centauriData.map((body,
   layers: body.kind === "star" || body.atmosphereKm ? ["atmosphere", "stars"] : ["stars"],
   atmosphereColor: body.color,
 }));
-export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES];
+export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES].map(body => ({
+  ...body, atmosphereKm: worldData.bodies.find(config => config.id === body.id)?.atmosphereKm,
+}));
 export const STAR_SYSTEMS = worldData.systems;
 export const getBodySystem = (body: CelestialBody) =>
   STAR_SYSTEMS.find(system => system.id === (body.systemId ?? "solar"))!;

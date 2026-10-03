@@ -11,6 +11,8 @@ export class SurfaceScene {
   private anchor = new THREE.Vector3();
   private normal = new THREE.Vector3();
   private bodyId = "";
+  private tileExtentKm = 10;
+  private readonly groundDetail: THREE.DataTexture;
   private readonly light = new THREE.DirectionalLight(0xffead1, 2.2);
   private readonly ambient = new THREE.HemisphereLight(0xcbdce8, 0x3a3028, 0.8);
   private readonly skyMaterial = new THREE.ShaderMaterial({
@@ -36,6 +38,23 @@ export class SurfaceScene {
       }`,
   });
   constructor() {
+    const pixels = new Uint8Array(128 * 128 * 4);
+    let seed = 91;
+    for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+      seed = (seed * 16807) % 2147483647;
+      const mottling = Math.sin(x * Math.PI / 16) * Math.cos(y * Math.PI / 32);
+      const value = Math.round(196 + 34 * seed / 2147483647 + mottling * 14);
+      const i = (y * 128 + x) * 4;
+      pixels[i] = pixels[i + 1] = pixels[i + 2] = value;
+      pixels[i + 3] = 255;
+    }
+    this.groundDetail = new THREE.DataTexture(pixels, 128, 128);
+    this.groundDetail.wrapS = this.groundDetail.wrapT = THREE.RepeatWrapping;
+    this.groundDetail.magFilter = THREE.LinearFilter;
+    this.groundDetail.minFilter = THREE.LinearMipmapLinearFilter;
+    this.groundDetail.generateMipmaps = true;
+    this.groundDetail.anisotropy = 4;
+    this.groundDetail.needsUpdate = true;
     this.sky = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.skyMaterial);
     this.sky.frustumCulled = false;
     this.sky.renderOrder = -100;
@@ -62,7 +81,8 @@ export class SurfaceScene {
     this.group.visible = env.profile.solid && env.groundAltitudeKm < 20 && !ship.warping;
     if (!this.group.visible) return;
     const surfacePoint = center.clone().addScaledVector(env.outward, env.body.radius);
-    if (!this.terrain || this.bodyId !== env.body.id || this.anchor.distanceTo(surfacePoint) * ship.config.unitsKm > 1.5) {
+    if (!this.terrain || this.bodyId !== env.body.id || this.anchor.distanceTo(surfacePoint) * ship.config.unitsKm > Math.max(1.5, this.tileExtentKm * 0.35)
+      || (env.groundAltitudeKm < 0.5 && this.tileExtentKm > 10)) {
       this.rebuild(ship, surfacePoint);
     }
     this.group.position.copy(this.anchor).sub(ship.position);
@@ -90,8 +110,9 @@ export class SurfaceScene {
     const tangent = new THREE.Vector3(0, 1, 0).cross(this.normal).normalize();
     if (tangent.lengthSq() < 0.1) tangent.set(1, 0, 0);
     const bitangent = this.normal.clone().cross(tangent).normalize();
-    const segments = 160, extentKm = 10;
-    const positions: number[] = [], colors: number[] = [], indices: number[] = [];
+    const segments = env.groundAltitudeKm < 0.5 ? 128 : 64;
+    const extentKm = this.tileExtentKm = Math.max(10, Math.min(80, env.groundAltitudeKm * 4));
+    const positions: number[] = [], colors: number[] = [], indices: number[] = [], uvs: number[] = [];
     const ground = new THREE.Color(surfaceProfile(env.body.id).ground);
     for (let y = 0; y <= segments; y++) for (let x = 0; x <= segments; x++) {
       const dx = (x / segments * 2 - 1) * extentKm / ship.config.unitsKm;
@@ -101,6 +122,7 @@ export class SurfaceScene {
       const local = radial.clone().multiplyScalar(env.body.radius + height / ship.config.unitsKm)
         .addScaledVector(this.normal, -env.body.radius);
       positions.push(local.x, local.y, local.z);
+      uvs.push(dx * ship.config.unitsKm * 1000 / 128, dy * ship.config.unitsKm * 1000 / 128);
       const shade = 0.65 + height * 4;
       colors.push(ground.r * shade, ground.g * shade, ground.b * shade);
       if (x < segments && y < segments) {
@@ -111,9 +133,11 @@ export class SurfaceScene {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
-    const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide });
+    const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide,
+      map: this.groundDetail, bumpMap: this.groundDetail, bumpScale: 0.018 / (ship.config.unitsKm * 1000) });
     // Metre-scale procedural grit adds detail without downloading additional textures.
     material.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 groundPosition;")
@@ -151,6 +175,7 @@ export class SurfaceScene {
     this.group.add(this.rocks);
   }
   dispose() {
+    this.groundDetail.dispose();
     this.terrain?.geometry.dispose();
     (this.terrain?.material as THREE.Material | undefined)?.dispose();
     this.sky.geometry.dispose();

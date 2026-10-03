@@ -9,6 +9,8 @@ import { world, validateFlightState } from "../shared/flight-state.mjs";
 import { bodySystem } from "../shared/world-navigation.mjs";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
 import * as THREE from "three";
+import { RenderBudget } from "../src/render-budget.ts";
+import { createShip, SHIP_LENGTH_KM } from "../src/ship-model.ts";
 import { projectFlightTarget } from "../src/flight-target.ts";
 const state = () => new ShipDynamics().snapshot();
 async function fixture(t) {
@@ -297,6 +299,7 @@ test("warp charges, moves continuously, arrives safely and cools down at all nin
   for (const target of ["mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "sun", "earth"]) {
     ship.target = target;
     const departure = ship.position.clone();
+    const departureSide = ship.targetRelative.negate().normalize();
     assert.equal(ship.startWarp(), null);
     assert.equal(ship.warpPhase, "charging");
     assert.equal(ship.startWarp(), "跃迁引擎正在工作或冷却");
@@ -318,8 +321,7 @@ test("warp charges, moves continuously, arrives safely and cools down at all nin
     }
     assert(sawTransit && movedInTransit && sawArrival);
     assert.equal(ship.warpPhase, "ready");
-    const expected = new ShipDynamics(); expected.jump(target);
-    assert(ship.position.distanceTo(expected.position) < 1e-8);
+    assertOrbitalArrival(ship, departureSide);
     assert.equal(ship.velocity.length(), 0);
   }
 });
@@ -581,6 +583,7 @@ test("warps reach all Centauri bodies and return to Earth; transit snapshots rem
   const ship = new ShipDynamics();
   for (const target of ["alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-d", "proxima-c", "earth"]) {
     ship.target = target;
+    const departureSide = ship.targetRelative.negate().normalize();
     assert.equal(ship.startWarp(), null, target);
     let sawNewSystem = false;
     for (let i = 0; i < 320 && ship.warpPhase !== "ready"; i++) {
@@ -592,9 +595,7 @@ test("warps reach all Centauri bodies and return to Earth; transit snapshots rem
       }
     }
     assert.equal(ship.warpPhase, "ready");
-    const expected = new ShipDynamics(); expected.jump(target);
-    assert.equal(ship.systemId, expected.systemId);
-    assert(ship.position.distanceTo(expected.position) < 1e-8);
+    assertOrbitalArrival(ship, departureSide);
     assert.equal(ship.environment.body.id, target);
     const restored = new ShipDynamics();
     assert(restored.restore(ship.snapshot()));
@@ -638,4 +639,81 @@ test("a near Proxima planet blocks an interstellar target, outward departure sti
   for (let i = 0; i < 15; i++) ship.step(0.05, { ...emptyInput(), throttle: 1, boost: true });
   assert(ship.environment.altitudeKm > 1000);
   assert.equal(ship.startWarp(), null);
+});
+
+function assertOrbitalArrival(ship, departureSide) {
+  const target = world.bodies.find(body => body.id === ship.target);
+  assert.equal(ship.systemId, bodySystem(target));
+  const radial = ship.position.clone().sub(new THREE.Vector3().fromArray(target.position)).normalize();
+  assert(radial.dot(departureSide) > 0.999999, `${target.id}: arrival must preserve the departure side`);
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.orientation);
+  assert(Math.abs(forward.dot(radial)) < 0.25, `${target.id}: arrival view must follow the horizon`);
+  assert(ship.environment.altitudeKm >= 1099.99);
+}
+
+test("left, right and polar arrivals brake continuously without camera or speed jumps", () => {
+  const earth = world.bodies.find(body => body.id === "earth");
+  for (const side of [new THREE.Vector3(-1,0,0),new THREE.Vector3(1,0,0),new THREE.Vector3(0,1,0),new THREE.Vector3(0,0,1)]) {
+    const ship = new ShipDynamics();
+    ship.position.fromArray(earth.position).addScaledVector(side,15);
+    if(side.z===1) ship.orientation.setFromUnitVectors(new THREE.Vector3(0,1,0),side);
+    ship.target = "earth";
+    assert.equal(ship.startWarp(),null);
+    let arrivalStart, lastArrivalSpeed = Infinity, arrivalMovement = 0, lastTransitSpeed;
+    for (let i=0; i<1500 && ship.warpPhase!=="cooldown"; i++) {
+      const before = ship.warpPhase, previous = ship.position.clone(), facing = ship.orientation.clone();
+      ship.step(0.01,emptyInput());
+      if (before==="transit") lastTransitSpeed = ship.warpSpeedKm;
+      if (before==="transit" && ship.warpPhase==="arrival") arrivalStart=ship.position.clone();
+      if (before==="arrival") {
+        arrivalMovement+=ship.position.distanceTo(previous);
+        assert(ship.warpSpeedKm<=lastArrivalSpeed+1e-6,"arrival speed must decrease");
+        if(lastArrivalSpeed===Infinity) assert(Math.abs(ship.warpSpeedKm-lastTransitSpeed)/lastTransitSpeed<0.04);
+        lastArrivalSpeed=ship.warpSpeedKm;
+        assert(ship.orientation.angleTo(facing)<0.08,"no arrival camera snap");
+        assert(ship.position.distanceTo(new THREE.Vector3().fromArray(earth.position))>1.17);
+      }
+    }
+    assert.equal(ship.warpPhase,"cooldown");
+    assert(arrivalStart && arrivalMovement>0.3);
+    assertOrbitalArrival(ship,side);
+    assert(Math.abs(ship.environment.altitudeKm-1100)<1e-5);
+    assert.equal(ship.warpSpeedKm,0);
+  }
+});
+
+test("cancelling the arrival arc preserves position, orientation and a valid snapshot", () => {
+  const ship = new ShipDynamics(); ship.target="mars";
+  assert.equal(ship.startWarp(),null);
+  while(ship.warpPhase!=="arrival") ship.step(0.05,emptyInput());
+  ship.step(0.25,emptyInput());
+  const position=ship.position.clone(),orientation=ship.orientation.clone();
+  ship.cancelWarp();
+  assert(ship.position.equals(position)); assert(ship.orientation.equals(orientation));
+  const restored=new ShipDynamics(); assert(restored.restore(ship.snapshot()));
+  assert(restored.position.equals(position)); assert.equal(ship.warpSpeedKm,0);
+});
+
+test("physical hull length is 150 km, small beside Earth's diameter", () => {
+  const model=createShip();
+  const scale=SHIP_LENGTH_KM/(world.unitsKm*model.hullLength);
+  model.group.scale.setScalar(scale); model.group.updateMatrixWorld(true);
+  const hull=new THREE.Box3();
+  for (const mesh of model.group.children.filter(child=>child instanceof THREE.Mesh)) hull.expandByObject(mesh);
+  assert(Math.abs((hull.max.z-hull.min.z)*world.unitsKm-150)<1e-5);
+  assert((hull.max.z-hull.min.z)/2<0.012);
+});
+
+test("render budget lowers sustained slow resolution and recovers slowly within its ceiling", () => {
+  const budget=new RenderBudget(); budget.configure(true,3,1920,1080);
+  assert(budget.ratio<=1.5); assert(1920*1080*budget.ratio**2<=2100000.01);
+  const initial=budget.ratio;
+  for(let i=0;i<240;i++)budget.sample(1/30);
+  assert(budget.ratio<initial);assert(budget.ratio>=0.25);
+  const low=budget.ratio;
+  for(let i=0;i<120;i++)budget.sample(1/60);
+  assert(budget.ratio<=low);
+  for(let i=0;i<3000;i++)budget.sample(1/60);
+  assert(budget.ratio>low);assert(budget.ratio<=initial);
+  const previous=budget.ratio;budget.sample(0);budget.sample(5);assert.equal(budget.ratio,previous);
 });

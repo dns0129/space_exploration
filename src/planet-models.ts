@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { CelestialBody, Layer } from "./solar-system";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 export interface PlanetModel {
   body: CelestialBody;
@@ -94,10 +95,12 @@ const planetFragment = /* glsl */ `
   ${noise}
   void main() {
     vec3 p = normalize(vLocalPosition);
+    float height = 0.0;
+    vec3 color = vec3(0.5);
+    #ifndef PHOTOGRAPHIC_MAP
     float terrain = fbm(p*5.0);
     float detail = noise3(p*180.0);
-    float height = terrain*0.03;
-    vec3 color = vec3(0.5);
+    height = terrain*0.03;
     #if BODY_KIND == 0
       height += crater(vUv,18.0)+crater(vUv,56.0)*0.55;
       color = mix(vec3(0.19,0.17,0.16),vec3(0.55,0.52,0.47),smoothstep(0.3,0.7,terrain));
@@ -176,16 +179,31 @@ const planetFragment = /* glsl */ `
       if (moonStyle == 3.0) color = moonColor*(0.8+fbm(p*vec3(12.0,4.0,12.0))*0.35);
       if (moonStyle == 4.0) color *= mix(0.18,1.3,smoothstep(-0.1,0.12,p.x));
     #endif
+    #endif
     #ifdef PHOTOGRAPHIC_MAP
       color = texture2D(detailMap,vUv).rgb;
-      height = dot(color,vec3(0.2126,0.7152,0.0722))*0.001;
+      #if BODY_KIND == 7
+        color *= 1.7;
+        vec3 view = normalize(cameraPosition-vWorldPosition);
+        color *= 0.55+0.45*pow(max(dot(normalize(vNormal),view),0.0),0.3);
+        #include <logdepthbuf_fragment>
+        gl_FragColor = vec4(color,1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        return;
+      #elif BODY_KIND <= 2
+        float footprint = max(length(dFdx(p)),length(dFdy(p)));
+        float micro = (noise3(p*280.0)-0.5)*exp(-footprint*280.0);
+        color *= 1.0+micro*0.07;
+        height = dot(color,vec3(0.2126,0.7152,0.0722))*0.004+micro*0.0004;
+      #endif
     #endif
     vec3 normal = normalize(vNormal);
     vec3 dpdx = dFdx(vWorldPosition), dpdy = dFdy(vWorldPosition);
     vec3 r1 = cross(dpdy,normal), r2 = cross(normal,dpdx);
     float determinant = dot(dpdx,r1);
     vec3 gradient = sign(determinant)*(dFdx(height)*r1+dFdy(height)*r2);
-    normal = normalize(max(abs(determinant),0.0000001)*normal-0.012*gradient);
+    normal = normalize(max(abs(determinant),0.0000001)*normal-0.012*bodyRadius*gradient);
     float diffuse = max(dot(normal,sunDirection),0.0);
     #if BODY_KIND == 4
       float planeAngle = dot(sunDirection,planetAxis);
@@ -203,32 +221,64 @@ const planetFragment = /* glsl */ `
   }
 `;
 
-const atmosphereFragment = /* glsl */ `
+export const atmosphereFragment = /* glsl */ `
   #include <logdepthbuf_pars_fragment>
   uniform vec3 sunDirection;
   uniform vec3 atmosphereColor;
   uniform vec3 planetCenter;
   uniform float bodyRadius;
+  uniform float atmosphereHeight;
   uniform float strength;
   uniform float uTime;
   varying vec3 vWorldPosition;
   varying vec3 vNormal;
   varying vec3 vLocalPosition;
-  ${noise}
   void main() {
-    vec3 normal = normalize(vNormal), view = normalize(cameraPosition-vWorldPosition);
-    float rim = pow(1.0-abs(dot(normal,view)),4.0);
-    float sun = smoothstep(-0.35,0.8,dot(normal,sunDirection));
+    vec3 normal = normalize(vNormal);
+    vec3 ray = normalize(vWorldPosition-cameraPosition);
     #ifdef SOLAR_CORONA
-      float streamers = 0.65+noise3(normal*14.0+uTime*0.006)*0.6;
-      float impact = length(cross(cameraPosition-planetCenter,normalize(vWorldPosition-cameraPosition)))/bodyRadius;
+      float impact = length(cross(cameraPosition-planetCenter,ray))/bodyRadius;
       float envelope = exp(-max(impact-1.0,0.0)*18.0)*(1.0-smoothstep(1.08,1.2,impact));
-      #include <logdepthbuf_fragment>
-    gl_FragColor = vec4(atmosphereColor*1.6,envelope*strength*streamers*0.68);
+      float streamers = 0.85+0.15*sin(normal.y*38.0+normal.x*21.0+uTime*0.08);
+      vec3 color = atmosphereColor*1.6;
+      float opacity = envelope*strength*streamers*0.68;
     #else
-      #include <logdepthbuf_fragment>
-    gl_FragColor = vec4(atmosphereColor,rim*strength*(0.12+sun*0.75));
+      // Four bounded density samples without a fullscreen volumetric pass.
+      vec3 origin = (cameraPosition-planetCenter)/bodyRadius;
+      float b = dot(origin,ray);
+      float shell = 1.0+atmosphereHeight;
+      float discriminant = b*b-dot(origin,origin)+shell*shell;
+      if(discriminant<=0.0) discard;
+      float root = sqrt(discriminant);
+      float entry = max(0.0,-b-root), exitPoint = -b+root;
+      // Conservatively cover the faceted LOD silhouette; depth rejects the rest.
+      float ground = b*b-dot(origin,origin)+0.996*0.996;
+      if(ground>0.0) {
+        float hit = -b-sqrt(ground);
+        if(hit>0.0) discard;
+      }
+      float stepLength = max(0.0,exitPoint-entry)/4.0;
+      float scaleHeight = max(atmosphereHeight*0.22,0.0001);
+      vec3 scattered = vec3(0.0);
+      float optical = 0.0;
+      float mu = dot(ray,sunDirection);
+      float phase = 0.75*(1.0+mu*mu);
+      float forward = pow(max(mu,0.0),12.0)*0.45;
+      for(int i=0;i<4;i++) {
+        vec3 point = origin+ray*(entry+(float(i)+0.5)*stepLength);
+        float height = max(length(point)-1.0,0.0);
+        float density = exp(-height/scaleHeight)*stepLength/scaleHeight;
+        float sun = dot(normalize(point),sunDirection);
+        float daylight = smoothstep(-0.12,0.2,sun);
+        vec3 sunset = vec3(0.7,0.2,0.055)*exp(-sun*sun*160.0)*0.3;
+        scattered += density*(atmosphereColor*(0.025+daylight)*phase+sunset+vec3(forward*daylight));
+        optical += density;
+      }
+      vec3 color = scattered/max(optical,0.0001);
+      float opacity = (1.0-exp(-optical*strength*0.16))*0.85;
     #endif
+    #include <logdepthbuf_fragment>
+    gl_FragColor = vec4(color,opacity);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -355,7 +405,7 @@ export function createPlanetModel(
   if (body.layers.includes("atmosphere")) {
     const solar = body.id === "sun" || body.kind === "star";
     const halo = new THREE.Mesh(
-      new THREE.SphereGeometry(solar ? 1.23 : 1.028, 96, 64),
+      new THREE.SphereGeometry(solar ? 1.23 : 1 + Math.max(0.003, Math.min(0.035, (body.atmosphereKm ?? 90) / body.radiusKm)), 96, 64),
       new THREE.ShaderMaterial({
         vertexShader: modelVertex,
         fragmentShader: atmosphereFragment,
@@ -367,7 +417,8 @@ export function createPlanetModel(
           atmosphereColor: {
             value: new THREE.Color(solar ? body.id === "sun" ? "#ff8f2c" : body.color : body.atmosphereColor!),
           },
-          strength: { value: solar ? 0.95 : body.id === "mars" ? 0.4 : 0.5 },
+          atmosphereHeight: { value: Math.max(0.003, Math.min(0.035, (body.atmosphereKm ?? 90) / body.radiusKm)) },
+          strength: { value: solar ? 0.95 : body.id === "mars" ? 0.35 : 0.75 },
           uTime,
         },
         side: THREE.BackSide,
@@ -432,6 +483,7 @@ export function createPlanetModel(
   }
   if (body.id === "sun") {
     const flares = new THREE.Group();
+    const flareGeometries: THREE.BufferGeometry[] = [];
     const material = new THREE.MeshBasicMaterial({
       color: new THREE.Color(2.5, 0.45, 0.04),
       transparent: true,
@@ -452,8 +504,7 @@ export function createPlanetModel(
       const a = normal.clone().addScaledVector(tangent, -0.055).normalize();
       const b = normal.clone().multiplyScalar(1.11 + Math.sin(i * 2.1) * 0.035);
       const c = normal.clone().addScaledVector(tangent, 0.055).normalize();
-      flares.add(
-        new THREE.Mesh(
+      flareGeometries.push(
           new THREE.TubeGeometry(
             new THREE.QuadraticBezierCurve3(a, b, c),
             32,
@@ -461,10 +512,10 @@ export function createPlanetModel(
             6,
             false,
           ),
-          material,
-        ),
       );
     }
+    flares.add(new THREE.Mesh(mergeGeometries(flareGeometries)!, material));
+    flareGeometries.forEach(geometry => geometry.dispose());
     model.layers.atmosphere!.add(flares);
     model.spinning.push({ object: flares, rate: body.rotationSpeed });
   }

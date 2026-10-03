@@ -282,7 +282,7 @@ export class FlightInterface {
       : stats.landingPhase !== "manual" ? "自动着陆与起飞"
       : nearGround ? `当前上限 ${number(stats.speedLimitKm * 1000)} m/s`
       : `${number(stats.engine.minSpeedKm)}–${number(stats.engine.maxSpeedKm)} km/s`;
-    if (this.warpPhase === "arrival" && stats.warpPhase === "cooldown") this.notify("跃迁完成，已抵达目标附近");
+    if (this.warpPhase === "arrival" && stats.warpPhase === "cooldown") this.notify("跃迁完成，已减速抵达目标轨道");
     this.warpPhase = stats.warpPhase;
     $("#warp-engine").dataset.phase = stats.warpPhase;
     $("#warp-label").textContent = stats.warpPhase === "ready" && stats.warpBlockReason ? "跃迁受限" : labels[stats.warpPhase];

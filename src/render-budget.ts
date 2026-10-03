@@ -1,0 +1,37 @@
+/** Adaptive resolution with slow recovery, targeting a 60 Hz frame budget. */
+export class RenderBudget {
+  ratio = 1;
+  private ceiling = 1;
+  private averageMs = 16.7;
+  private windowSeconds = 0;
+  private healthySeconds = 0;
+  private minimumRatio = 0.25;
+  configure(high: boolean, deviceRatio: number, width: number, height: number, minimumRatio = 0.25) {
+    this.minimumRatio = minimumRatio;
+    const pixelLimit = high ? 2_100_000 : 1_200_000;
+    this.ceiling = Math.min(high ? Math.min(deviceRatio, 1.5) : 1,
+      Math.sqrt(pixelLimit / Math.max(1, width * height)));
+    this.ratio = this.ceiling;
+    this.averageMs = 16.7;
+    this.windowSeconds = -1.5;
+    this.healthySeconds = 0;
+  }
+  sample(seconds: number) {
+    if (seconds <= 0 || seconds > 0.25) return false;
+    this.averageMs += (seconds * 1000 - this.averageMs) * (1 - Math.exp(-seconds * 2));
+    this.windowSeconds += seconds;
+    if (this.windowSeconds < 1) return false;
+    this.windowSeconds = 0;
+    const previous = this.ratio;
+    if (this.averageMs > 21) {
+      this.ratio = Math.max(Math.min(this.minimumRatio, this.ceiling), this.ratio * 0.82);
+      this.healthySeconds = 0;
+    } else if (this.averageMs < 17.5) {
+      if (++this.healthySeconds >= 6) {
+        this.ratio = Math.min(this.ceiling, this.ratio * 1.06);
+        this.healthySeconds = 0;
+      }
+    } else this.healthySeconds = 0;
+    return Math.abs(previous - this.ratio) > 0.001;
+  }
+}

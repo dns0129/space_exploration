@@ -39,7 +39,7 @@
   "warp": {
     "chargeSeconds": 1.6,
     "travelSeconds": 7,
-    "arrivalSeconds": 1.3,
+    "arrivalSeconds": 3.2,
     "cooldownSeconds": 2
   },
   "bodies": [

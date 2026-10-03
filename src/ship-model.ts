@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
+export const SHIP_LENGTH_KM = 150;
+
 /** Original compact explorer: swept wings, twin nacelles and an illuminated canopy. */
 export function createShip() {
   const group = new THREE.Group();
@@ -55,6 +57,8 @@ export function createShip() {
     geometry.forEach((part) => part.dispose());
     group.add(new THREE.Mesh(merged, material));
   }
+  const hullBounds = new THREE.Box3().setFromObject(group);
+  const hullLength = hullBounds.max.z - hullBounds.min.z;
   const exhaust = new THREE.Group();
   exhaust.position.z = 0.51;
   const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.2, 1.6, 3), transparent: true,
@@ -78,5 +82,6 @@ export function createShip() {
   }
   gear.visible = false;
   group.add(gear);
-  return { group, exhaust, gear };
+  const landingFootOffset = -new THREE.Box3().setFromObject(gear).min.y;
+  return { group, exhaust, gear, hullLength, landingFootOffset };
 }

@@ -7,6 +7,7 @@ const executablePath =
 
 export default defineConfig({
   testDir: "./tests",
+  outputDir: "test-results/browser",
   timeout: 60_000,
   expect: { timeout: 30_000 },
   fullyParallel: false,
@@ -19,6 +20,7 @@ export default defineConfig({
         "--use-gl=angle",
         "--use-angle=swiftshader",
         "--enable-unsafe-swiftshader",
+        "--disable-gpu-compositing",
       ],
     },
     trace: "retain-on-failure",

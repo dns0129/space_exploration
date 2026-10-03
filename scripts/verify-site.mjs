@@ -56,6 +56,7 @@ const browser = await chromium.launch({
     "--use-gl=angle",
     "--use-angle=swiftshader",
     "--enable-unsafe-swiftshader",
+        "--disable-gpu-compositing",
   ],
 });
 try {
