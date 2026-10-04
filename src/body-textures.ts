@@ -18,6 +18,8 @@ export interface SurfaceMap {
   offset?: number;
   /** Loaded with the sky and kept resident; other maps load when the body is approached or observed. */
   core?: boolean;
+  /** Native 4K alternate for an 8K surface on compact devices or smaller GPU limits. */
+  compactFile?: string;
 }
 
 const rock = (file: string, width = 4096, relief = 0.006, grain = 0.11): SurfaceMap => ({ file, width, relief, grain });
@@ -67,6 +69,7 @@ export const SURFACE_MAPS: Partial<Record<BodyId, SurfaceMap>> = {
   "alpha-centauri-a": star("star-g.jpg", 1.16),
   "alpha-centauri-b": star("star-k.jpg", 1.16),
   "proxima-centauri": star("star-m.jpg", 1.58),
+  betelgeuse: { file: "betelgeuse-8k.jpg", compactFile: "betelgeuse-4k.jpg", width: 8192, relief: 0, grain: 0.045, concept: true },
   "proxima-b": { ...rock("concept-makemake.jpg", 4096, 0.004, 0.1), concept: true },
   "proxima-c": { file: "concept-venuslike.jpg", width: 4096, relief: 0, grain: 0.04, streaks: true, concept: true, tint: [0.8, 0.96, 1.1] },
   "proxima-d": { ...rock("concept-ceres.jpg"), concept: true },
@@ -76,5 +79,5 @@ export const surfaceMapLabel = (id: BodyId) => {
   if (id === "earth") return "4K 地表影像";
   const map = SURFACE_MAPS[id];
   if (!map) return "程序化材质";
-  return `${map.width === 4096 ? "4K" : "2K"} ${map.concept ? "高清概念图" : "实测影像"}`;
+  return `${map.width >= 8192 ? "8K / 4K" : map.width === 4096 ? "4K" : "2K"} ${map.concept ? "高清概念图" : "实测影像"}`;
 };

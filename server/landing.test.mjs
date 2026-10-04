@@ -64,7 +64,7 @@ test("all solid worlds descend continuously, touch terrain, stay landed and rest
 });
 test("landing rejects giant planets, the Sun, wrong targets and warp; manual input safely cancels descent", () => {
   const ship = new ShipDynamics();
-  for (const id of ["sun", "jupiter", "saturn", "uranus", "neptune", "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri"]) {
+  for (const id of ["sun", "jupiter", "saturn", "uranus", "neptune", "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "betelgeuse"]) {
     ship.jump(id);
     const before = ship.snapshot();
     assert(ship.startLanding());

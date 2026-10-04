@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { chromium, expect, devices } from "@playwright/test";
 import { PNG } from "pngjs";
+import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 
 const root = fileURLToPath(new URL("../dist-site/", import.meta.url));
@@ -215,6 +216,7 @@ try {
     await expect(page.locator("canvas")).toHaveAttribute("data-background", "centauri-milky-way-4k.jpg");
     await expect(page.locator("#flight-target")).toHaveText("比邻星 b");
     await page.screenshot({ path: resolve(output, `centauri-${name}.png`) });
+    await verifyBetelgeuseFlight(page);
     await verifySurfaceFlight(page);
     await page.screenshot({ path: resolve(output, `landed-${name}.png`) });
     // A changed deployment offers refresh and leaves the current flight intact.

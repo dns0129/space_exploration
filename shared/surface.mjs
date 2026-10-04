@@ -4,6 +4,7 @@ const profiles = {
   "alpha-centauri-a": { solid: false, sky: "#fff1cf", gravity: 200 },
   "alpha-centauri-b": { solid: false, sky: "#ffcb92", gravity: 300 },
   "proxima-centauri": { solid: false, sky: "#ff805a", gravity: 1000 },
+  betelgeuse: { solid: false, sky: "#ff9d63", gravity: 0.007 },
   "proxima-b": { sky: "#af8976", ground: "#a2785c", gravity: 10, density: 0.6, scaleKm: 9 },
   "proxima-c": { sky: "#93bdce", ground: "#81999f", gravity: 12, density: 1, scaleKm: 40 },
   "proxima-d": { ground: "#aa8872", gravity: 5 },

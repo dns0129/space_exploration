@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import { chromium } from "@playwright/test";
 import { PNG } from "pngjs";
+import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { createServer } from "node:http";
 
@@ -63,8 +64,9 @@ try {
     "mimas", "enceladus", "tethys", "dione", "rhea", "titan", "hyperion", "iapetus",
     "miranda", "ariel", "umbriel", "titania", "oberon",
     "naiad", "thalassa", "despina", "galatea", "larissa", "proteus", "triton", "nereid",
-    "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-c", "proxima-d",
+    "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-c", "proxima-d", "betelgeuse",
   ]) {
+    if (id === "betelgeuse") await page.locator("#star-system").selectOption("betelgeuse");
     if (id === "alpha-centauri-a") await page.locator("#star-system").selectOption("alpha-centauri");
     if (await page.locator(`button[data-body="${id}"]`).count()) {
       if (id !== "earth") await page.locator(`button[data-body="${id}"]`).click();
@@ -145,11 +147,12 @@ try {
   await page.locator("#flight-resume").click();
   await page.waitForFunction(() => document.querySelector("canvas")?.dataset.system === "proxima-centauri");
   assert.equal(await page.locator("canvas").count(), 1);
+  await verifyBetelgeuseFlight(page);
   await verifySurfaceFlight(page);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(
-    "PASS: all 41 models, two sky panoramas, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
+    "PASS: all 42 models, two sky panoramas, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
   );
 } finally {
   await browser.close();

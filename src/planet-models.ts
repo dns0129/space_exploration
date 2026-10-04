@@ -228,6 +228,11 @@ const planetFragment = /* glsl */ `
       if (stellarIllustration > 0.5) color = stellarTint * (1.2+granules*2.4) * (0.84+fine*0.23);
       float sunspots = smoothstep(0.69,0.78,fbm(p*8.0+vec3(17.0)));
       color *= 1.0-sunspots*0.85;
+      #ifdef RED_SUPERGIANT
+        // Much larger, slower convection than the fine granules of a main-sequence star.
+        float convection = fbm(p*3.8 + vec3(0.0,uTime*0.002,0.0));
+        color = stellarTint * (0.6+convection*2.2);
+      #endif
       #ifdef SURFACE_MAP
         if (mapReady > 0.001) {
           vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb;
@@ -236,6 +241,9 @@ const planetFragment = /* glsl */ `
           vec3 stellar = stellarIllustration > 0.5
             ? stellarTint * 1.5 * pow(max(mapLuminance(photo) * mapTint.x, 0.0), 3.0)
             : photo * 1.7;
+          #ifdef RED_SUPERGIANT
+            stellar = photo * 1.8 * (0.94+convection*0.16);
+          #endif
           color = mix(color, stellar * (1.0 + grain.x * mapGrain * 2.0), mapReady);
         }
       #endif
@@ -522,7 +530,7 @@ export function createPlanetModel(
     new THREE.ShaderMaterial({
       vertexShader: modelVertex,
       fragmentShader: planetFragment,
-      defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(mapOnSurface ? { SURFACE_MAP: 1 } : {}) },
+      defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(mapOnSurface ? { SURFACE_MAP: 1 } : {}), ...(body.id === "betelgeuse" ? { RED_SUPERGIANT: 1 } : {}) },
       uniforms: {
         ...(mapOnSurface ? mapUniforms : {}),
         sunDirection: { value: sunDirection },

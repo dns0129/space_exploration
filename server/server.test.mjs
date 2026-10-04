@@ -565,8 +565,8 @@ test("every body uses the same 1000 km boundary, including large atmospheres", (
 
 
 test("three Centauri stars and their planets use local coordinates and light-year navigation", () => {
-  assert.equal(world.systems.length, 3);
-  assert.equal(world.bodies.length, 41);
+  assert.equal(world.systems.length, 4);
+  assert.equal(world.bodies.length, 42);
   const ship = new ShipDynamics();
   ship.target = "alpha-centauri-a";
   assert(Math.abs(ship.targetRelative.length() * world.unitsKm / world.lightYearKm - 4.37) < 0.001);
@@ -583,7 +583,7 @@ test("three Centauri stars and their planets use local coordinates and light-yea
 
 test("warps reach all Centauri bodies and return to Earth; transit snapshots remain restorable and routes avoid local stars", () => {
   const ship = new ShipDynamics();
-  for (const target of ["alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-d", "proxima-c", "earth"]) {
+  for (const target of ["alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-d", "proxima-c", "betelgeuse", "earth"]) {
     ship.target = target;
     const departureSide = ship.targetRelative.negate().normalize();
     assert.equal(ship.startWarp(), null, target);
@@ -605,6 +605,32 @@ test("warps reach all Centauri bodies and return to Earth; transit snapshots rem
     assert(restored.position.equals(ship.position));
     if (target !== "earth") assert(sawNewSystem);
   }
+});
+
+test("Betelgeuse is a star-only red-supergiant system with real scale and restorable local coordinates", async (t) => {
+  const bodies = world.bodies.filter(body => body.systemId === "betelgeuse");
+  assert.deepEqual(bodies.map(body => body.id), ["betelgeuse"]);
+  const star = bodies[0];
+  assert.equal(star.kind, "star");
+  assert(Math.abs(star.radius * world.unitsKm / 695700 - 764) < 1e-8);
+  const ship = new ShipDynamics();
+  ship.target = "betelgeuse";
+  assert(Math.abs(ship.targetRelative.length() * world.unitsKm / world.lightYearKm - 548) < 0.001);
+  ship.jump("betelgeuse");
+  assert.match(ship.startLanding(), /恒星无法着陆/);
+  const { url } = await fixture(t);
+  const cookie = (await fetch(url + "/api/flight/save")).headers.get("set-cookie").split(";")[0];
+  const saved = ship.snapshot();
+  assert.equal((await fetch(url + "/api/flight/save", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(saved) })).status, 200);
+  const stored = (await (await fetch(url + "/api/flight/save", { headers: { cookie } })).json()).state;
+  const restored = new ShipDynamics();
+  assert(restored.restore(stored));
+  assert.equal(restored.systemId, "betelgeuse");
+  assert.equal(restored.target, "betelgeuse");
+  assert(restored.position.equals(ship.position));
+  restored.position.set(0, 0, 0);
+  restored.step(0.05, emptyInput());
+  assert(restored.position.length() >= star.radius * 1.24, "stellar shield keeps the ship out of the photosphere");
 });
 
 test("cancelling an interstellar warp preserves its coordinate frame and old saves default to the solar frame", () => {

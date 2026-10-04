@@ -1,4 +1,5 @@
 import centauriData from "../shared/centauri.json" with { type: "json" };
+import betelgeuseData from "../shared/betelgeuse.json" with { type: "json" };
 import worldData from "../shared/world.json" with { type: "json" };
 import moonData from "../shared/moons.json" with { type: "json" };
 export type BodyId =
@@ -42,9 +43,10 @@ export type BodyId =
   | "proxima-centauri"
   | "proxima-b"
   | "proxima-c"
-  | "proxima-d";
-export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri";
-export type SystemGroupId = "solar" | "alpha-centauri";
+  | "proxima-d"
+  | "betelgeuse";
+export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri" | "betelgeuse";
+export type SystemGroupId = "solar" | "alpha-centauri" | "betelgeuse";
 export type Layer = "clouds" | "atmosphere" | "stars" | "rings";
 
 export interface CelestialBody {
@@ -263,7 +265,13 @@ export const CENTAURI_BODIES: readonly CelestialBody[] = centauriData.map((body,
   layers: body.kind === "star" || body.atmosphereKm ? ["atmosphere", "stars"] : ["stars"],
   atmosphereColor: body.color,
 }));
-export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES].map(body => ({
+export const BETELGEUSE_BODIES: readonly CelestialBody[] = betelgeuseData.map(body => ({
+  ...body, id: body.id as BodyId, systemId: body.systemId as SystemId, kind: "star",
+  axialTiltDeg: 0, flattening: 1, distanceFromSunMillionKm: 0,
+  rotationSpeed: 0.002, surfaceSeed: 91.4, caption: "BETELGEUSE / RED SUPERGIANT",
+  layers: ["atmosphere", "stars"], atmosphereColor: body.color,
+}));
+export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES].map(body => ({
   ...body, atmosphereKm: worldData.bodies.find(config => config.id === body.id)?.atmosphereKm,
 }));
 export const STAR_SYSTEMS = worldData.systems;

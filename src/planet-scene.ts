@@ -436,10 +436,14 @@ export class SolarScene {
 
   /** Decoded before upload so large maps don't stall a frame; surface maps wrap in longitude. */
   private async loadTexture(file: string, surface: boolean) {
+    const surfaceMap = surface ? Object.values(SURFACE_MAPS).find(map => map?.file === file) : undefined;
+    if (surfaceMap?.compactFile && (this.compactTextures || this.renderer.capabilities.maxTextureSize < surfaceMap.width)) {
+      file = surfaceMap.compactFile;
+    }
     const texture = await new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
     const image = texture.image as HTMLImageElement;
     await image.decode?.().catch(() => undefined);
-    if (surface && this.compactTextures && image.width > 2048) {
+    if (surface && this.compactTextures && !surfaceMap?.compactFile && image.width > 2048) {
       // Low-memory devices keep 2K copies: a quarter of the GPU memory of a 4K map.
       const canvas = document.createElement("canvas");
       canvas.width = 2048;

@@ -398,5 +398,25 @@
     "height": 2048,
     "sourceSha256": "f59d2f69893843c5c6bb4fe594b0e9087f9a5bad1065f839f92ed4b16df8e474",
     "sha256": "e8eacbca32002bb4b7d1e4d17682ad27e7d6dd64c1fe1d0412981276abfbbe07"
+  },
+  "betelgeuse-8k.jpg": {
+    "source": "scripts/generate-betelgeuse-texture.py",
+    "credit": "Voyager project original procedural artwork (2026)",
+    "license": "CC0-1.0",
+    "kind": "concept",
+    "changes": "Native spherical 8K convection field; 4K alternate filtered with Lanczos; JPEG quality 92",
+    "width": 8192,
+    "height": 4096,
+    "sha256": "e3077c97aae49d41b72051bc4333de369274d3bc2d2d762282fcb2e05c9ca199"
+  },
+  "betelgeuse-4k.jpg": {
+    "source": "scripts/generate-betelgeuse-texture.py",
+    "credit": "Voyager project original procedural artwork (2026)",
+    "license": "CC0-1.0",
+    "kind": "concept",
+    "changes": "Native spherical 8K convection field; 4K alternate filtered with Lanczos; JPEG quality 92",
+    "width": 4096,
+    "height": 2048,
+    "sha256": "aac58efe86d7b312567e19c1efdd9967f0f0af40fac111d8a4c9a2d5ea9f179c"
   }
 }

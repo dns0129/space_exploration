@@ -498,6 +498,17 @@
       "radius": 2.9822633809449064,
       "hostStarId": "proxima-centauri",
       "atmosphereKm": 500
+    },
+    {
+      "id": "betelgeuse",
+      "systemId": "betelgeuse",
+      "kind": "star",
+      "radius": 83427.21707738188,
+      "position": [
+        0,
+        0,
+        0
+      ]
     }
   ],
   "lightYearKm": 9460730472580.8,
@@ -554,6 +565,24 @@
         0,
         1.05,
         -0.28
+      ]
+    },
+    {
+      "id": "betelgeuse",
+      "groupId": "betelgeuse",
+      "name": "参宿四 · 红超巨星",
+      "positionLy": [
+        11.447634246276102,
+        70.64698661903708,
+        543.3065018493826
+      ],
+      "primaryStar": "betelgeuse",
+      "backgroundFile": "milky-way-4k.jpg",
+      "backgroundIntensity": 1.5,
+      "backgroundRotation": [
+        0.18,
+        1.55,
+        0.12
       ]
     }
   ]
