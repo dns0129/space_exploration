@@ -2168,4 +2168,7 @@ dialog h2 {
   .planet-info[data-system-group="alpha-centauri"] h1 { font-size: 40px; letter-spacing: 4px; }
   .planet-info[data-system-group="alpha-centauri"] h1 span { font-size: 10px; letter-spacing: 4px; }
 }
-@media (max-width: 800px) { .flight-system { font-size: 8px; margin: 2px 0 4px; } }
+@media (max-width: 800px) {
+  .flight-system { font-size: 8px; margin: 2px 0 4px; }
+  .planet-info[data-system-group="betelgeuse"] ~ .space-stage .earth-caption { bottom: 76px; }
+}
