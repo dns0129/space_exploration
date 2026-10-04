@@ -4,32 +4,11 @@ import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
 import { surfaceProfile, terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { bodySystem, systemBodies, systemDisplacement } from "../shared/world-navigation.mjs";
 import type { BodyId, SystemId } from "./solar-system";
+import type { FlightInput } from "./core/flight-input.ts";
+export type { FlightInput } from "./core/flight-input.ts";
+export { emptyInput } from "./core/flight-input.ts";
 // Centimetre tolerance compensates for subtraction at AU-scale coordinates.
 const SURFACE_EPSILON_KM = 1e-5;
-export interface FlightInput {
-  throttle: number;
-  strafe: number;
-  lift: number;
-  yaw: number;
-  pitch: number;
-  roll: number;
-  boost: boolean;
-  brake: boolean;
-  mouseX: number;
-  mouseY: number;
-}
-export const emptyInput = (): FlightInput => ({
-  throttle: 0,
-  strafe: 0,
-  lift: 0,
-  yaw: 0,
-  pitch: 0,
-  roll: 0,
-  boost: false,
-  brake: false,
-  mouseX: 0,
-  mouseY: 0,
-});
 interface RoutePoint { systemId: SystemId; position: THREE.Vector3; }
 interface WarpApproach {
   center: THREE.Vector3;

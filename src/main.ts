@@ -1,6 +1,8 @@
 import "./style.css";
 import { watchSiteVersion } from "./site-version";
 import { FlightInterface } from "./flight-ui";
+import { FlightStore } from "./flight-store";
+import { createBrowserFlightServices } from "./platform/browser";
 import { SolarScene } from "./planet-scene";
 import { surfaceMapLabel } from "./body-textures";
 import type { View } from "./planet-scene";
@@ -129,7 +131,7 @@ const flight = new FlightInterface(toast, (active, target) => {
     $("#connection-text").textContent = "远航号 · 驾驶在线";
     $("#render-status").textContent = "多恒星系统 · 独立 4K 银河背景";
   }
-});
+}, new FlightStore(createBrowserFlightServices()));
 
 function updatePause() {
   const button = $("#pause");

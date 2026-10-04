@@ -1,14 +1,10 @@
-import { emptyInput } from "./ship-dynamics";
-import type { FlightInput } from "./ship-dynamics";
-export class FlightControls {
-  private keys = new Set<string>();
-  private touch = new Set<string>();
-  private mouseX = 0;
-  private mouseY = 0;
+import { emptyInput, FlightInputState, flightActionForKey } from "./core/flight-input.ts";
+import type { FlightInput, InputSource } from "./core/flight-input.ts";
+export class FlightControls implements InputSource {
+  private readonly state = new FlightInputState();
   private pointer: number | null = null;
   private lastX = 0;
   private lastY = 0;
-  private steering = false;
   private canvas: HTMLCanvasElement;
   private cleanups: (() => void)[] = [];
   constructor(canvas: HTMLCanvasElement) {
@@ -27,31 +23,15 @@ export class FlightControls {
           e.target.closest("input,select,textarea"))
       )
         return;
-      if (
-        [
-          "KeyW",
-          "KeyS",
-          "KeyA",
-          "KeyD",
-          "KeyR",
-          "KeyF",
-          "KeyQ",
-          "KeyE",
-          "ArrowUp",
-          "ArrowDown",
-          "ArrowLeft",
-          "ArrowRight",
-          "Space",
-          "ShiftLeft",
-          "ShiftRight",
-        ].includes(e.code)
-      ) {
+      const action = flightActionForKey(e.code);
+      if (action) {
         e.preventDefault();
-        this.keys.add(e.code);
+        this.state.setAction(action, true, `keyboard:${e.code}`);
       }
     }) as EventListener);
     on(window, "keyup", ((e: KeyboardEvent) => {
-      this.keys.delete(e.code);
+      const action = flightActionForKey(e.code);
+      if (action) this.state.setAction(action, false, `keyboard:${e.code}`);
     }) as EventListener);
     on(window, "blur", (() => this.clear()) as EventListener);
     on(document, "visibilitychange", (() => this.clear()) as EventListener);
@@ -65,32 +45,32 @@ export class FlightControls {
     on(canvas, "pointermove", ((e: PointerEvent) => {
       if (e.pointerType === "mouse") return;
       if (this.pointer !== e.pointerId) return;
-      this.mouseX = Math.max(-1, Math.min(1, (e.clientX - this.lastX) / 80));
-      this.mouseY = Math.max(-1, Math.min(1, (e.clientY - this.lastY) / 80));
-      this.steering = true;
+      this.state.setSteering((e.clientX - this.lastX) / 80, (e.clientY - this.lastY) / 80);
     }) as EventListener);
     const stop = ((e: PointerEvent) => {
       if (this.pointer === e.pointerId) {
         this.pointer = null;
-        if (e.pointerType !== "mouse") this.centerSteering();
+        if (e.pointerType !== "mouse") this.state.centerSteering();
       }
     }) as EventListener;
     on(canvas, "pointerup", stop);
     on(canvas, "pointercancel", stop);
     on(canvas, "lostpointercapture", stop);
-    on(canvas, "pointerleave", (() => { if (this.pointer === null) this.centerSteering(); }) as EventListener);
+    on(canvas, "pointerleave", (() => { if (this.pointer === null) this.state.centerSteering(); }) as EventListener);
     document
       .querySelectorAll<HTMLButtonElement>("[data-flight-input]")
       .forEach((button) => {
-        const action = button.dataset.flightInput!;
+        const code = button.dataset.flightInput!;
+        const action = flightActionForKey(code);
+        if (!action) return;
         on(button, "pointerdown", ((e: PointerEvent) => {
           e.preventDefault();
           button.setPointerCapture(e.pointerId);
-          this.touch.add(action);
+          this.state.setAction(action, true, `touch:${code}`);
           button.classList.add("held");
         }) as EventListener);
         const release = (() => {
-          this.touch.delete(action);
+          this.state.setAction(action, false, `touch:${code}`);
           button.classList.remove("held");
         }) as EventListener;
         on(button, "pointerup", release);
@@ -103,38 +83,11 @@ export class FlightControls {
       this.clear();
       return emptyInput();
     }
-    const has = (...keys: string[]) =>
-      keys.some((k) => this.keys.has(k) || this.touch.has(k));
-    const value = (positive: string, negative: string) =>
-      Number(has(positive)) - Number(has(negative));
-    const input = {
-      ...emptyInput(),
-      throttle: value("KeyW", "KeyS"),
-      strafe: value("KeyD", "KeyA"),
-      lift: value("KeyR", "KeyF"),
-      yaw: value("ArrowLeft", "ArrowRight"),
-      pitch: value("ArrowUp", "ArrowDown"),
-      roll: value("KeyQ", "KeyE"),
-      boost: has("ShiftLeft", "ShiftRight"),
-      brake: has("Space"),
-      mouseX: this.deadzone(this.mouseX),
-      mouseY: this.deadzone(this.mouseY),
-    };
-    return input;
+    return this.state.read();
   }
-  private deadzone(value: number) {
-    return Math.sign(value) * Math.max(0, (Math.abs(value) - 0.08) / 0.92);
-  }
-  get aim() { return { x: this.mouseX, y: this.mouseY, active: this.steering }; }
-  private centerSteering() {
-    this.mouseX = 0;
-    this.mouseY = 0;
-    this.steering = false;
-  }
+  get aim() { return this.state.aim; }
   clear() {
-    this.keys.clear();
-    this.touch.clear();
-    this.centerSteering();
+    this.state.clear();
     this.pointer = null;
     document
       .querySelectorAll("[data-flight-input]")

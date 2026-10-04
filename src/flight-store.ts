@@ -1,75 +1,78 @@
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import type { WorldConfig, FlightState } from "../shared/flight-state.mjs";
-const key = "voyager-flight-v1";
+import type { FlightStoreServices } from "./platform/flight-services";
+
+/** Save policy shared by web and desktop; no browser globals or HTTP here. */
 export class FlightStore {
   online = false;
+  private readonly services: FlightStoreServices;
+  private pendingSave: Promise<void> = Promise.resolve();
+
+  constructor(services: FlightStoreServices) {
+    this.services = services;
+  }
+
+  private available() {
+    return this.services.isOnline?.() ?? true;
+  }
+
   async connect(): Promise<WorldConfig> {
     this.online = false;
-    if (import.meta.env.VITE_PUBLIC_SITE === "true" || !["http:", "https:"].includes(location.protocol) || !navigator.onLine)
-      return world;
+    if (!this.services.backend || !this.available()) return world;
     try {
-      const response = await fetch("/api/world", {
-        signal: AbortSignal.timeout(2500),
-      });
-      if (!response.ok) return world;
-      const config = await response.json();
+      const config = await this.services.backend.readWorld();
       if (JSON.stringify(config) === JSON.stringify(world)) {
         this.online = true;
-        return config;
+        return world;
       }
     } catch {
       /* Offline navigation keeps the local world. */
     }
     return world;
   }
+
   async read(): Promise<FlightState | null> {
-    if (!navigator.onLine) this.online = false;
-    if (this.online)
+    if (!this.available()) this.online = false;
+    if (this.online && this.services.backend)
       try {
-        const response = await fetch("/api/flight/save", {
-          signal: AbortSignal.timeout(2500),
-        });
-        if (response.ok) {
-          const saved = await response.json();
-          const state = validateFlightState(saved.state);
-          if (state) return state;
-        }
+        const state = validateFlightState(await this.services.backend.readSave());
+        if (state) return state;
       } catch {
         this.online = false;
       }
     try {
-      return validateFlightState(
-        JSON.parse(localStorage.getItem(key) ?? "null"),
-      );
+      return validateFlightState(await this.services.saves.read());
     } catch {
       return null;
     }
   }
+
   async save(state: FlightState): Promise<"server" | "local"> {
-    if (!navigator.onLine) this.online = false;
     const safe = validateFlightState(state);
     if (!safe) throw new Error("Invalid flight state");
+    // File and IPC adapters are asynchronous: checkpoints must finish in order.
+    const saving = this.pendingSave.then(() => this.write(safe));
+    this.pendingSave = saving.then(() => {}, () => {});
+    return saving;
+  }
+
+  private async write(safe: FlightState): Promise<"server" | "local"> {
+    if (!this.available()) this.online = false;
     let local = false;
     try {
-      localStorage.setItem(key, JSON.stringify(safe));
+      await this.services.saves.write(safe);
       local = true;
     } catch {
       /* Server storage can still succeed. */
     }
-    if (this.online)
+    if (this.online && this.services.backend)
       try {
-        const response = await fetch("/api/flight/save", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(safe),
-          signal: AbortSignal.timeout(4000),
-        });
-        if (response.ok) return "server";
+        if (await this.services.backend.writeSave(safe)) return "server";
       } catch {
         /* Fall back to a local save. */
       }
     this.online = false;
     if (local) return "local";
-    throw new Error("无法保存航行，请检查浏览器存储空间。");
+    throw new Error("无法保存航行，请检查存储空间。");
   }
 }

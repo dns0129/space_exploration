@@ -8,6 +8,7 @@ import type { PlanetModel } from "./planet-models";
 import { bodySystem, systemConfig } from "../shared/world-navigation.mjs";
 import { ShipDynamics } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
+import type { InputSource } from "./core/flight-input";
 import { createShip, SHIP_LENGTH_KM } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
 import { SurfaceScene } from "./surface-scene";
@@ -17,6 +18,9 @@ import { projectFlightTarget } from "./flight-target";
 import type { FlightTargetStats } from "./flight-target";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
 import { RenderBudget } from "./render-budget";
+import { createAssetResolver } from "./platform/assets";
+import type { AssetResolver } from "./platform/assets";
+import { textureAssets, embeddedAssets } from "./platform/asset-manifest";
 
 export type View = "overview" | "close" | "night";
 export interface SceneStats {
@@ -240,7 +244,7 @@ export class SolarScene {
   private readonly flightGeometries = new Map<THREE.Mesh, THREE.BufferGeometry>();
   private readonly flightSpheres = new Map<PlanetModel, THREE.Mesh[]>();
   private dynamics?: ShipDynamics;
-  private flightControls?: FlightControls;
+  private flightControls?: InputSource;
   private flying = false;
   private flightPaused = false;
   private flightMetrics = 0;
@@ -281,6 +285,12 @@ export class SolarScene {
     private readonly container: HTMLElement,
     private readonly onStats: (stats: SceneStats) => void,
     private readonly onError: (message: string) => void,
+    private readonly assets: AssetResolver = createAssetResolver(
+      import.meta.env.BASE_URL,
+      embeddedAssets ? textureAssets : undefined,
+    ),
+    private readonly createInput: (canvas: HTMLCanvasElement) => InputSource =
+      (canvas) => new FlightControls(canvas),
   ) {
     // MSAA smooths planet limbs and atmosphere edges; software rasterizers skip it to stay responsive.
     this.renderer = new THREE.WebGLRenderer({
@@ -440,7 +450,7 @@ export class SolarScene {
     if (surfaceMap?.compactFile && (this.compactTextures || this.renderer.capabilities.maxTextureSize < surfaceMap.width)) {
       file = surfaceMap.compactFile;
     }
-    const texture = await new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
+    const texture = await new THREE.TextureLoader().loadAsync(this.assets.texture(file));
     const image = texture.image as HTMLImageElement;
     await image.decode?.().catch(() => undefined);
     if (surface && this.compactTextures && !surfaceMap?.compactFile && image.width > 2048) {
@@ -572,7 +582,7 @@ export class SolarScene {
     this.earthPromise = Promise.all(
       files.map(async (file) => {
         const texture = await loader.loadAsync(
-          `${import.meta.env.BASE_URL}textures/${file}`,
+          this.assets.texture(file),
         );
         if (this.destroyed || failed) {
           texture.dispose();
@@ -917,7 +927,7 @@ export class SolarScene {
     this.starsEnabled = true;
     this.useSystemBackground(this.dynamics!.systemId);
     this.flightControls?.dispose();
-    this.flightControls = new FlightControls(this.renderer.domElement);
+    this.flightControls = this.createInput(this.renderer.domElement);
     this.renderer.domElement.setAttribute(
       "aria-label",
       "自由驾驶飞船：W/S 推力，方向键或触屏拖动转向，空格刹车",

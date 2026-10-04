@@ -8,6 +8,8 @@ export async function verifyBetelgeuseFlight(page) {
   await expect(page.locator("#flight-target")).toHaveText("参宿四");
   await expect(page.locator("#flight-distance-unit")).toHaveText("光年");
   await page.locator("#flight-jump").click();
+  // Observe an active warp first; a paused UI may still show the previous ready state.
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "transit", { timeout: 30000 });
   await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 60000 });
   await expect(page.locator("canvas")).toHaveAttribute("data-system", "betelgeuse");
   await expect(page.locator("#flight-nearest")).toHaveText("参宿四");
@@ -21,6 +23,7 @@ export async function verifyBetelgeuseFlight(page) {
   assert.equal(saved.target, "betelgeuse");
   await selector.selectOption("solar");
   await page.locator("#flight-jump").click();
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "transit", { timeout: 30000 });
   await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 60000 });
   await expect(page.locator("canvas")).toHaveAttribute("data-system", "solar");
   await page.locator("#flight-resume").click();

@@ -158,9 +158,13 @@ npm run test:offline # 导出并验证断网驾驶、跃迁、本机保存与恢
 - `src/flight-controls.ts`、`src/flight-ui.ts`：键盘与触屏驾驶与仪表。
 - `src/ship-model.ts`：外部飞船模型与引擎尾焰。
 - `src/warp-effect.ts`：跃迁星光、航道和视场效果。
-- `src/flight-store.ts`：服务端存档与本机回退。
+- `src/flight-store.ts`：与平台无关的存档校验、按序保存及服务端/本机回退。
+- `src/core/flight-input.ts`：与 DOM 无关的六轴输入、语义动作和输入来源接口。
+- `src/platform/`：浏览器存储、HTTP 后端和统一纹理资源解析；未来客户端可注入自己的适配器。
 - `shared/`：前后端共用世界配置及航行状态校验。
 - `server/`：HTTP 服务、静态游戏页面、持久保存与测试。
 - `scripts/`：开发启动、独立导出与离线验证。
 - `src/body-textures.ts`：各天体的贴图、实测/概念标注、起伏与细节参数。
 - `public/textures/`：全部天体高清贴图，来源见 [ASSETS.md](ASSETS.md)；`scripts/prepare-body-textures.py` 按固定版本下载、校验和处理。
+
+网页版、网站和独立 HTML 共用同一套飞行与存档策略。未来客户端接口及迁移范围见 [客户端架构说明](docs/CLIENT-ARCHITECTURE.md)。

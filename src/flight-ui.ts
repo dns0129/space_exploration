@@ -8,7 +8,7 @@ const $ = <T extends HTMLElement = HTMLElement>(s: string) =>
 export class FlightInterface {
   active = false;
   private scene?: SolarScene;
-  private store = new FlightStore();
+  private readonly store: FlightStore;
   private saved: FlightState | null = null;
   private paused = false;
   private warpPhase: FlightStats["warpPhase"] = "ready";
@@ -28,7 +28,9 @@ export class FlightInterface {
   constructor(
     notify: (message: string) => void,
     changed: (active: boolean, target?: BodyId) => void,
+    store: FlightStore,
   ) {
+    this.store = store;
     this.notify = notify;
     this.changed = changed;
     document.querySelector(".main")!.insertAdjacentHTML(
