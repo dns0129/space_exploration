@@ -2,6 +2,8 @@ import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 
 test("地球实际渲染，观察控制和图层工作正常", async ({ page }, testInfo) => {
+  // Software WebGL needs more time for the denser Earth mesh and additional material layers.
+  test.setTimeout(120_000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {

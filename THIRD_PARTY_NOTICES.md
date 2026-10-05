@@ -80,3 +80,7 @@ CelestiaContent (https://github.com/CelestiaProject/CelestiaContent), per-file S
 
 Original authors do not endorse this game. Sources, revisions, changes and checksums: ASSETS.md and public/textures/provenance.json.
 
+
+## Earth ultra imagery (2026-10-04)
+
+NASA Earth Observatory / MODIS Blue Marble Next Generation (September 2004 day mosaic and cloud composite), NASA / VIIRS Black Marble 2016 night imagery, and GEBCO 08 elevation via NASA Visible Earth. NASA imagery is public domain; GEBCO data is freely usable. Retrieved from simon23-12/orbital-botany at revision c92393f8be6b94f3684399f18e55790c91a8fdb4. The upstream source record and original dataset links are listed in ASSETS.md. Images are resized, re-encoded and cropped into bordered tiles; maps represent different observation dates and do not indicate endorsement by NASA or GEBCO. No upstream application code is copied.

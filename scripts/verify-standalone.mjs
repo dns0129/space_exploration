@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
@@ -14,7 +14,7 @@ const html = await readFile(
 // Give the offline document an ordinary origin so browser local storage can be tested.
 const origin = createServer((req, res) => {
   res.setHeader("Content-Type", "text/html");
-  res.end('<link rel="icon" href="data:,">');
+  res.end(html);
 });
 await new Promise((resolve) => origin.listen(0, "127.0.0.1", resolve));
 const browser = await chromium.launch({
@@ -35,9 +35,7 @@ try {
     reducedMotion: "reduce",
   });
   const page = await context.newPage();
-  await page.goto(`http://127.0.0.1:${origin.address().port}`);
-  await context.setOffline(true);
-  await new Promise((resolve) => origin.close(resolve));
+  const documentUrl = `http://127.0.0.1:${origin.address().port}/`;
   const errors = [],
     requests = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -45,11 +43,14 @@ try {
     if (message.type() === "error") errors.push(message.text());
   });
   page.on("request", (request) => {
-    if (/^https?:/.test(request.url())) requests.push(request.url());
+    if (/^https?:/.test(request.url()) && request.url() !== documentUrl) requests.push(request.url());
   });
-  // This environment blocks file:// through browser policy. Executing the exact
-  // exported document in an offline context verifies it without bypassing that policy.
-  await page.setContent(html, { waitUntil: "load", timeout: 60_000 });
+  // Stream the exact exported document through an ordinary origin, then disconnect.
+  // This avoids duplicating a 100+ MiB document through CDP's setContent payload.
+  // Only the document request is allowed; every image, script and style is embedded.
+  await page.goto(documentUrl, { waitUntil: "load", timeout: 60_000 });
+  await context.setOffline(true);
+  await new Promise((resolve) => origin.close(resolve));
   for (const id of [
     "earth",
     "mercury",
@@ -76,6 +77,18 @@ try {
       id,
       { timeout: 30_000 },
     );
+    if (id === "earth") {
+      await page.locator("#quality").selectOption("ultra");
+      await expect(page.locator("canvas")).toHaveAttribute("data-earth-maps", "8k", { timeout: 60_000 });
+      await page.locator('.primary-button[data-view="close"]').click();
+      await expect(page.locator("canvas")).toHaveAttribute("data-earth-detail-tiles", "4", { timeout: 60_000 });
+      const detail = PNG.sync.read(await page.locator("canvas").screenshot());
+      assert(detail.data.some((value, index) => index % 4 !== 3 && value > 120), "Offline ultra Earth must render actual pixels");
+      await page.locator("#quality").selectOption("standard");
+      await expect(page.locator("canvas")).toHaveAttribute("data-earth-detail-tiles", "0");
+      await page.getByRole("button", { name: "重置视角" }).click();
+      console.log("Offline Earth: embedded 8K maps and native 16K tiles rendered without network requests");
+    }
     const shot = PNG.sync.read(await page.locator("canvas").screenshot());
     let surface = 0;
     for (let i = 0; i < shot.data.length; i += 4) {
