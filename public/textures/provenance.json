@@ -858,5 +858,16 @@
     "height": 4096,
     "sourceSha256": "b5a46cadd3a0a0e84be319d4aa20e5814ad92e9bc787820112c86c22d7eed1e6",
     "sha256": "646af68f9747537f2f94c8fcd7971515594d724a1871f42409c65a6768051493"
+  },
+  "milky-way-8k.jpg": {
+    "source": "https://github.com/Whitebee7/solarsystem/blob/235e72c02e825e0c8d0792ec0aa6be43e1a14f68/textures/8k_stars_milky_way.jpg",
+    "credit": "Solar System Scope",
+    "license": "CC-BY-4.0",
+    "kind": "astronomical panorama artwork",
+    "changes": "Native 8192x4096 source, unchanged and not upscaled; directly sampled without conversion to a lower-resolution cubemap. Photographic exposure adjustment and original analytic star points are applied only during rendering.",
+    "width": 8192,
+    "height": 4096,
+    "sourceSha256": "1fd005ddd6d53364cc5106e0121b83fd3bca236b1503f6b51f5501d9d51eafaf",
+    "sha256": "1fd005ddd6d53364cc5106e0121b83fd3bca236b1503f6b51f5501d9d51eafaf"
   }
 }

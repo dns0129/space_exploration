@@ -52,7 +52,7 @@ Development-only npm packages retain their license notices in their package dire
 
 ## Milky Way and new celestial imagery
 
-Textures courtesy of Solar System Scope, licensed under Creative Commons Attribution 4.0 International: https://creativecommons.org/licenses/by/4.0/ . Includes the Milky Way panorama, Mercury and Mars. Source: https://www.solarsystemscope.com/textures/ . The panorama is resized from 8192 × 4096 to 4096 × 2048.
+Textures courtesy of Solar System Scope, licensed under Creative Commons Attribution 4.0 International: https://creativecommons.org/licenses/by/4.0/ . Includes the Milky Way panorama, Mercury and Mars. Source: https://www.solarsystemscope.com/textures/ . `milky-way-8k.jpg` preserves the unchanged native 8192 × 4096 panorama; `milky-way-4k.jpg` is its 4096 × 2048 compatibility downsample. Photographic shadow lifting and original analytic star points are applied only while rendering. They do not increase the source photograph's native resolution or represent an astrometric catalogue.
 
 Jupiter: © 2018 Askaniy Anpilogov; NASA/JPL-Caltech/SSI/Southwest Research Institute/Malin Space Science Systems/ASI/INAF/JIRAM; Björn Jónsson. Saturn: © 2019 Askaniy Anpilogov; NASA/JPL-Caltech; Björn Jónsson. Neptune: © 2018 Askaniy Anpilogov; NASA/JPL-Caltech; Björn Jónsson; Karkoschka, E. (1994). These three maps are licensed under Creative Commons Attribution 3.0 Unported: https://creativecommons.org/licenses/by/3.0/ . Source: https://github.com/CelestiaProject/CelestiaContent . Jupiter is JPEG re-encoded; Saturn and Neptune are unchanged.
 

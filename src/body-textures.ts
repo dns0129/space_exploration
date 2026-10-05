@@ -76,8 +76,8 @@ export const SURFACE_MAPS: Partial<Record<BodyId, SurfaceMap>> = {
 };
 
 export const surfaceMapLabel = (id: BodyId) => {
-  if (id === "earth") return "16K / 8K / 4K 地表影像";
+  if (id === "earth") return "16K / 8K / 4K 地表影像 · 程序细节";
   const map = SURFACE_MAPS[id];
   if (!map) return "程序化材质";
-  return `${map.width >= 8192 ? "8K / 4K" : map.width === 4096 ? "4K" : "2K"} ${map.concept ? "高清概念图" : "实测影像"}`;
+  return `${map.width >= 8192 ? "8K / 4K" : map.width === 4096 ? "4K" : "2K"} ${map.concept ? "高清概念图" : "实测影像"} · 独立程序细节`;
 };

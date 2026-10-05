@@ -5,6 +5,7 @@ import type { CelestialBody, Layer } from "./solar-system";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { SURFACE_MAPS } from "./body-textures";
 import type { SurfaceMap } from "./body-textures";
+import { PROCEDURAL_DETAIL_WIDTH, proceduralBodyProfile } from "./procedural-body";
 
 export interface PlanetModel {
   body: CelestialBody;
@@ -77,15 +78,15 @@ export const noise = /* glsl */ `
     }
     return value;
   }
-  float crater(vec2 uv, float density) {
-    vec2 grid = vec2(density,density*0.5);
+  float crater(vec2 uv, float density, vec3 seed) {
+    vec2 grid = floor(vec2(density,density*0.5)+0.5);
     vec2 cell = floor(uv*grid), f = fract(uv*grid);
     float result = 0.0;
     for (int y=-1; y<=1; y++) for (int x=-1; x<=1; x++) {
       vec2 offset = vec2(float(x),float(y));
       vec2 wrapped = mod(cell+offset,grid);
-      vec2 center = vec2(hash(vec3(wrapped,8.0)),hash(vec3(wrapped,27.0)));
-      float radius = 0.12+hash(vec3(wrapped,3.0))*0.28;
+      vec2 center = vec2(hash(vec3(wrapped,8.0)+seed),hash(vec3(wrapped,27.0)+seed));
+      float radius = 0.12+hash(vec3(wrapped,3.0)+seed)*0.28;
       float d = length(f-offset-center)/radius;
       result += -0.22*(1.0-smoothstep(0.0,0.94,d))+0.1*exp(-pow((d-1.0)*12.0,2.0));
     }
@@ -164,20 +165,31 @@ export const mapSampling = /* glsl */ `
     return vec4(a + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y + k5 * u.y * u.z + k6 * u.z * u.x + k7 * u.x * u.y * u.z,
       du * vec3(k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z, k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x, k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y));
   }
-  // Sub-texel detail revealed only while a map is magnified: x = albedo variation, yzw = object-space slope.
-  vec4 surfaceGrain(vec3 p, float texelFrequency, float footprint, float magnify, vec3 stretch, float seed) {
+  // Four screen-filtered layers through the spatial frequency of a 32K equatorial map.
+  // These are generated samples, not downloaded / upscaled 32K source imagery.
+  // x = albedo variation, yzw = object-space slope. Shared by photographic Earth and other bodies.
+  vec4 surfaceDetail(vec3 p, float texelFrequency, float footprint, float magnify, vec3 stretch, vec3 seed, float ridgeMix) {
     vec4 total = vec4(0.0);
-    float frequency = texelFrequency, amplitude = 1.0;
+    float frequency = max(texelFrequency, 4096.0 / 6.2831853), amplitude = 1.0;
     for (int i = 0; i < 4; i++) {
-      float weight = clamp(1.5 - footprint * frequency * 2.0, 0.0, 1.0) * magnify;
+      if (frequency > ${(PROCEDURAL_DETAIL_WIDTH / (Math.PI * 2) * 1.00001).toFixed(8)}) break;
+      // Respect the most stretched axis so cloud filaments and ice grain cannot alias.
+      float maxStretch = max(stretch.x, max(stretch.y, stretch.z));
+      float weight = clamp(1.5 - footprint * frequency * maxStretch * 2.0, 0.0, 1.0) * magnify;
       if (weight > 0.0) {
-        vec4 n = noised(p * stretch * frequency + vec3(float(i) * 17.31 + seed));
-        total += weight * vec4(amplitude * (n.x - 0.5), n.yzw * stretch);
+        vec4 n = noised(p * stretch * frequency + seed + vec3(float(i) * 17.31));
+        float ridge = 1.0 - abs(n.x * 2.0 - 1.0);
+        vec3 ridgeGradient = -2.0 * sign(n.x * 2.0 - 1.0) * n.yzw;
+        // Symmetric albedo modulation preserves the measured map's mean colour.
+        total += weight * amplitude * vec4(mix(n.x - 0.5, ridge - 0.625, ridgeMix), mix(n.yzw, ridgeGradient, ridgeMix) * stretch);
       }
       frequency *= 2.0;
       amplitude *= 0.62;
     }
     return total;
+  }
+  vec4 surfaceGrain(vec3 p, float texelFrequency, float footprint, float magnify, vec3 stretch, float seed) {
+    return surfaceDetail(p, texelFrequency, footprint, magnify, stretch, vec3(seed), 0.0);
   }
 `;
 
@@ -197,6 +209,9 @@ const planetFragment = /* glsl */ `
   uniform float moonSeed, moonStyle;
   uniform vec3 stellarTint;
   uniform float stellarIllustration;
+  uniform vec3 bodySeed, detailStretch;
+  uniform vec4 bodyTerrain, bodyWeather;
+  uniform float detailRidges;
   varying vec2 vUv;
   varying vec3 vLocalPosition;
   varying vec3 vWorldPosition;
@@ -220,23 +235,23 @@ const planetFragment = /* glsl */ `
       float reliefLod = log2(max(texels, 1.0));
     #endif
     #if BODY_KIND == 7
-      float terrain = fbm(p*5.0);
-      vec3 plasma = p*20.0+vec3(0.0,uTime*0.008,0.0);
-      float granules = fbm(plasma+(terrain-0.5)*1.4);
-      float fine = noise3(p*170.0+uTime*0.006);
+      float terrain = fbm(p*bodyTerrain.x+bodySeed);
+      vec3 plasma = p*bodyWeather.w+bodySeed+vec3(0.0,uTime*bodyWeather.z,0.0);
+      float granules = fbm(plasma+(terrain-0.5)*bodyWeather.y);
+      float fine = noise3(p*170.0+bodySeed+uTime*0.006);
       color = mix(vec3(1.5,0.25,0.007),vec3(3.0,1.6,0.22),smoothstep(0.24,0.70,granules))*(0.84+fine*0.23);
       if (stellarIllustration > 0.5) color = stellarTint * (1.2+granules*2.4) * (0.84+fine*0.23);
-      float sunspots = smoothstep(0.69,0.78,fbm(p*8.0+vec3(17.0)));
+      float sunspots = smoothstep(0.69,0.78,fbm(p*8.0+bodySeed+vec3(17.0)));
       color *= 1.0-sunspots*0.85;
       #ifdef RED_SUPERGIANT
         // Much larger, slower convection than the fine granules of a main-sequence star.
-        float convection = fbm(p*3.8 + vec3(0.0,uTime*0.002,0.0));
+        float convection = fbm(p*bodyTerrain.x+bodySeed+vec3(0.0,uTime*bodyWeather.z,0.0));
         color = stellarTint * (0.6+convection*2.2);
       #endif
       #ifdef SURFACE_MAP
         if (mapReady > 0.001) {
           vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb;
-          vec4 grain = magnify > 0.0 ? surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, vec3(1.0), moonSeed) : vec4(0.0);
+          vec4 grain = magnify > 0.0 ? surfaceDetail(p, mapSize.x / 6.2832, footprint, magnify, detailStretch, bodySeed, detailRidges) : vec4(0.0);
           // Illustrated stars keep the map's granulation and spots in their own temperature colour.
           vec3 stellar = stellarIllustration > 0.5
             ? stellarTint * 1.5 * pow(max(mapLuminance(photo) * mapTint.x, 0.0), 3.0)
@@ -259,28 +274,29 @@ const planetFragment = /* glsl */ `
     // Procedural surfaces only fill in until the map has loaded and faded in.
     if (mapReady < 0.999) {
     #endif
-    float terrain = fbm(p*5.0);
-    float detail = noise3(p*180.0);
-    height = terrain*0.03;
+    float terrain = fbm(p*bodyTerrain.x+bodySeed);
+    float detail = noise3(p*180.0+bodySeed);
+    float ridges = 1.0-abs(terrain*2.0-1.0);
+    height = mix(terrain,ridges,bodyTerrain.z)*0.03;
     #if BODY_KIND == 0
-      height += crater(vUv,18.0)+crater(vUv,56.0)*0.55;
+      height += crater(vUv,bodyTerrain.y,bodySeed)+crater(vUv,bodyTerrain.y*2.8,bodySeed+17.0)*0.55;
       color = mix(vec3(0.19,0.17,0.16),vec3(0.55,0.52,0.47),smoothstep(0.3,0.7,terrain));
       color *= 0.85+detail*0.3+height*0.25;
     #elif BODY_KIND == 1
-      height += crater(vUv,24.0)*0.25;
+      height += crater(vUv,bodyTerrain.y+24.0,bodySeed)*0.25;
       color = mix(vec3(0.21,0.105,0.035),vec3(0.65,0.35,0.12),terrain);
       color *= 0.86+detail*0.18;
     #elif BODY_KIND == 2
-      height += crater(vUv,35.0)*0.18;
-      float dark = smoothstep(0.36,0.59,fbm(p*vec3(6.0,3.0,7.0)));
+      height += crater(vUv,bodyTerrain.y,bodySeed)*0.18;
+      float dark = smoothstep(0.36,0.59,fbm(p*vec3(6.0,3.0,7.0)+bodySeed));
       color = mix(vec3(0.60,0.22,0.09),vec3(0.23,0.095,0.048),dark)+vec3(0.2,0.12,0.06)*terrain;
-      float cap = smoothstep(0.945,0.98,abs(p.y)+noise3(p*35.0)*0.02);
+      float cap = smoothstep(0.945,0.98,abs(p.y)+noise3(p*35.0+bodySeed)*0.02);
       color = mix(color,vec3(0.83,0.82,0.76),cap)*(0.9+detail*0.15);
     #elif BODY_KIND == 3
-      float lat = p.y+fbm(p*vec3(5.0,9.0,5.0))*0.06;
-      float bands = 0.5+0.5*sin(lat*30.0+noise3(p*12.0)*0.65);
+      float lat = p.y+fbm(p*vec3(5.0,bodyWeather.w,5.0)+bodySeed)*0.06;
+      float bands = 0.5+0.5*sin(lat*bodyWeather.x+noise3(p*12.0+bodySeed)*bodyWeather.y);
       color = mix(vec3(0.87,0.78,0.63),vec3(0.46,0.26,0.14),smoothstep(0.2,0.85,bands));
-      color += (fbm(p*vec3(28.0,70.0,28.0))-0.5)*0.16;
+      color += (fbm(p*vec3(28.0,70.0,28.0)+bodySeed)-0.5)*0.16;
       vec2 spot = vec2(mod(vUv.x-0.19+0.5,1.0)-0.5,vUv.y-0.39)/vec2(0.068,0.038);
       float oval = length(spot);
       float vortex = sin(oval*19.0+atan(spot.y,spot.x)*3.0+terrain*4.0);
@@ -288,38 +304,38 @@ const planetFragment = /* glsl */ `
       color = mix(color,red,(1.0-smoothstep(0.82,1.16,oval))*0.88);
       height = detail*0.002;
     #elif BODY_KIND == 4
-      float bands = 0.5+0.5*sin(p.y*32.0+terrain*0.5);
+      float bands = 0.5+0.5*sin(p.y*bodyWeather.x+terrain*bodyWeather.y);
       color = mix(vec3(0.88,0.78,0.56),vec3(0.65,0.52,0.33),bands*0.45);
-      color += (fbm(p*vec3(16.0,60.0,16.0))-0.45)*0.065;
+      color += (fbm(p*vec3(16.0,60.0,16.0)+bodySeed)-0.45)*0.065;
       height = detail*0.001;
     #elif BODY_KIND == 5
       color = mix(vec3(0.32,0.66,0.69),vec3(0.54,0.81,0.79),terrain*0.5+0.2);
-      color += sin(p.y*22.0+terrain)*0.015;
+      color += sin(p.y*bodyWeather.x+terrain*bodyWeather.y)*0.015;
       height = 0.0;
     #elif BODY_KIND == 6
-      float bands = 0.5+0.5*sin(p.y*24.0+terrain*1.5);
+      float bands = 0.5+0.5*sin(p.y*bodyWeather.x+terrain*bodyWeather.y);
       color = mix(vec3(0.055,0.20,0.52),vec3(0.12,0.38,0.77),bands*0.65+terrain*0.2);
       vec2 spot = vec2(mod(vUv.x-0.22+0.5,1.0)-0.5,vUv.y-0.44)/vec2(0.045,0.035);
       color *= 1.0-(1.0-smoothstep(0.6,1.2,length(spot)))*0.4;
       height = detail*0.001;
     #elif BODY_KIND == 9
-      height += crater(vUv,28.0)*0.2;
+      height += crater(vUv,bodyTerrain.y,bodySeed)*0.2;
       color = moonColor*(0.48+terrain*0.7+detail*0.08);
-      float darkPlains = smoothstep(0.49,0.63,fbm(p*vec3(5.0,3.0,7.0)+moonSeed));
+      float darkPlains = smoothstep(0.49,0.63,fbm(p*vec3(5.0,3.0,7.0)+bodySeed));
       color = mix(color,vec3(0.075,0.055,0.05),darkPlains*0.7);
     #elif BODY_KIND == 8
-      float regions = fbm(p*4.0+moonSeed);
-      float pits = crater(vUv,20.0)+crater(vUv,62.0)*0.4;
+      float regions = fbm(p*bodyTerrain.x+bodySeed);
+      float pits = crater(vUv,bodyTerrain.y,bodySeed)+crater(vUv,bodyTerrain.y*3.1,bodySeed+31.0)*0.4;
       height += pits*0.35;
       color = moonColor * (0.35+regions*0.85+pits*0.5+detail*0.12);
       if (moonStyle == 0.0) color = mix(color,color*0.45,smoothstep(0.58,0.68,regions));
       if (moonStyle == 1.0) {
-        float cracks = 1.0-smoothstep(0.018,0.065,abs(sin(p.x*38.0+fbm(p*12.0+moonSeed)*10.0)));
+        float cracks = (1.0-smoothstep(0.018,0.065,abs(sin(p.x*38.0+fbm(p*12.0+bodySeed)*10.0))))*bodyTerrain.w;
         height -= cracks*0.1;
         color = mix(moonColor*(0.7+regions*0.45),vec3(0.25,0.15,0.10),cracks*0.7);
       }
-      if (moonStyle == 2.0) color = mix(moonColor*(0.6+regions),vec3(0.12,0.07,0.035),smoothstep(0.66,0.75,noise3(p*24.0)));
-      if (moonStyle == 3.0) color = moonColor*(0.8+fbm(p*vec3(12.0,4.0,12.0))*0.35);
+      if (moonStyle == 2.0) color = mix(moonColor*(0.6+regions),vec3(0.12,0.07,0.035),smoothstep(0.66,0.75,noise3(p*24.0+bodySeed)));
+      if (moonStyle == 3.0) color = moonColor*(0.8+fbm(p*vec3(12.0,4.0,12.0)+bodySeed)*0.35);
       if (moonStyle == 4.0) color *= mix(0.18,1.3,smoothstep(-0.1,0.12,p.x));
     #endif
     #ifdef SURFACE_MAP
@@ -335,9 +351,8 @@ const planetFragment = /* glsl */ `
     #ifdef SURFACE_MAP
       if (mapReady > 0.001) {
         vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb;
-        vec3 stretch = mix(vec3(1.0), vec3(0.3, 2.6, 0.3), mapStreaks);
         // Grain only exists beyond the map's native resolution; skip it entirely otherwise.
-        vec4 grain = magnify > 0.0 ? surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, stretch, moonSeed) : vec4(0.0);
+        vec4 grain = magnify > 0.0 ? surfaceDetail(p, mapSize.x / 6.2832, footprint, magnify, detailStretch, bodySeed, detailRidges) : vec4(0.0);
         vec3 slope = grain.yzw * mapGrain * 2.5;
         if (mapRelief > 0.0) {
           // Map brightness read as relief, differenced in texture space: smooth per-pixel normals, no 2x2 blocks.
@@ -417,21 +432,24 @@ const cloudsFragment = /* glsl */ `
   #include <logdepthbuf_pars_fragment>
   uniform vec3 sunDirection;
   uniform float uTime;
+  uniform vec3 bodySeed;
+  uniform vec4 bodyWeather;
   varying vec3 vLocalPosition;
   varying vec3 vWorldPosition;
   varying vec3 vNormal;
   ${noise}
   void main() {
     vec3 p = normalize(vLocalPosition);
-    float clouds = fbm(p*vec3(6.0,12.0,6.0)+vec3(0.0,0.0,uTime*0.004));
+    vec3 circulation = bodySeed+vec3(0.0,0.0,uTime*bodyWeather.z);
+    float clouds = fbm(p*vec3(bodyWeather.w,bodyWeather.w*2.0,bodyWeather.w)+circulation);
     float diffuse = max(dot(normalize(vNormal),sunDirection),0.0);
     #ifdef VENUS_CLOUDS
-      float swirl = fbm(p*8.0+(clouds-0.5)*1.8);
+      float swirl = fbm(p*bodyWeather.w+circulation+(clouds-0.5)*bodyWeather.y);
       vec3 color = mix(vec3(0.67,0.45,0.21),vec3(0.96,0.85,0.62),swirl*0.75+0.15);
       #include <logdepthbuf_fragment>
     gl_FragColor = vec4(color*(0.06+diffuse*1.15),0.995);
     #else
-      float streaks = fbm(p*vec3(15.0,90.0,15.0));
+      float streaks = fbm(p*vec3(bodyWeather.w,bodyWeather.x*3.0,bodyWeather.w)+circulation);
       #include <logdepthbuf_fragment>
     gl_FragColor = vec4(vec3(0.72,0.83,0.92)*(0.035+diffuse*1.15),smoothstep(0.52,0.72,streaks)*0.45);
     #endif
@@ -522,6 +540,14 @@ export function createPlanetModel(
   const uTime = { value: 0 },
     ringsEnabled = { value: 1 };
   const surfaceMap = SURFACE_MAPS[body.id];
+  const profile = proceduralBodyProfile(body);
+  const proceduralUniforms = {
+    bodySeed: { value: new THREE.Vector3(...profile.seed) },
+    bodyTerrain: { value: new THREE.Vector4(...profile.terrain) },
+    bodyWeather: { value: new THREE.Vector4(...profile.weather) },
+    detailStretch: { value: new THREE.Vector3(...profile.stretch) },
+    detailRidges: { value: profile.ridgeMix },
+  };
   const mapUniforms = surfaceMap ? createMapUniforms(surfaceMap, map) : undefined;
   // Venus shows its imaged cloud deck; the procedural surface stays beneath it.
   const mapOnSurface = mapUniforms && body.id !== "venus";
@@ -532,6 +558,7 @@ export function createPlanetModel(
       fragmentShader: planetFragment,
       defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(mapOnSurface ? { SURFACE_MAP: 1 } : {}), ...(body.id === "betelgeuse" ? { RED_SUPERGIANT: 1 } : {}) },
       uniforms: {
+        ...proceduralUniforms,
         ...(mapOnSurface ? mapUniforms : {}),
         sunDirection: { value: sunDirection },
         planetAxis: { value: axis },
@@ -540,7 +567,7 @@ export function createPlanetModel(
         uTime,
         ringsEnabled,
         moonColor: { value: new THREE.Color(body.color) },
-        moonSeed: { value: body.surfaceSeed ?? 0 },
+        moonSeed: { value: profile.grainSeed },
         moonStyle: { value: body.surfaceStyle ?? 0 },
         stellarTint: { value: new THREE.Color(body.color) },
         stellarIllustration: { value: body.kind === "star" ? 1 : 0 },
@@ -600,7 +627,7 @@ export function createPlanetModel(
         vertexShader: modelVertex,
         fragmentShader: cloudsFragment,
         defines: body.id === "venus" ? { VENUS_CLOUDS: 1 } : {},
-        uniforms: { sunDirection: { value: sunDirection }, uTime },
+        uniforms: { ...proceduralUniforms, sunDirection: { value: sunDirection }, uTime },
         transparent: true,
         depthWrite: false,
       }),
@@ -614,7 +641,7 @@ export function createPlanetModel(
         bodyRadius: { value: placement.radius },
         ringsEnabled,
         moonColor: { value: new THREE.Color(body.color) },
-        moonSeed: { value: body.surfaceSeed ?? 0 },
+        moonSeed: { value: profile.grainSeed },
         moonStyle: { value: 0 },
         stellarTint: { value: new THREE.Color(body.color) },
         stellarIllustration: { value: 0 },

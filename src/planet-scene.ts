@@ -10,6 +10,9 @@ import { ShipDynamics } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
 import { createShip, SHIP_LENGTH_KM } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
+import { FlightLight } from "./flight-light";
+import { GalaxySky, selectGalaxyFile } from "./galaxy-sky";
+import type { GalaxyTextureFile } from "./galaxy-sky";
 import { SurfaceScene } from "./surface-scene";
 import { atmosphereStrength } from "./atmosphere";
 import { surfaceProfile } from "../shared/surface.mjs";
@@ -222,7 +225,8 @@ export class SolarScene {
   private readonly camera = new THREE.PerspectiveCamera(40, 1, 0.01, 200);
   private readonly controls: OrbitControls;
   private readonly planet = new THREE.Group();
-  private readonly stars = new THREE.Group();
+  private readonly galaxySky: GalaxySky;
+  private readonly galaxyFile: GalaxyTextureFile;
   private currentModel?: PlanetModel;
   private readonly flightRoot = new THREE.Group();
   private readonly flightSun = new THREE.PointLight(0xfff3e5, 2.5, 0, 0);
@@ -231,8 +235,11 @@ export class SolarScene {
   private readonly shipScene = new THREE.Scene();
   private readonly shipCamera = new THREE.PerspectiveCamera(58, 1, 0.01, 200);
   private readonly shipSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
+  private readonly shipAmbient = new THREE.HemisphereLight(0xc1e6ee, 0x233643, 0.85);
+  private readonly shipRim = new THREE.DirectionalLight(0x77bfff, 0.45);
   private shipScale = SHIP_LENGTH_KM / (6371 * this.ship.hullLength);
   private readonly warpEffect = createWarpEffect();
+  private readonly flightLight = new FlightLight();
   private readonly surfaceScene = new SurfaceScene();
   private galaxy?: THREE.Texture;
   private readonly backgrounds = new Map<SystemId, THREE.Texture>();
@@ -325,6 +332,8 @@ export class SolarScene {
     if (software) { this.minimumRenderRatio = 0.125; this.quality = "high"; }
     else this.surfaceAnisotropy = this.renderer.capabilities.getMaxAnisotropy();
     this.renderer.domElement.dataset.softwareRenderer = String(software);
+    this.galaxySky = new GalaxySky(this.compactTextures || software);
+    this.galaxyFile = selectGalaxyFile(this.renderer.capabilities.maxTextureSize, this.compactTextures, software);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
@@ -352,8 +361,7 @@ export class SolarScene {
       this.targetPosition = null;
     });
     this.scene.add(this.planet);
-    this.createStars();
-    this.scene.add(this.stars);
+    this.scene.add(this.galaxySky.mesh);
     this.observeSun.position.set(-3, 1.8, 4);
     this.flightRoot.visible = false;
     this.scene.add(this.surfaceScene.group, this.surfaceScene.sky);
@@ -361,13 +369,15 @@ export class SolarScene {
     this.shipScene.add(
       this.ship.group,
       this.shipSun,
-      new THREE.HemisphereLight(0xc1e6ee, 0x233643, 1.2),
+      this.shipAmbient,
+      this.shipRim,
     );
     this.scene.add(
       this.observeSun,
       this.flightSun,
       this.flightRoot,
       this.warpEffect.mesh,
+      this.flightLight.mesh,
       new THREE.AmbientLight(0x9dbde8, 0.09),
     );
     this.resizeObserver = new ResizeObserver(this.resize);
@@ -421,7 +431,7 @@ export class SolarScene {
     if (this.galaxy) return Promise.resolve();
     if (this.spacePromise) return this.spacePromise;
     const ids = (Object.keys(SURFACE_MAPS) as BodyId[]).filter(id => SURFACE_MAPS[id]!.core);
-    const skyFiles = [...new Set(STAR_SYSTEMS.map(system => system.backgroundFile))];
+    const skyFiles = [this.galaxyFile];
     const files = [...skyFiles, ...ids.map((id) => SURFACE_MAPS[id]!.file)];
     const batch: THREE.Texture[] = [];
     let failed = false;
@@ -433,8 +443,7 @@ export class SolarScene {
     })).then((maps) => {
       maps.forEach((map) => this.textures.add(map));
       for (const system of STAR_SYSTEMS) {
-        const texture = maps[skyFiles.indexOf(system.backgroundFile)];
-        texture.mapping = THREE.EquirectangularReflectionMapping;
+        const texture = maps[0];
         this.backgrounds.set(system.id as SystemId, texture);
       }
       this.galaxy = this.backgrounds.get("solar");
@@ -567,17 +576,19 @@ export class SolarScene {
   private useSystemBackground(id: SystemId) {
     const system = STAR_SYSTEMS.find(item => item.id === id)!;
     const texture = this.backgrounds.get(id) ?? null;
-    const background = this.starsEnabled ? texture : null;
-    if (this.backgroundSystem !== id || this.scene.background !== background) {
-      this.scene.background = background;
-      this.scene.backgroundRotation.fromArray(system.backgroundRotation as [number, number, number]);
+    if (this.galaxySky.mesh.material.uniforms.skyMap.value !== texture) {
+      this.galaxySky.setTexture(texture);
     }
-    this.scene.backgroundIntensity = system.backgroundIntensity;
+    this.scene.background = null;
+    this.galaxySky.setView(system.backgroundRotation, system.backgroundIntensity,
+      this.flying ? this.surfaceScene.spaceVisibility : 1, this.starsEnabled);
     this.backgroundSystem = id;
-    this.stars.visible = this.starsEnabled && !texture;
     if (this.renderer.domElement.dataset.system !== id) this.renderer.domElement.dataset.system = id;
-    if (this.renderer.domElement.dataset.background !== system.backgroundFile)
-      this.renderer.domElement.dataset.background = system.backgroundFile;
+    if (this.renderer.domElement.dataset.background !== this.galaxyFile) {
+      this.renderer.domElement.dataset.background = this.galaxyFile;
+      this.renderer.domElement.dataset.backgroundResolution = this.galaxyFile.includes("8k") ? "8192x4096" : "4096x2048";
+      this.renderer.domElement.dataset.backgroundSampling = "direct-equirectangular";
+    }
   }
 
   private loadEarthTextures(
@@ -797,63 +808,6 @@ export class SolarScene {
     uniforms.cloudOffset.value = turns - Math.floor(turns);
     uniforms.cloudsEnabled.value = Number(clouds.visible || uniforms.flatClouds.value>0);
   }
-  private createStars() {
-    // Seeded positions make screenshots reproducible and keep the sky independent of assets.
-    let seed = 83;
-    const random = () => {
-      seed = (seed * 16807) % 2147483647;
-      return (seed - 1) / 2147483646;
-    };
-    for (const [count, size, opacity, band] of [
-      [2200, 0.12, 0.7, false],
-      [120, 0.21, 0.85, false],
-      [1600, 0.07, 0.24, true],
-    ] as const) {
-      const positions: number[] = [];
-      const colors: number[] = [];
-      for (let i = 0; i < count; i++) {
-        const azimuth = random() * Math.PI * 2;
-        const y = band
-          ? (random() + random() + random() - 1.5) * 0.17
-          : random() * 2 - 1;
-        const scale = Math.sqrt(1 - y * y);
-        positions.push(
-          70 * scale * Math.cos(azimuth),
-          70 * y,
-          70 * scale * Math.sin(azimuth),
-        );
-        const brightness = 0.4 + random() * 0.6;
-        const warm = random() > 0.82;
-        colors.push(
-          brightness * (warm ? 1 : 0.76),
-          brightness * 0.86,
-          brightness * (warm ? 0.72 : 1),
-        );
-      }
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(positions, 3),
-      );
-      geometry.setAttribute(
-        "color",
-        new THREE.Float32BufferAttribute(colors, 3),
-      );
-      const points = new THREE.Points(
-        geometry,
-        new THREE.PointsMaterial({
-          size,
-          vertexColors: true,
-          transparent: true,
-          opacity,
-          depthWrite: false,
-        }),
-      );
-      if (band) points.rotation.z = 0.55;
-      this.stars.add(points);
-    }
-  }
-
   private readonly resize = () => {
     if (this.destroyed) return;
     const { width, height } = this.container.getBoundingClientRect();
@@ -905,6 +859,9 @@ export class SolarScene {
         camera.position.copy(this.camera.position).multiplyScalar(1 / this.shipScale);
         camera.quaternion.copy(this.camera.quaternion);
         this.shipSun.position.copy(this.flightSun.position).normalize().multiplyScalar(10);
+        this.shipSun.intensity = 2.8 * this.flightLight.illumination;
+        this.shipRim.position.copy(camera.position).normalize().multiplyScalar(-10);
+        this.shipAmbient.intensity = 0.28 + this.flightLight.illumination * 0.57;
         this.renderer.autoClear = false;
         this.renderer.clearDepth();
         this.renderer.render(this.shipScene, camera);
@@ -1049,8 +1006,8 @@ export class SolarScene {
     this.surfaceScene.sky.visible = false;
     this.flightSun.visible = false;
     this.controls.enabled = true;
-    this.stars.position.set(0, 0, 0);
     this.warpEffect.mesh.visible = false;
+    this.flightLight.mesh.visible = false;
     this.useSystemBackground(this.currentModel?.body.systemId ?? "solar");
     this.camera.near = 0.01;
     this.camera.up.set(0, 1, 0);
@@ -1206,7 +1163,8 @@ export class SolarScene {
       this.camera.updateProjectionMatrix();
     }
     this.surfaceScene.update(ship, this.camera, this.flightSun);
-    this.scene.backgroundIntensity *= this.surfaceScene.spaceVisibility;
+    this.flightLight.update(ship, this.camera, this.flightSun);
+    this.useSystemBackground(ship.systemId);
     this.ship.gear.visible = ship.landingPhase !== "manual" || (environment.profile.solid && environment.groundAltitudeKm < 1);
   }
   private animateFlight(delta: number, time: number) {
@@ -1300,7 +1258,7 @@ export class SolarScene {
   }
   setLayer(layer: Layer, visible: boolean) {
     const object =
-      layer === "stars" ? this.stars : this.currentModel?.layers[layer];
+      layer === "stars" ? this.galaxySky.mesh : this.currentModel?.layers[layer];
     if (object) object.visible = visible;
     if (layer === "clouds" && this.currentModel) this.updateCloudShadow(this.currentModel);
     if (layer === "stars") {
@@ -1311,7 +1269,10 @@ export class SolarScene {
       this.currentModel.ringsEnabled.value = Number(visible);
   }
   setQuality(quality: RenderQuality) {
+    if (quality === this.quality) return;
     this.quality = quality;
+    this.galaxySky.setDetailed(quality !== "standard" && !this.compactTextures
+      && this.renderer.domElement.dataset.softwareRenderer !== "true");
     this.configureRenderBudget();
   }
   getQuality(): RenderQuality { return this.quality; }
@@ -1341,6 +1302,7 @@ export class SolarScene {
   };
 
   dispose() {
+    this.galaxySky.dispose();
     this.surfaceScene.dispose();
     this.destroyed = true;
     this.earthDetails.forEach(detail => detail.dispose());

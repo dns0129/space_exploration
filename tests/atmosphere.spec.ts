@@ -101,7 +101,7 @@ test("俯冲时外部镜头保持飞船在画内，并以行星地平线稳定�
       const [r,g,b] = image.data.subarray(i, i + 3);
       if (r > 35 && r > g * 1.25 && g > b * 1.25) trim++;
     }
-  expect(trim, "俯冲镜头应保留飞船的棕色装甲，而非把船移到视野外").toBeGreaterThan(3);
   await page.screenshot({ path: info.outputPath("earth-atmospheric-dive.png") });
+  expect(trim, "俯冲镜头应保留飞船的棕色装甲，而非把船移到视野外").toBeGreaterThan(3);
   expect(errors).toEqual([]);
 });

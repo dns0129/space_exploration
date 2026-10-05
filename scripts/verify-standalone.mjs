@@ -145,7 +145,7 @@ try {
   await page.locator('#warp-engine[data-phase="transit"]').waitFor();
   await page.locator('#warp-engine[data-phase="ready"]').waitFor({ timeout: 45000 });
   await page.waitForFunction(() => document.querySelector("#flight-nearest")?.textContent === "比邻星 b");
-  assert.equal(await page.locator("canvas").getAttribute("data-background"), "centauri-milky-way-4k.jpg");
+  assert.equal(await page.locator("canvas").getAttribute("data-background"), "milky-way-4k.jpg");
   assert.equal(await page.locator("canvas").getAttribute("data-system"), "proxima-centauri");
   await page.locator("#flight-pause").click();
   await page.locator("#flight-save").click();
