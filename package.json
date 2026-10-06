@@ -14,7 +14,12 @@
     "test:server": "node --test server/*.test.mjs",
     "export": "node scripts/export-standalone.mjs",
     "test:offline": "npm run export && node scripts/verify-standalone.mjs",
-    "test:performance": "npm run build && node scripts/verify-performance.mjs"
+    "test:performance": "npm run build && node scripts/verify-performance.mjs",
+    "build:desktop": "tsc --noEmit && node scripts/build-desktop.mjs",
+    "desktop": "npm run build:desktop && electron .",
+    "package:desktop": "npm run build:desktop && electron-builder --config electron-builder.yml --publish never",
+    "test:desktop:unit": "node --test desktop/*.test.mjs server/desktop-platform.test.mjs",
+    "test:desktop": "npm run build:desktop && node scripts/verify-desktop.mjs"
   },
   "dependencies": {
     "three": "0.180.0"
@@ -22,8 +27,13 @@
   "devDependencies": {
     "@playwright/test": "1.56.1",
     "@types/three": "0.180.0",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
     "pngjs": "7.0.0",
     "typescript": "5.9.3",
     "vite": "7.3.6"
-  }
+  },
+  "main": "desktop/main.mjs",
+  "description": "星际探索 · 远航 VOYAGER 桌面游戏",
+  "author": "Voyager contributors"
 }

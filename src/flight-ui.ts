@@ -152,6 +152,13 @@ export class FlightInterface {
     });
     return true;
   }
+  async saveBeforeClose(): Promise<void> {
+    this.pause(true);
+    const state = this.active ? this.scene?.flightState() : undefined;
+    // Queue a fresh checkpoint even when an autosave is still being written.
+    if (state) await this.store.save(state);
+    await this.store.flush();
+  }
   stop() {
     if (this.active) {
       const state = this.scene?.flightState();

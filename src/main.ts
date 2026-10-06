@@ -3,7 +3,7 @@ import "./style.css";
 import { watchSiteVersion } from "./site-version";
 import { FlightInterface } from "./flight-ui";
 import { FlightStore } from "./flight-store";
-import { createBrowserFlightServices } from "./platform/browser";
+import { createRuntimeFlightServices, desktopBridge } from "./platform/runtime";
 import { SolarScene } from "./planet-scene";
 import { surfaceMapLabel } from "./body-textures";
 import type { View } from "./planet-scene";
@@ -132,7 +132,23 @@ const flight = new FlightInterface(toast, (active, target) => {
     $("#connection-text").textContent = "远航号 · 驾驶在线";
     $("#render-status").textContent = "多恒星系统 · 8K / 4K 银河全景";
   }
-}, new FlightStore(createBrowserFlightServices()));
+}, new FlightStore(createRuntimeFlightServices()));
+
+if (desktopBridge) {
+  const bridge = desktopBridge;
+  bridge.onBeforeClose(() => {
+    void (async () => {
+      try {
+        await flight.saveBeforeClose();
+        await bridge.readyToClose({ saved: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "无法保存航行，请稍后重试。";
+        toast(message);
+        await bridge.readyToClose({ saved: false, message: message.slice(0, 300) });
+      }
+    })();
+  });
+}
 
 function updatePause() {
   const button = $("#pause");
