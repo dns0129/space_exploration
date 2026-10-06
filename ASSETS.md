@@ -1,27 +1,36 @@
 # Visual assets and texture sources
 
-The texture images are included locally to avoid external requests during rendering. The five original Earth maps are 4096 × 2048 pixels. Credit and ownership of the imagery remain with their respective creators; no exclusive ownership of third-party imagery is claimed.
+The texture images are included locally to avoid external requests during rendering. Earth now uses a native 16384 × 8192 day mosaic through bordered detail tiles, 8192 × 4096 global maps, and 4096 × 2048 compact fallbacks. Credit and ownership of the imagery remain with their respective creators; no exclusive ownership of third-party imagery is claimed.
 
 The website posters `public/site/earth.png`, `mars.png`, and `saturn.png` are original 900 × 900 transparent screenshots of this application's planet renderer using the textures listed below. They retain the underlying imagery credits and applicable licenses; they are not additional stock imagery. The site background uses the same `milky-way-4k.jpg` panorama. The deployed website includes this document and `THIRD_PARTY_NOTICES.md` under `legal/`.
 
-| Local file         | Upstream file and source                                                                                                                 |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `earth-day.jpg`    | `example/img/earth-blue-marble.jpg`, [vasturiano/three-globe](https://github.com/vasturiano/three-globe), NASA Blue Marble Earth imagery |
-| `earth-night.jpg`  | `example/img/earth-night.jpg`, [vasturiano/three-globe](https://github.com/vasturiano/three-globe), Earth night imagery                  |
-| `earth-clouds.png` | `images/fair_clouds_4k.png`, [turban/webgl-earth](https://github.com/turban/webgl-earth), Bjorn Sandvik's WebGL Earth demonstration      |
-| `earth-height.jpg` | `images/elev_bump_4k.jpg`, [turban/webgl-earth](https://github.com/turban/webgl-earth)                                                   |
-| `earth-water.png`  | `images/water_4k.png`, [turban/webgl-earth](https://github.com/turban/webgl-earth)                                                       |
+## Earth ultra: native 16K geography and 8K supporting layers
 
-Retrieved on 2026-10-01, without modification, through HTTPS Git checkouts:
+The current Earth maps replace the former 4K imagery from three-globe and webgl-earth. Historical notices remain for the preserved earlier offline packages.
 
-- `three-globe` revision `c4e4f1fc24572161bea3a4dbfc5abed78b46ee09`
-- `webgl-earth` revision `7a97cb3f7ed917540d13959ad904e0116a7bffd8`
+| Local files | Delivered resolution | Source |
+| --- | --- | --- |
+| `earth-day.jpg`, `earth-day-8k.jpg` | 4096 × 2048 / 8192 × 4096 | NASA Earth Observatory Blue Marble Next Generation, September 2004, without baked relief or bathymetry |
+| `earth-detail-C-R.jpg` (32 tiles) | Native 16384 × 8192 mosaic; 2048² tile interiors plus 8-pixel gutters | The same native 16K Blue Marble mosaic, cropped without upscaling |
+| `earth-clouds-4k.jpg`, `earth-clouds-8k.jpg` | 4096 × 2048 / 8192 × 4096 | NASA MODIS Blue Marble cloud-density composite |
+| `earth-night.jpg`, `earth-night-8k.jpg` | 4096 × 2048 / 8192 × 4096 | NASA VIIRS Black Marble 2016 night radiance |
+| `earth-terrain-4k.png`, `earth-terrain-8k.png` | 4096 × 2048 / 8192 × 4096 | GEBCO 08 elevation and NASA Blue Marble lake/coast classification; water = 0, land = 40 + encoded elevation |
 
-The three-globe project has an MIT license (copyright 2019 Vasco Asturiano). Its notice is reproduced in `THIRD_PARTY_NOTICES.md`. The WebGL Earth demonstration credits Bjorn Sandvik / thematicmapping.org; its repository does not include a standalone texture license.
+Retrieved on 2026-10-04 from the public [orbital-botany imagery mirror](https://github.com/simon23-12/orbital-botany/tree/c92393f8be6b94f3684399f18e55790c91a8fdb4/assets/earth), pinned to `c92393f8be6b94f3684399f18e55790c91a8fdb4`. Its [source record](https://github.com/simon23-12/orbital-botany/blob/c92393f8be6b94f3684399f18e55790c91a8fdb4/assets/earth/HERKUNFT.md) and preparation script identify the NASA/GEBCO originals: [Blue Marble](https://visibleearth.nasa.gov/collection/1484/blue-marble), [MODIS clouds](https://visibleearth.nasa.gov/images/57747/blue-marble-clouds), [Black Marble](https://earthobservatory.nasa.gov/features/NightLights), and [GEBCO topography](https://visibleearth.nasa.gov/images/73934/topography). NASA imagery is public domain; GEBCO data is freely usable. No upstream application code is included. Source and delivered dimensions, changes, and SHA-256 hashes are recorded in `public/textures/provenance.json`.
 
-The sky now uses a local 4096 × 2048 Milky Way panorama, replacing the generated star field. Earth uses static imagery and simplified lighting; atmospheric thickness and ocean highlights are reduced in stage 04.
+Rebuild with `python scripts/prepare-earth-ultra.py <source-directory>` after downloading `day_09_16k.jpg`, `clouds_8k.jpg`, `night_8k.jpg`, and `terrain_8k.png` from that pinned mirror. Four bordered detail tiles are resident at a time in ultra quality near Earth; unused tiles are released. Longitude gutters wrap and latitude gutters clamp. Full-world 8K maps load progressively on capable desktop devices (software renderers keep the lighter default unless ultra is explicitly selected); touch/low-memory devices and GPUs below the required texture limit use 4K. Optional detail failures retain the complete global map. Density, elevation and radiance upload as one-byte single-channel textures.
 
-## Stage 04: Milky Way and planetary imagery
+The desktop Earth sphere uses 512 × 256 segments (compact 256 × 128), with subtle elevation displacement and slope normals, ocean Fresnel reflection, moving cloud shadows and filtered procedural land/cloud grain. These extra sub-texel details are artistic rendering, not additional surveyed geography. The 8K night map preserves the resolution of the delivered image; the underlying night-light observations have a coarser spatial resolution. Day, cloud and night maps come from different dates and are not live imagery. Near-ground landing still uses the existing procedural gameplay terrain, not this global elevation map.
+
+## Native 8K Milky Way sky
+
+The game now directly samples the unchanged **8192 × 4096** Solar System Scope Milky Way panorama (`milky-way-8k.jpg`) on an unlit sky shell. This preserves native dust lanes and star-cloud detail instead of converting the panorama into a lower-resolution cube map. The source is the same licensed panorama previously delivered at 4K; **no 16K/32K photograph or upscaled source is claimed**. A restrained photographic shadow lift and circular analytic star points add display detail at the current screen resolution. Those extra points are original rendering artwork, not an astrometric catalogue or additional observed sky data.
+
+All stellar systems share the same astronomical panorama with their own sky orientations and brightness. The Sun, Alpha Centauri and Proxima are close enough that a different blue-violet fictional galaxy is not appropriate to this presentation. The old `centauri-milky-way-4k.jpg` original artwork remains in the asset archive and earlier downloadable versions, but is no longer the current game background. The native 8K asset is used by capable hardware-rendered desktop devices; touch/low-memory devices, software renderers and GPUs below an 8192-pixel texture limit use the existing **4096 × 2048** downsample. Both paths use direct panorama sampling and smoothly fade with atmospheric optical density.
+
+The 8K JPEG is byte-identical to the pinned [Whitebee7/solarsystem source](https://github.com/Whitebee7/solarsystem/blob/235e72c02e825e0c8d0792ec0aa6be43e1a14f68/textures/8k_stars_milky_way.jpg), credited to Solar System Scope under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Retrieved and SHA-256 verified on 2026-10-05. Rebuild with `python3 scripts/prepare-galaxy-ultra.py` (Python and Pillow); source and delivery hashes are in `public/textures/provenance.json`. The panorama is astronomical artwork, not a current scientific sky survey or a navigable three-dimensional reconstruction of the Galaxy.
+
+## Stage 04: Milky Way and planetary imagery (historical)
 
 The Milky Way is delivered at **4096 × 2048**, downsampled from an **8192 × 4096** original. It is a sky panorama, not a navigable three-dimensional reconstruction of the Galaxy. It retains its original artwork and astronomical appearance; it is not represented as a current scientific sky survey.
 
@@ -56,7 +65,7 @@ Flight uses real mean radii and mean Sun distances in kilometres, with double-pr
 
 ## Stage 06: high-resolution maps for every body
 
-Every planet, moon, star and exoplanet now has an equirectangular surface map. **Observed** maps are global mosaics built from spacecraft or telescope imagery of that body. **Concept** maps are openly licensed artwork used where no global imagery exists (Neptune's small inner moons, Nereid) or for bodies that have never been imaged (the Alpha Centauri stars and Proxima's planets); they are tinted and offset per body and are not presented as photographs. Earth keeps its original deep-blue Blue Marble day map and other Earth layers unchanged.
+Every planet, moon, star and exoplanet now has an equirectangular surface map. **Observed** maps are global mosaics built from spacecraft or telescope imagery of that body. **Concept** maps are openly licensed artwork used where no global imagery exists (Neptune's small inner moons, Nereid) or for bodies that have never been imaged (the Alpha Centauri stars and Proxima's planets); they are tinted and offset per body and are not presented as photographs. Earth was subsequently upgraded to native 16K/8K NASA and GEBCO maps; see the Earth ultra section below.
 
 | Local file | Used for | Size | Kind | Credit | License |
 | --- | --- | --- | --- | --- | --- |
@@ -103,9 +112,15 @@ Notes:
 
 Rendering: magnified maps use cubic B-spline filtering and seam-aware texture gradients, relief normals are differenced in texture space, and procedural sub-texel grain fades in only beyond a map's native resolution. This adds apparent detail without claiming more source resolution. Until a moon, star or exoplanet map has loaded, the original procedural material is shown and the map fades in.
 
+## Independent procedural detail and atmospheric entry
+
+`src/procedural-body.ts` assigns every one of the 42 bodies a deterministic identity seed and rock, ice, gas or stellar morphology. Screen-filtered shader detail reaches a maximum equatorial spatial frequency of 32768 samples (32K-level procedural detail), while preserving each photograph or concept map's original delivered resolution and colour. These generated grains, ridges, fractures and cloud filaments are original game artwork, not additional measured surface data; no giant 32K texture is allocated.
+
+The detailed survey ship, its curved panels and turbines, soft layered ion exhaust, kilometre-scale local cloud volume and near-ground curved terrain are original project geometry/shaders. Local Earth clouds with a 7.8 km base and billowing 10.5–15.5 km tops and the softened surface haze provide a continuous game entry effect. Terrain geometry and collision use the same `terrainHeightKm` function. These clouds and terrain are illustrative, not measured weather or geographic terrain.
+
 ## Alpha Centauri system artwork
 
-`centauri-milky-way-4k.jpg` is an original 4096 × 2048 spherical sky illustration generated by [scripts/generate-centauri-sky.py](scripts/generate-centauri-sky.py), with a seeded blue-violet galactic band, dark dust lanes and star points. It is a separate asset, not a recolour of the Solar System panorama, and is **not an observed or astrometrically accurate sky map**. Alpha Centauri and Proxima share this system artwork with different sky orientations. Dimensions and SHA-256 are in the provenance manifest.
+`centauri-milky-way-4k.jpg` is an original 4096 × 2048 spherical sky illustration generated by [scripts/generate-centauri-sky.py](scripts/generate-centauri-sky.py), with a seeded blue-violet galactic band, dark dust lanes and star points. It is a separate asset, not a recolour of the Solar System panorama, and is **not an observed or astrometrically accurate sky map**. Earlier Alpha Centauri and Proxima versions shared this system artwork with different sky orientations; the current game uses the native astronomical Milky Way panorama described above. Dimensions and SHA-256 are in the provenance manifest.
 
 Alpha Centauri A/B, Proxima and Proxima b, c and d use the stage 06 concept maps, coloured by temperature or tinted; their original procedural shaders remain only as the loading fallback. The planets' radii, atmosphere and visible surface are illustrative game choices, not measured images; c/d are explicitly labelled as candidates. Stellar sizes, approximate Sun distances, binary mean separation and orbital periods provide scale, with a static illustrative layout and fictional faster-than-light travel.
 
@@ -113,4 +128,4 @@ Alpha Centauri A/B, Proxima and Proxima b, c and d use the stage 06 concept maps
 
 `betelgeuse-8k.jpg` is an original **8192 × 4096** equirectangular illustration, evaluated directly at native resolution by `scripts/generate-betelgeuse-texture.py` (Python, NumPy, Pillow, SciPy). Seeded spherical convection cells, cooler inter-cell lanes, warped turbulence and four granulation scales form a seamless field across longitude and the poles. `betelgeuse-4k.jpg` is the filtered **4096 × 2048** alternate loaded directly on touch/low-memory devices or GPUs with a maximum texture size below 8192. These original project assets are released under CC0-1.0; dimensions and checksums are recorded in the provenance manifest. Neither map is an observed global photograph.
 
-The red-supergiant shader preserves the map colour and adds slow convection modulation, limb darkening, fine grain at high magnification and a warm stellar halo. The system currently contains only Betelgeuse, with stellar collision protection and no landing. Approximate radius 764 solar radii and distance 548 light-years follow the estimates in Joyce et al. (2020), [arXiv:2006.09837](https://arxiv.org/abs/2006.09837); these values remain uncertain. Temperature is approximately 3600 K. It reuses the existing 4K Milky Way artwork with its own orientation and brightness.
+The red-supergiant shader preserves the map colour and adds slow convection modulation, limb darkening, fine grain at high magnification and a warm stellar halo. The system currently contains only Betelgeuse, with stellar collision protection and no landing. Approximate radius 764 solar radii and distance 548 light-years follow the estimates in Joyce et al. (2020), [arXiv:2006.09837](https://arxiv.org/abs/2006.09837); these values remain uncertain. Temperature is approximately 3600 K. It shares the current 8K/4K astronomical Milky Way panorama with its own orientation and brightness.

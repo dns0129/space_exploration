@@ -26,25 +26,36 @@ export const atmosphereScattering = /* glsl */ `
     }
     if (exitPoint <= entry) return vec4(0.0);
     float stepLength = (exitPoint - entry) / 8.0;
+    // A broad molecular layer stays readable from orbit; the much lower aerosol
+    // layer gives the horizon depth instead of turning the whole sky one colour.
     float scaleHeight = height * 0.3;
+    float aerosolHeight = height * 0.052;
     float optical = 0.0;
     vec3 scattered = vec3(0.0);
     float mu = dot(ray, sunDirection);
-    float rayleigh = 0.72 * (1.0 + mu * mu);
-    float forward = pow(max(mu, 0.0), 18.0) * 0.55;
+    float rayleigh = 0.68 * (1.0 + mu * mu);
+    float mie = 0.055 / pow(max(1.0 + 0.72 * 0.72 - 1.44 * mu, 0.07), 1.5);
     for (int i = 0; i < 8; i++) {
       float t = entry + (float(i) + 0.5) * stepLength;
       vec3 point = up * radial + ray * t;
       // Rationalized height stays stable within metres of a large planet.
       float h = max(0.0, (groundC + 2.0 * b * t + t * t) / (length(point) + radius));
-      float density = exp(-h / scaleHeight) * stepLength / scaleHeight;
+      float molecular = exp(-h / scaleHeight);
+      float aerosol = exp(-h / aerosolHeight) * 0.26;
+      float density = (molecular + aerosol) * stepLength / scaleHeight;
       density *= 1.0 - smoothstep(height * 0.72, height, h);
       float solarElevation = dot(normalize(point), sunDirection);
-      float day = smoothstep(-0.16, 0.14, solarElevation);
-      float sunset = exp(-solarElevation * solarElevation * 100.0);
-      vec3 color = tint * rayleigh * mix(0.008, 1.0, day);
-      color = mix(color, vec3(0.95, 0.32, 0.09) * (0.15 + day * 0.7), sunset * 0.65);
-      color += vec3(1.0, 0.87, 0.68) * forward * day;
+      float horizonDip = sqrt(max(h * (2.0 * radius + h), 0.0)) / (radius + h);
+      float day = smoothstep(-0.16 - horizonDip, 0.14, solarElevation);
+      float sunset = exp(-pow((solarElevation + 0.035) * 7.0, 2.0));
+      float lowLayer = aerosol / max(molecular + aerosol, 0.00001);
+      vec3 molecularColor = tint * rayleigh * mix(0.004, 1.0, day);
+      vec3 aerosolColor = mix(tint * 0.72, vec3(0.9, 0.84, 0.75), lowLayer * 0.8);
+      vec3 color = mix(molecularColor, aerosolColor * day, lowLayer * 0.6);
+      // Longer paths at the terminator remove blue light before it reaches us.
+      color = mix(color, vec3(1.0, 0.29, 0.065) * (0.09 + day * 0.76), sunset * 0.66);
+      color += mix(vec3(1.0, 0.94, 0.82), vec3(1.0, 0.46, 0.16), sunset) * mie * day;
+      color += tint * 0.012 * (1.0 - day) * exp(-h / (height * 0.4));
       float weight = (1.0 - exp(-density * strength * 1.8)) * exp(-optical * strength * 1.8);
       scattered += color * weight;
       optical += density;
@@ -53,7 +64,7 @@ export const atmosphereScattering = /* glsl */ `
     // Normalize weighted color, keeping the night side dark while occluding distant stars.
     vec3 color = scattered / max(opacity, 0.000001);
     // Retain terrain contrast beneath aerial haze, especially when looking straight down.
-    float groundHaze = 0.28 + 0.57 * (1.0 - abs(dot(up, ray)));
+    float groundHaze = 0.22 + 0.58 * (1.0 - abs(dot(up, ray)));
     opacity = mix(opacity, min(opacity, groundHaze), groundRay);
     return vec4(color, opacity);
   }

@@ -11,6 +11,9 @@ import { FlightControls } from "./flight-controls";
 import type { InputSource } from "./core/flight-input";
 import { createShip, SHIP_LENGTH_KM } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
+import { FlightLight } from "./flight-light";
+import { GalaxySky, selectGalaxyFile } from "./galaxy-sky";
+import type { GalaxyTextureFile } from "./galaxy-sky";
 import { SurfaceScene } from "./surface-scene";
 import { atmosphereStrength } from "./atmosphere";
 import { surfaceProfile } from "../shared/surface.mjs";
@@ -21,6 +24,8 @@ import { RenderBudget } from "./render-budget";
 import { createAssetResolver } from "./platform/assets";
 import type { AssetResolver } from "./platform/assets";
 import { textureAssets, embeddedAssets } from "./platform/asset-manifest";
+import { EarthDetail, earthDetailSampling } from "./earth-detail";
+import type { RenderQuality } from "./earth-detail";
 
 export type View = "overview" | "close" | "night";
 export interface SceneStats {
@@ -82,14 +87,24 @@ const surfaceVertex = /* glsl */ `
   }
 `;
 
+const earthSurfaceVertex = surfaceVertex
+  .replace("void main()", "uniform sampler2D terrainMap; uniform float terrainDetail; uniform float elevationStrength; void main()")
+  .replace("vec4 world = modelMatrix * vec4(position, 1.0);", /* glsl */ `
+    float elevation = max(textureLod(terrainMap, uv, 0.0).r - 40.0 / 255.0, 0.0) * (255.0 / 215.0);
+    vec3 displaced = position * (1.0 + elevation * 0.00142 * terrainDetail * elevationStrength);
+    vec4 world = modelMatrix * vec4(displaced, 1.0);
+  `);
+
 const surfaceFragment = /* glsl */ `
   #include <logdepthbuf_pars_fragment>
   uniform sampler2D dayMap;
   uniform sampler2D nightMap;
-  uniform sampler2D heightMap;
-  uniform sampler2D waterMap;
+  uniform sampler2D terrainMap;
   uniform sampler2D cloudMap;
   uniform vec2 mapSize;
+  uniform vec2 terrainSize;
+  uniform vec2 cloudSize;
+  uniform vec2 nightSize;
   uniform float cloudsEnabled;
   uniform float cloudOffset;
   uniform float flatClouds;
@@ -104,6 +119,8 @@ const surfaceFragment = /* glsl */ `
   varying vec3 vAxisZ;
   ${noise}
   ${mapSampling}
+  ${earthDetailSampling}
+  float elevation(float value) { return max(value - 40.0 / 255.0, 0.0) * (255.0 / 215.0); }
   void main() {
     vec3 normal = normalize(vNormal);
     vec3 p = normalize(vLocalPosition);
@@ -113,23 +130,23 @@ const surfaceFragment = /* glsl */ `
     float footprint = max(length(dFdx(p)), length(dFdy(p)));
     float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
     vec3 terrainNormal = normal;
-    float water = 0.0, landGrain = 0.0;
+    float terrain = sampleMap(terrainMap, vUv, terrainSize, gx, gy, seam).r;
+    float water = 1.0 - smoothstep(0.015, 40.0 / 255.0, terrain), landGrain = 0.0;
+    float ring = length(p.xz);
+    vec3 eastward = vec3(p.z, 0.0, -p.x) / max(ring, 0.0001);
+    vec3 northward = cross(p, eastward);
     if(terrainDetail>0.5) {
-      water = sampleMap(waterMap, vUv, mapSize, gx, gy, seam).r;
       // Relief differenced in texture space keeps mountains smooth at any zoom, without texel facets.
-      float stepTexels = max(1.0, texels);
-      vec2 du = vec2(stepTexels / mapSize.x, 0.0), dv = vec2(0.0, stepTexels / mapSize.y);
+      float stepTexels = max(1.0, max(length(gx * terrainSize), length(gy * terrainSize)));
+      vec2 du = vec2(stepTexels / terrainSize.x, 0.0), dv = vec2(0.0, stepTexels / terrainSize.y);
       float reliefLod = log2(stepTexels);
-      float east = textureLod(heightMap, vUv + du, reliefLod).r - textureLod(heightMap, vUv - du, reliefLod).r;
-      float north = textureLod(heightMap, vUv + dv, reliefLod).r - textureLod(heightMap, vUv - dv, reliefLod).r;
-      float ring = length(p.xz);
-      vec3 eastward = vec3(p.z, 0.0, -p.x) / max(ring, 0.0001);
-      vec3 northward = cross(p, eastward);
-      vec3 slope = 0.0035 * (east * mapSize.x / (12.566 * max(ring, 0.15) * stepTexels) * eastward
-        + north * mapSize.y / (6.2832 * stepTexels) * northward);
-      vec4 grain = surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, vec3(1.0), 3.7);
+      float east = elevation(textureLod(terrainMap, vUv + du, reliefLod).r) - elevation(textureLod(terrainMap, vUv - du, reliefLod).r);
+      float north = elevation(textureLod(terrainMap, vUv + dv, reliefLod).r) - elevation(textureLod(terrainMap, vUv - dv, reliefLod).r);
+      vec3 slope = 0.00142 * (east * terrainSize.x / (12.566 * max(ring, 0.15) * stepTexels) * eastward
+        + north * terrainSize.y / (6.2832 * stepTexels) * northward);
+      vec4 grain = surfaceGrain(p, 2600.0, footprint, magnify, vec3(1.0), 3.7);
       float land = 1.0 - water;
-      slope += grain.yzw * 0.05 * land;
+      slope += grain.yzw * 0.035 * land;
       landGrain = grain.x * land;
       slope -= p * dot(slope, p);
       terrainNormal = normalize(normal - mat3(vAxisX, vAxisY, vAxisZ) * slope);
@@ -137,24 +154,30 @@ const surfaceFragment = /* glsl */ `
     float daylight = dot(normal, sunDirection);
     float diffuse = max(dot(terrainNormal, sunDirection), 0.0) * smoothstep(-0.12, 0.04, daylight);
     // The deep-blue day map stays the colour layer at every distance; land grain only adds texture.
-    vec3 day = sampleMap(dayMap, vUv, mapSize, gx, gy, seam).rgb;
+    vec3 day = earthDay(vUv, gx, gy, seam);
     // Open ocean holds faint 8x8 JPEG blocks; when magnified, read it from the block-averaged mip.
     float smoothOcean = water * (1.0 - smoothstep(0.25, 0.6, texels));
     if(smoothOcean > 0.0) day = mix(day, sampleMapLod(dayMap, vUv, mapSize, 3.0).rgb, smoothOcean);
     day *= 1.0 + landGrain * 0.12;
-    vec3 night = daylight<0.12 ? sampleMap(nightMap, vUv, mapSize, gx, gy, seam).rgb : vec3(0.0);
+    // Satellite mosaics have nearly black open water; retain its natural deep-blue scattering.
+    day += vec3(0.002, 0.012, 0.035) * water;
+    float cityLight = daylight<0.12 ? sampleMap(nightMap, vUv, nightSize, gx, gy, seam).r : 0.0;
     vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
     vec3 halfwayDirection = normalize(sunDirection + viewDirection);
     float specular = pow(max(dot(terrainNormal, halfwayDirection), 0.0), 72.0);
     float nightWeight = 1.0 - smoothstep(-0.15, 0.12, daylight);
-    vec4 cloud = sampleMap(cloudMap, vec2(vUv.x + cloudOffset, vUv.y), mapSize, gx, gy, seam);
-    float cloudCover = cloud.a * cloudsEnabled;
+    vec3 localSun = transpose(mat3(vAxisX, vAxisY, vAxisZ)) * sunDirection;
+    vec2 shadowShift = vec2(dot(localSun,eastward)/(6.2832*max(ring,0.15)), dot(localSun,northward)/3.1416)
+      * (0.0018 / max(daylight, 0.15));
+    vec2 cloudUv = vec2(vUv.x + cloudOffset, vUv.y);
+    float cloudCover = sampleMap(cloudMap, cloudUv + shadowShift, cloudSize, gx, gy, seam).r * cloudsEnabled;
     vec3 color = day * (0.015 + diffuse * 1.08 * (1.0-cloudCover*0.26));
     // Isolate the warm city lights from the blue-tinted night-map terrain.
-    float cityLight = max(night.r - night.b * 0.7, 0.0);
-    color += vec3(1.0, 0.65, 0.32) * pow(cityLight, 0.7) * nightWeight * 5.0;
-    color += vec3(0.9, 0.95, 1.0) * specular * water * smoothstep(0.0, 0.15, daylight) * 0.12;
-    color = mix(color,cloud.rgb*(0.035+max(daylight,0.0)*1.1),cloudCover*flatClouds*0.82);
+    color += vec3(1.0, 0.65, 0.32) * pow(cityLight, 1.15) * nightWeight * 2.4 * (1.0-cloudCover*0.6);
+    float fresnel = 0.02 + 0.98 * pow(1.0-max(dot(terrainNormal,viewDirection),0.0),5.0);
+    color += vec3(0.75, 0.87, 1.0) * specular * water * smoothstep(0.0, 0.15, daylight) * (0.12+fresnel*0.35);
+    float visibleCloud = sampleMap(cloudMap, cloudUv, cloudSize, gx, gy, seam).r * cloudsEnabled;
+    color = mix(color,vec3(0.92,0.96,1.0)*(0.035+max(daylight,0.0)*1.1),visibleCloud*flatClouds*0.82);
     float rim = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color += vec3(0.035, 0.22, 0.55) * rim * smoothstep(-0.3, 0.6, daylight) * 0.35;
     #include <logdepthbuf_fragment>
@@ -173,6 +196,7 @@ const earthCloudFragment = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vNormal;
   varying vec3 vLocalPosition;
+  varying vec3 vWorldPosition;
   ${noise}
   ${mapSampling}
   void main() {
@@ -183,7 +207,7 @@ const earthCloudFragment = /* glsl */ `
     float footprint = max(length(dFdx(p)), length(dFdy(p)));
     float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
     vec4 cloud = sampleMap(cloudMap, vUv, mapSize, gx, gy, seam);
-    float cover = cloud.a;
+    float cover = cloud.r;
     if(magnify > 0.0) {
       // Sub-texel wisps sharpen partly covered texels instead of showing soft magnified blobs.
       vec4 grain = surfaceGrain(p, mapSize.x / 6.2832, footprint, magnify, vec3(1.0, 1.6, 1.0), 9.1);
@@ -191,7 +215,8 @@ const earthCloudFragment = /* glsl */ `
     }
     float daylight = max(dot(normalize(vNormal), sunDirection), 0.0);
     #include <logdepthbuf_fragment>
-    gl_FragColor = vec4(cloud.rgb * (0.035 + daylight * 1.1), cover * 0.82);
+    float silver = pow(max(dot(normalize(cameraPosition-vWorldPosition), sunDirection),0.0),12.0) * (1.0-cover) * 0.2;
+    gl_FragColor = vec4(vec3(0.92,0.96,1.0) * (0.035 + daylight * 1.1 + silver), cover * 0.82);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -204,7 +229,8 @@ export class SolarScene {
   private readonly camera = new THREE.PerspectiveCamera(40, 1, 0.01, 200);
   private readonly controls: OrbitControls;
   private readonly planet = new THREE.Group();
-  private readonly stars = new THREE.Group();
+  private readonly galaxySky: GalaxySky;
+  private readonly galaxyFile: GalaxyTextureFile;
   private currentModel?: PlanetModel;
   private readonly flightRoot = new THREE.Group();
   private readonly flightSun = new THREE.PointLight(0xfff3e5, 2.5, 0, 0);
@@ -213,8 +239,11 @@ export class SolarScene {
   private readonly shipScene = new THREE.Scene();
   private readonly shipCamera = new THREE.PerspectiveCamera(58, 1, 0.01, 200);
   private readonly shipSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
+  private readonly shipAmbient = new THREE.HemisphereLight(0xc1e6ee, 0x233643, 0.85);
+  private readonly shipRim = new THREE.DirectionalLight(0x77bfff, 0.45);
   private shipScale = SHIP_LENGTH_KM / (6371 * this.ship.hullLength);
   private readonly warpEffect = createWarpEffect();
+  private readonly flightLight = new FlightLight();
   private readonly surfaceScene = new SurfaceScene();
   private galaxy?: THREE.Texture;
   private readonly backgrounds = new Map<SystemId, THREE.Texture>();
@@ -237,7 +266,7 @@ export class SolarScene {
   private readonly tinySphere = new THREE.SphereGeometry(1, 16, 12);
   private readonly largeSphere = new THREE.SphereGeometry(1, 128, 80);
   private readonly renderBudget = new RenderBudget();
-  private highQuality = true;
+  private quality: RenderQuality = this.compactTextures ? "high" : "ultra";
   private minimumRenderRatio = 0.5;
   /** Sharp oblique detail on GPUs; software rasterizers keep the cheaper 4x filtering. */
   private surfaceAnisotropy = 4;
@@ -262,6 +291,11 @@ export class SolarScene {
   private readonly textures = new Set<THREE.Texture>();
   private earthMaps?: THREE.Texture[];
   private earthPromise?: Promise<THREE.Texture[]>;
+  private readonly earthDetails = new Map<PlanetModel, EarthDetail>();
+  private earthHighMaps?: THREE.Texture[];
+  private earthUpgrade?: Promise<void>;
+  private earthUpgraded = false;
+  private earthUpgradeAt = 0;
   private selectionVersion = 0;
   private readonly resizeObserver: ResizeObserver;
   private targetPosition: THREE.Vector3 | null = null;
@@ -305,9 +339,11 @@ export class SolarScene {
     const graphicsRenderer = debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) : "unavailable";
     const software = /swiftshader|llvmpipe|software/i.test(graphicsRenderer);
     this.renderer.domElement.dataset.graphicsRenderer = graphicsRenderer;
-    if (software) this.minimumRenderRatio = 0.125;
+    if (software) { this.minimumRenderRatio = 0.125; this.quality = "high"; }
     else this.surfaceAnisotropy = this.renderer.capabilities.getMaxAnisotropy();
     this.renderer.domElement.dataset.softwareRenderer = String(software);
+    this.galaxySky = new GalaxySky(this.compactTextures || software);
+    this.galaxyFile = selectGalaxyFile(this.renderer.capabilities.maxTextureSize, this.compactTextures, software);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
@@ -335,8 +371,7 @@ export class SolarScene {
       this.targetPosition = null;
     });
     this.scene.add(this.planet);
-    this.createStars();
-    this.scene.add(this.stars);
+    this.scene.add(this.galaxySky.mesh);
     this.observeSun.position.set(-3, 1.8, 4);
     this.flightRoot.visible = false;
     this.scene.add(this.surfaceScene.group, this.surfaceScene.sky);
@@ -344,13 +379,15 @@ export class SolarScene {
     this.shipScene.add(
       this.ship.group,
       this.shipSun,
-      new THREE.HemisphereLight(0xc1e6ee, 0x233643, 1.2),
+      this.shipAmbient,
+      this.shipRim,
     );
     this.scene.add(
       this.observeSun,
       this.flightSun,
       this.flightRoot,
       this.warpEffect.mesh,
+      this.flightLight.mesh,
       new THREE.AmbientLight(0x9dbde8, 0.09),
     );
     this.resizeObserver = new ResizeObserver(this.resize);
@@ -404,7 +441,7 @@ export class SolarScene {
     if (this.galaxy) return Promise.resolve();
     if (this.spacePromise) return this.spacePromise;
     const ids = (Object.keys(SURFACE_MAPS) as BodyId[]).filter(id => SURFACE_MAPS[id]!.core);
-    const skyFiles = [...new Set(STAR_SYSTEMS.map(system => system.backgroundFile))];
+    const skyFiles = [this.galaxyFile];
     const files = [...skyFiles, ...ids.map((id) => SURFACE_MAPS[id]!.file)];
     const batch: THREE.Texture[] = [];
     let failed = false;
@@ -416,8 +453,7 @@ export class SolarScene {
     })).then((maps) => {
       maps.forEach((map) => this.textures.add(map));
       for (const system of STAR_SYSTEMS) {
-        const texture = maps[skyFiles.indexOf(system.backgroundFile)];
-        texture.mapping = THREE.EquirectangularReflectionMapping;
+        const texture = maps[0];
         this.backgrounds.set(system.id as SystemId, texture);
       }
       this.galaxy = this.backgrounds.get("solar");
@@ -550,17 +586,19 @@ export class SolarScene {
   private useSystemBackground(id: SystemId) {
     const system = STAR_SYSTEMS.find(item => item.id === id)!;
     const texture = this.backgrounds.get(id) ?? null;
-    const background = this.starsEnabled ? texture : null;
-    if (this.backgroundSystem !== id || this.scene.background !== background) {
-      this.scene.background = background;
-      this.scene.backgroundRotation.fromArray(system.backgroundRotation as [number, number, number]);
+    if (this.galaxySky.mesh.material.uniforms.skyMap.value !== texture) {
+      this.galaxySky.setTexture(texture);
     }
-    this.scene.backgroundIntensity = system.backgroundIntensity;
+    this.scene.background = null;
+    this.galaxySky.setView(system.backgroundRotation, system.backgroundIntensity,
+      this.flying ? this.surfaceScene.spaceVisibility : 1, this.starsEnabled);
     this.backgroundSystem = id;
-    this.stars.visible = this.starsEnabled && !texture;
     if (this.renderer.domElement.dataset.system !== id) this.renderer.domElement.dataset.system = id;
-    if (this.renderer.domElement.dataset.background !== system.backgroundFile)
-      this.renderer.domElement.dataset.background = system.backgroundFile;
+    if (this.renderer.domElement.dataset.background !== this.galaxyFile) {
+      this.renderer.domElement.dataset.background = this.galaxyFile;
+      this.renderer.domElement.dataset.backgroundResolution = this.galaxyFile.includes("8k") ? "8192x4096" : "4096x2048";
+      this.renderer.domElement.dataset.backgroundSampling = "direct-equirectangular";
+    }
   }
 
   private loadEarthTextures(
@@ -568,29 +606,17 @@ export class SolarScene {
   ): Promise<THREE.Texture[]> {
     if (this.earthMaps) return Promise.resolve(this.earthMaps);
     if (this.earthPromise) return this.earthPromise;
-    const loader = new THREE.TextureLoader();
-    const files = [
-      "earth-day.jpg",
-      "earth-night.jpg",
-      "earth-height.jpg",
-      "earth-water.png",
-      "earth-clouds.png",
-    ];
+    const files = ["earth-day.jpg", "earth-night.jpg", "earth-terrain-4k.png", "earth-clouds-4k.jpg"];
     let loaded = 0;
     const batch: THREE.Texture[] = [];
     let failed = false;
     this.earthPromise = Promise.all(
       files.map(async (file) => {
-        const texture = await loader.loadAsync(
-          this.assets.texture(file),
-        );
+        const texture = await this.loadEarthMap(file, file !== "earth-day.jpg");
         if (this.destroyed || failed) {
-          texture.dispose();
+          this.releaseEarthMap(texture);
           throw new Error("场景已关闭");
         }
-        texture.anisotropy = this.surfaceAnisotropy;
-        texture.wrapS = THREE.RepeatWrapping;
-        await (texture.image as HTMLImageElement).decode?.().catch(() => undefined);
         this.textures.add(texture);
         batch.push(texture);
         onProgress(Math.round((++loaded / files.length) * 100));
@@ -599,8 +625,6 @@ export class SolarScene {
     )
       .then((maps) => {
         maps[0].colorSpace = THREE.SRGBColorSpace;
-        maps[1].colorSpace = THREE.SRGBColorSpace;
-        maps[4].colorSpace = THREE.SRGBColorSpace;
         this.earthMaps = maps;
         return maps;
       })
@@ -618,45 +642,134 @@ export class SolarScene {
     return this.earthPromise;
   }
 
+  private releaseEarthMap(texture: THREE.Texture) {
+    this.textures.delete(texture);
+    texture.dispose();
+  }
+
+  private async loadEarthMap(file: string, monochrome = false): Promise<THREE.Texture> {
+    let texture = await new THREE.TextureLoader().loadAsync(this.assets.texture(file));
+    const image = texture.image as HTMLImageElement;
+    await image.decode?.().catch(() => undefined);
+    if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
+    if (monochrome) {
+      // One-byte density/elevation/radiance maps use one quarter of RGBA texture memory.
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d", { willReadFrequently: true })!;
+      context.drawImage(image, 0, 0);
+      const rgba = context.getImageData(0, 0, image.width, image.height).data;
+      const data = new Uint8Array(image.width * image.height);
+      // Typed-array uploads are bottom-up, unlike the source image's north-to-south rows.
+      for (let y = 0; y < image.height; y++) {
+        const source = (image.height - 1 - y) * image.width * 4;
+        for (let x = 0; x < image.width; x++) data[y * image.width + x] = rgba[source + x * 4];
+      }
+      texture.dispose();
+      canvas.width = canvas.height = 1;
+      texture = new THREE.DataTexture(data, image.width, image.height, THREE.RedFormat);
+      texture.generateMipmaps = true;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+    } else texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = this.surfaceAnisotropy;
+    texture.needsUpdate = true;
+    this.textures.add(texture);
+    return texture;
+  }
+
+  private updateEarthDetail(delta: number, time: number) {
+    const model = this.flying ? this.flightModels.find(model => model.body.id === "earth") : this.models.get("earth");
+    const active = !!model && (this.flying ? model.group.visible && this.dynamics?.systemId === "solar" : this.currentModel === model);
+    const capable = !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 8192
+      && (this.renderer.domElement.dataset.softwareRenderer !== "true" || this.quality === "ultra");
+    for (const [earth, detail] of this.earthDetails) if (earth !== model) detail.update(undefined, this.camera, false, delta, time);
+    if (model) this.earthDetails.get(model)?.update(active ? model.surface : undefined,
+      this.camera, active && capable && this.earthUpgraded && this.quality === "ultra", delta, time);
+    if (!active || !capable || this.quality === "standard" || this.earthUpgraded || this.earthUpgrade || time < this.earthUpgradeAt) return;
+    const batch: THREE.Texture[] = [];
+    this.earthUpgrade = (async () => {
+      // Stagger decoding and uploads; one large map at a time avoids a burst of frame stalls.
+      for (const file of ["earth-day-8k.jpg", "earth-night-8k.jpg", "earth-terrain-8k.png", "earth-clouds-8k.jpg"]) {
+        const texture = await this.loadEarthMap(file, file !== "earth-day-8k.jpg");
+        batch.push(texture);
+        this.renderBudget.hold(1.5);
+        this.renderer.initTexture(texture);
+      }
+      if (this.destroyed) throw new Error("场景已关闭");
+      this.earthHighMaps = batch;
+      for (const earth of this.earthDetails.keys()) this.applyEarthMaps(earth, batch);
+      this.earthUpgraded = true;
+      this.renderer.domElement.dataset.earthMaps = "8k";
+    })().catch(() => {
+      batch.forEach(texture => this.releaseEarthMap(texture));
+      this.earthUpgradeAt = performance.now() + 30_000;
+    }).finally(() => { this.earthUpgrade = undefined; });
+  }
+
+  private applyEarthMaps(model: PlanetModel, maps: THREE.Texture[]) {
+    const uniforms = (model.surface.material as THREE.ShaderMaterial).uniforms;
+    for (const [i, name, size] of [[0, "dayMap", "mapSize"], [1, "nightMap", "nightSize"],
+      [2, "terrainMap", "terrainSize"], [3, "cloudMap", "cloudSize"]] as const) {
+      uniforms[name].value = maps[i];
+      uniforms[size].value.set(maps[i].image.width, maps[i].image.height);
+    }
+    const cloudUniforms = ((model.layers.clouds as THREE.Mesh).material as THREE.ShaderMaterial).uniforms;
+    cloudUniforms.cloudMap.value = maps[3];
+    cloudUniforms.mapSize.value.set(maps[3].image.width, maps[3].image.height);
+  }
+
   private createEarthModel(
     maps: THREE.Texture[],
     sunDirection = this.sunDirection,
   ): PlanetModel {
+    maps = this.earthHighMaps ?? maps;
     maps[0].colorSpace = THREE.SRGBColorSpace;
-    maps[1].colorSpace = THREE.SRGBColorSpace;
-    maps[4].colorSpace = THREE.SRGBColorSpace;
     const group = new THREE.Group();
     group.rotation.z = THREE.MathUtils.degToRad(EARTH.axialTiltDeg);
-    const geometry = new THREE.SphereGeometry(1, 192, 128);
+    const compactMesh = this.compactTextures || this.renderer.domElement.dataset.softwareRenderer === "true";
+    const geometry = new THREE.SphereGeometry(1, compactMesh ? 256 : 512, compactMesh ? 128 : 256);
+    const detail = new EarthDetail(maps[0], file => this.loadEarthMap(file),
+      texture => this.releaseEarthMap(texture), texture => {
+        this.renderBudget.hold(1.5);
+        this.renderer.initTexture(texture);
+      }, this.renderer.domElement);
     const surface = new THREE.Mesh(
       geometry,
       new THREE.ShaderMaterial({
-        vertexShader: surfaceVertex,
+        vertexShader: earthSurfaceVertex,
         fragmentShader: surfaceFragment,
         uniforms: {
           dayMap: { value: maps[0] },
           nightMap: { value: maps[1] },
-          heightMap: { value: maps[2] },
-          waterMap: { value: maps[3] },
-          cloudMap: { value: maps[4] },
+          terrainMap: { value: maps[2] },
+          cloudMap: { value: maps[3] },
+          ...detail.uniforms,
+          terrainSize: { value: new THREE.Vector2(maps[2].image.width, maps[2].image.height) },
+          nightSize: { value: new THREE.Vector2(maps[1].image.width, maps[1].image.height) },
+          cloudSize: { value: new THREE.Vector2(maps[3].image.width, maps[3].image.height) },
           mapSize: { value: new THREE.Vector2(maps[0].image.width, maps[0].image.height) },
           cloudsEnabled: { value: 1 },
           cloudOffset: { value: 0 },
           flatClouds: { value: 0 },
           terrainDetail: { value: 1 },
+          elevationStrength: { value: 1 },
           sunDirection: { value: sunDirection },
         },
       }),
     );
     surface.rotation.y = -1.8;
     const clouds = new THREE.Mesh(
-      new THREE.SphereGeometry(1.0018, 128, 96),
+      new THREE.SphereGeometry(1.0018, 256, 128),
       new THREE.ShaderMaterial({
         vertexShader: surfaceVertex,
         fragmentShader: earthCloudFragment,
         uniforms: {
-          cloudMap: { value: maps[4] },
-          mapSize: { value: new THREE.Vector2(maps[4].image.width, maps[4].image.height) },
+          cloudMap: { value: maps[3] },
+          mapSize: { value: new THREE.Vector2(maps[3].image.width, maps[3].image.height) },
           sunDirection: { value: sunDirection },
         },
         transparent: true,
@@ -680,7 +793,9 @@ export class SolarScene {
       }),
     );
     group.add(surface, clouds, atmosphere);
-    return {
+    this.renderer.domElement.dataset.earthMaps = this.earthHighMaps ? "8k" : "4k";
+    this.renderer.domElement.dataset.earthMesh = `${geometry.parameters.widthSegments}x${geometry.parameters.heightSegments}`;
+    const model: PlanetModel = {
       body: EARTH,
       group,
       surface,
@@ -691,6 +806,8 @@ export class SolarScene {
       ],
       timeUniforms: [],
     };
+    this.earthDetails.set(model, detail);
+    return model;
   }
 
   private updateCloudShadow(model: PlanetModel) {
@@ -701,63 +818,6 @@ export class SolarScene {
     uniforms.cloudOffset.value = turns - Math.floor(turns);
     uniforms.cloudsEnabled.value = Number(clouds.visible || uniforms.flatClouds.value>0);
   }
-  private createStars() {
-    // Seeded positions make screenshots reproducible and keep the sky independent of assets.
-    let seed = 83;
-    const random = () => {
-      seed = (seed * 16807) % 2147483647;
-      return (seed - 1) / 2147483646;
-    };
-    for (const [count, size, opacity, band] of [
-      [2200, 0.12, 0.7, false],
-      [120, 0.21, 0.85, false],
-      [1600, 0.07, 0.24, true],
-    ] as const) {
-      const positions: number[] = [];
-      const colors: number[] = [];
-      for (let i = 0; i < count; i++) {
-        const azimuth = random() * Math.PI * 2;
-        const y = band
-          ? (random() + random() + random() - 1.5) * 0.17
-          : random() * 2 - 1;
-        const scale = Math.sqrt(1 - y * y);
-        positions.push(
-          70 * scale * Math.cos(azimuth),
-          70 * y,
-          70 * scale * Math.sin(azimuth),
-        );
-        const brightness = 0.4 + random() * 0.6;
-        const warm = random() > 0.82;
-        colors.push(
-          brightness * (warm ? 1 : 0.76),
-          brightness * 0.86,
-          brightness * (warm ? 0.72 : 1),
-        );
-      }
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(positions, 3),
-      );
-      geometry.setAttribute(
-        "color",
-        new THREE.Float32BufferAttribute(colors, 3),
-      );
-      const points = new THREE.Points(
-        geometry,
-        new THREE.PointsMaterial({
-          size,
-          vertexColors: true,
-          transparent: true,
-          opacity,
-          depthWrite: false,
-        }),
-      );
-      if (band) points.rotation.z = 0.55;
-      this.stars.add(points);
-    }
-  }
-
   private readonly resize = () => {
     if (this.destroyed) return;
     const { width, height } = this.container.getBoundingClientRect();
@@ -770,7 +830,7 @@ export class SolarScene {
   };
 
   private configureRenderBudget() {
-    this.renderBudget.configure(this.highQuality, window.devicePixelRatio, this.flightWidth, this.flightHeight, this.minimumRenderRatio);
+    this.renderBudget.configure(this.quality, window.devicePixelRatio, this.flightWidth, this.flightHeight, this.minimumRenderRatio);
     this.applyRenderBudget();
   }
   private applyRenderBudget() {
@@ -796,6 +856,7 @@ export class SolarScene {
     this.updateSurfaceMaps(delta, time);
     if (this.flying) {
       this.animateFlight(delta, time);
+      this.updateEarthDetail(delta, time);
       this.renderer.render(this.scene, this.camera);
       if (this.ship.group.visible) {
         // The hull pass uses the same physical scale as the world camera.
@@ -808,6 +869,9 @@ export class SolarScene {
         camera.position.copy(this.camera.position).multiplyScalar(1 / this.shipScale);
         camera.quaternion.copy(this.camera.quaternion);
         this.shipSun.position.copy(this.flightSun.position).normalize().multiplyScalar(10);
+        this.shipSun.intensity = 2.8 * this.flightLight.illumination;
+        this.shipRim.position.copy(camera.position).normalize().multiplyScalar(-10);
+        this.shipAmbient.intensity = 0.28 + this.flightLight.illumination * 0.57;
         this.renderer.autoClear = false;
         this.renderer.clearDepth();
         this.renderer.render(this.shipScene, camera);
@@ -844,6 +908,7 @@ export class SolarScene {
         this.targetPosition = null;
     }
     this.controls.update();
+    this.updateEarthDetail(delta, time);
     this.renderer.render(this.scene, this.camera);
     this.frames++;
     if (!this.metricsStart) this.metricsStart = time;
@@ -951,8 +1016,8 @@ export class SolarScene {
     this.surfaceScene.sky.visible = false;
     this.flightSun.visible = false;
     this.controls.enabled = true;
-    this.stars.position.set(0, 0, 0);
     this.warpEffect.mesh.visible = false;
+    this.flightLight.mesh.visible = false;
     this.useSystemBackground(this.currentModel?.body.systemId ?? "solar");
     this.camera.near = 0.01;
     this.camera.up.set(0, 1, 0);
@@ -1036,6 +1101,9 @@ export class SolarScene {
         const uniforms = (model.surface.material as THREE.ShaderMaterial).uniforms;
         uniforms.flatClouds.value = Number(pixelRadius < 280);
         uniforms.terrainDetail.value = Number(pixelRadius >= 280);
+        // Let the collision-matched local terrain take over before the camera reaches it.
+        uniforms.elevationStrength.value = environment.body.id === "earth"
+          ? THREE.MathUtils.smoothstep(environment.groundAltitudeKm, 50, 80) : 1;
         model.layers.clouds!.visible = pixelRadius >= 280;
         this.updateCloudShadow(model);
       }
@@ -1105,7 +1173,8 @@ export class SolarScene {
       this.camera.updateProjectionMatrix();
     }
     this.surfaceScene.update(ship, this.camera, this.flightSun);
-    this.scene.backgroundIntensity *= this.surfaceScene.spaceVisibility;
+    this.flightLight.update(ship, this.camera, this.flightSun);
+    this.useSystemBackground(ship.systemId);
     this.ship.gear.visible = ship.landingPhase !== "manual" || (environment.profile.solid && environment.groundAltitudeKm < 1);
   }
   private animateFlight(delta: number, time: number) {
@@ -1199,7 +1268,7 @@ export class SolarScene {
   }
   setLayer(layer: Layer, visible: boolean) {
     const object =
-      layer === "stars" ? this.stars : this.currentModel?.layers[layer];
+      layer === "stars" ? this.galaxySky.mesh : this.currentModel?.layers[layer];
     if (object) object.visible = visible;
     if (layer === "clouds" && this.currentModel) this.updateCloudShadow(this.currentModel);
     if (layer === "stars") {
@@ -1209,10 +1278,14 @@ export class SolarScene {
     if (layer === "rings" && this.currentModel?.ringsEnabled)
       this.currentModel.ringsEnabled.value = Number(visible);
   }
-  setQuality(high: boolean) {
-    this.highQuality = high;
+  setQuality(quality: RenderQuality) {
+    if (quality === this.quality) return;
+    this.quality = quality;
+    this.galaxySky.setDetailed(quality !== "standard" && !this.compactTextures
+      && this.renderer.domElement.dataset.softwareRenderer !== "true");
     this.configureRenderBudget();
   }
+  getQuality(): RenderQuality { return this.quality; }
   zoom(factor: number) {
     this.targetPosition = null;
     const distance = THREE.MathUtils.clamp(
@@ -1239,8 +1312,10 @@ export class SolarScene {
   };
 
   dispose() {
+    this.galaxySky.dispose();
     this.surfaceScene.dispose();
     this.destroyed = true;
+    this.earthDetails.forEach(detail => detail.dispose());
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
     document.removeEventListener("visibilitychange", this.visibilityHandler);

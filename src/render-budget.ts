@@ -9,10 +9,11 @@ export class RenderBudget {
   private sampledFrames = 0;
   private minimumRatio = 0.5;
   private holdSeconds = 0;
-  configure(high: boolean, deviceRatio: number, width: number, height: number, minimumRatio = 0.5) {
+  configure(quality: boolean | "standard" | "high" | "ultra", deviceRatio: number, width: number, height: number, minimumRatio = 0.5) {
     this.minimumRatio = minimumRatio;
-    const pixelLimit = high ? 2_100_000 : 1_200_000;
-    this.ceiling = Math.min(high ? Math.min(deviceRatio, 1.5) : 1,
+    const ultra = quality === "ultra", high = quality === true || quality === "high" || ultra;
+    const pixelLimit = ultra ? 8_300_000 : high ? 2_100_000 : 1_200_000;
+    this.ceiling = Math.min(high ? Math.min(deviceRatio, ultra ? 2 : 1.5) : 1,
       Math.sqrt(pixelLimit / Math.max(1, width * height)));
     this.ratio = this.ceiling;
     this.averageMs = 16.7;

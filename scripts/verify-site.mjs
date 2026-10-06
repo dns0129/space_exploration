@@ -201,7 +201,7 @@ try {
     await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "transit", { timeout: 30000 });
     await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 60000 });
     await expect(page.locator("canvas")).toHaveAttribute("data-system", "proxima-centauri");
-    await expect(page.locator("canvas")).toHaveAttribute("data-background", "centauri-milky-way-4k.jpg");
+    await expect(page.locator("canvas")).toHaveAttribute("data-background", "milky-way-4k.jpg");
     await expect(page.locator("#flight-nearest")).toHaveText("比邻星 b");
     await page.locator("#flight-pause").click();
     await page.locator("#flight-save").click();
@@ -213,7 +213,7 @@ try {
     await expect(page.locator("#flight-resume")).toBeEnabled({ timeout: 45000 });
     await page.locator("#flight-resume").click();
     await expect(page.locator("canvas")).toHaveAttribute("data-system", "proxima-centauri");
-    await expect(page.locator("canvas")).toHaveAttribute("data-background", "centauri-milky-way-4k.jpg");
+    await expect(page.locator("canvas")).toHaveAttribute("data-background", "milky-way-4k.jpg");
     await expect(page.locator("#flight-target")).toHaveText("比邻星 b");
     await page.screenshot({ path: resolve(output, `centauri-${name}.png`) });
     await verifyBetelgeuseFlight(page);

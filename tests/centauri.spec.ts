@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 
-test("半人马座三恒星与行星可以观测，使用独立背景并可返回太阳系", async ({ page }, info) => {
+test("半人马座三恒星与行星可以观测，使用真实银河且可返回太阳系", async ({ page }, info) => {
   test.setTimeout(180000);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -13,7 +13,7 @@ test("半人马座三恒星与行星可以观测，使用独立背景并可返�
   await expect(page.locator("canvas")).toHaveAttribute("data-background", "milky-way-4k.jpg");
   await page.getByRole("combobox", { name: "恒星系统", exact: true }).selectOption("alpha-centauri");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", "alpha-centauri-a");
-  await expect(page.locator("canvas")).toHaveAttribute("data-background", "centauri-milky-way-4k.jpg");
+  await expect(page.locator("canvas")).toHaveAttribute("data-background", "milky-way-4k.jpg");
   await expect(page.locator(".satellite-navigation")).toBeHidden();
   for (const [id, name] of [
     ["alpha-centauri-a", "南门二 A"], ["alpha-centauri-b", "南门二 B"],
@@ -61,7 +61,7 @@ test("跨系统跃迁改变位置和背景，恢复比邻星存档后仍能返�
   await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 60000 });
   await expect(page.locator("canvas")).toHaveAttribute("data-system", "alpha-centauri");
   await expect(page.locator("#flight-nearest")).toHaveText("南门二 A");
-  await expect(page.locator("canvas")).toHaveAttribute("data-background", "centauri-milky-way-4k.jpg");
+  await expect(page.locator("canvas")).toHaveAttribute("data-background", "milky-way-4k.jpg");
   await page.locator('button[data-body="proxima-b"]').click();
   await page.locator("#flight-jump").click();
   await expect(selector).toBeDisabled();

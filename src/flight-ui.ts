@@ -1,3 +1,4 @@
+import type { RenderQuality } from "./earth-detail";
 import { FlightStore } from "./flight-store";
 import { getBody, STAR_SYSTEMS } from "./solar-system";
 import type { BodyId } from "./solar-system";
@@ -37,7 +38,7 @@ export class FlightInterface {
       "beforeend",
       `<section id="flight-ui" class="flight-ui" aria-label="飞船驾驶台" hidden>
   <div class="flight-title"><span class="eyebrow">REAL SCALE / 星际航行</span><h2>VOYAGER <b>01</b></h2><span id="flight-system" class="flight-system">当前位置 · 太阳系</span><span id="flight-status">手动驾驶 · 引擎待命</span></div>
-  <div class="flight-toolbar"><button id="flight-camera" aria-pressed="false">切换外部视角 <kbd>C</kbd></button><button id="flight-assist" aria-pressed="true">驾驶辅助：开</button><button id="flight-pause" aria-pressed="false">暂停航行</button><button id="flight-save">保存航行</button><button id="flight-resume" disabled>恢复存档</button><select id="flight-quality" aria-label="航行画质"><option value="high">高清</option><option value="standard">标准</option></select></div>
+  <div class="flight-toolbar"><button id="flight-camera" aria-pressed="false">切换外部视角 <kbd>C</kbd></button><button id="flight-assist" aria-pressed="true">驾驶辅助：开</button><button id="flight-pause" aria-pressed="false">暂停航行</button><button id="flight-save">保存航行</button><button id="flight-resume" disabled>恢复存档</button><select id="flight-quality" aria-label="航行画质"><option value="ultra">超清</option><option value="high">高清</option><option value="standard">标准</option></select></div>
   <aside class="flight-navigation"><span class="eyebrow">导航目标 / DESTINATION</span><h3 id="flight-target">地球</h3><p><strong id="flight-distance">—</strong><small id="flight-distance-unit"> km</small></p><small id="flight-distance-au"></small><div><button id="flight-align">对准目标</button><button id="flight-jump">启动跃迁 <kbd>J</kbd></button></div><button id="flight-land">自动着陆（L）</button><small class="flight-nav-note">真实距离 · 1 AU ≈ 1.496 亿 km</small></aside>
   <aside class="warp-engine" id="warp-engine" data-phase="ready" aria-label="跃迁引擎"><span class="eyebrow">HYPERDRIVE / 跃迁引擎</span><strong id="warp-label">引擎就绪</strong><div class="warp-track"><i id="warp-progress"></i></div><small id="warp-hint">选择目的地，按 J 蓄能启航</small><button id="warp-cancel" hidden>中止跃迁</button></aside>
   <aside id="flight-surface" class="flight-surface" data-phase="manual" aria-label="着陆系统"><span class="eyebrow">SURFACE / 着陆系统</span><strong id="flight-surface-state">手动航行</strong><b id="flight-surface-altitude">— m</b><small id="flight-atmosphere">真空环境</small><small id="flight-landing-hint">L 自动着陆</small></aside>
@@ -80,9 +81,11 @@ export class FlightInterface {
       this.scene?.cancelWarp();
       this.notify("跃迁已中止，当前位置可继续手动驾驶");
     };
+    if (window.matchMedia("(pointer: coarse)").matches || ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4)
+      $<HTMLSelectElement>("#flight-quality").value = "high";
     $("#flight-quality").onchange = () =>
       this.scene?.setQuality(
-        $<HTMLSelectElement>("#flight-quality").value === "high",
+        $<HTMLSelectElement>("#flight-quality").value as RenderQuality,
       );
     document.addEventListener("keydown", (event) => {
       if (
@@ -127,7 +130,7 @@ export class FlightInterface {
     this.warpPhase = "ready";
     this.lastAutoElapsed = 0;
     this.pause(false);
-    scene.setQuality($<HTMLSelectElement>("#flight-quality").value === "high");
+    scene.setQuality($<HTMLSelectElement>("#flight-quality").value as RenderQuality);
     this.saved = null;
     $("#flight-resume").setAttribute("disabled", "");
     this.changed(true, id);

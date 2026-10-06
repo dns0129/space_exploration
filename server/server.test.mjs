@@ -802,3 +802,16 @@ test("render budget lowers sustained slow resolution and recovers slowly within 
   for(let i=0;i<600;i++)jitter.sample(i%15===0?1/30:1/60);
   assert(jitter.ratio<sharp,"regular missed frames must reduce resolution even with a decent average FPS");
 });
+
+test("ultra quality preserves a 4K viewport and restores still-image detail after load", () => {
+  const budget = new RenderBudget();
+  budget.configure("ultra", 2, 3840, 2160);
+  assert(budget.ratio >= 1, "4K screens should render at their native resolution");
+  assert(3840 * 2160 * budget.ratio ** 2 <= 8_300_000.01);
+  for (let i = 0; i < 240; i++) budget.sample(1 / 30);
+  assert(budget.ratio < 1);
+  assert(budget.rest());
+  assert(budget.ratio >= 1);
+  budget.configure("standard", 2, 3840, 2160);
+  assert(3840 * 2160 * budget.ratio ** 2 <= 1_200_000.01);
+});
