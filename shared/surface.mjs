@@ -21,10 +21,36 @@ const profiles = {
 export function surfaceProfile(id) {
   return { solid: true, sky: "#000000", ground: "#aaa79b", gravity: 1.62, density: 0, scaleKm: 1, ...profiles[id] };
 }
+// Smooth 3D value noise avoids longitude seams and remains stable when tiles move.
+function earthNoise(x, y, z) {
+  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  const smooth = t => t * t * (3 - 2 * t);
+  const tx = smooth(x - ix), ty = smooth(y - iy), tz = smooth(z - iz);
+  const hash = (a, b, c) => {
+    const n = Math.sin(a * 127.1 + b * 311.7 + c * 74.7) * 43758.5453;
+    return n - Math.floor(n);
+  };
+  const mix = (a, b, t) => a + (b - a) * t;
+  return mix(
+    mix(mix(hash(ix, iy, iz), hash(ix + 1, iy, iz), tx),
+      mix(hash(ix, iy + 1, iz), hash(ix + 1, iy + 1, iz), tx), ty),
+    mix(mix(hash(ix, iy, iz + 1), hash(ix + 1, iy, iz + 1), tx),
+      mix(hash(ix, iy + 1, iz + 1), hash(ix + 1, iy + 1, iz + 1), tx), ty), tz);
+}
 // A continuous function of the radial direction keeps collision and regenerated tiles identical.
 export function terrainHeightKm(id, normal) {
   if (!surfaceProfile(id).solid) return 0;
   const [x, y, z] = normal;
+  if (id === "earth") {
+    // Kilometre-scale ranges, branching ridges and foothills; illustrative, not a DEM.
+    const region = earthNoise(x * 38 + 7, y * 38 - 3, z * 38 + 11);
+    const warp = earthNoise(x * 110, y * 110, z * 110) * 2;
+    const ridge = 1 - Math.abs(earthNoise(x * 260 + warp, y * 260 - warp, z * 260 + 17) * 2 - 1);
+    const shoulder = earthNoise(x * 620 + 31, y * 620, z * 620 - 9);
+    const detail = earthNoise(x * 1800, y * 1800 + 5, z * 1800);
+    const mountain = Math.max(0, Math.min(1, (region - 0.28) / 0.42));
+    return 0.06 + mountain * (0.25 + 4.6 * ridge ** 3) + shoulder * 0.22 + detail * 0.045;
+  }
   const seed = [...id].reduce((sum, c) => sum + c.charCodeAt(0), 0) * 0.17;
   const broad = Math.sin(x * 1900 + seed) * Math.sin(y * 1700 - seed) * Math.cos(z * 2100);
   const fine = Math.sin(x * 7200 + y * 3600 + seed) * Math.cos(z * 6400 - y * 3200);

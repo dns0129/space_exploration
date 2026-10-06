@@ -119,3 +119,25 @@ test("density changes drag; unassisted near-surface flight feels gravity; malfor
   assert.equal(landed.landedBody, "proxima-b");
   assert.equal(validateFlightState({ ...landed.snapshot(), systemId: "solar" }), null);
 });
+
+test("Earth has continuous kilometre-scale mountain ranges and collision follows their peaks", () => {
+  let low = Infinity, high = -Infinity, summit;
+  for (let x = -100; x <= 100; x += 4) for (let y = -100; y <= 100; y += 4) {
+    const normal = new THREE.Vector3(x / 6371, y / 6371, -1).normalize();
+    const height = terrainHeightKm("earth", normal.toArray());
+    assert(height >= 0 && height < 5.3);
+    low = Math.min(low, height);
+    if (height > high) { high = height; summit = normal; }
+    const next = normal.clone().add(new THREE.Vector3(0.001 / 6371, 0, 0)).normalize();
+    assert(Math.abs(height - terrainHeightKm("earth", next.toArray())) < 0.005,
+      "a metre of lateral travel must not produce a height discontinuity");
+  }
+  assert(high - low > 3, "a 200 km region must show mountains rather than metre-scale bumps");
+  const ship = new ShipDynamics();
+  place(ship, "earth", 0.02, summit);
+  assert(Math.abs(ship.environment.groundAltitudeKm - 0.02) < 0.00001);
+  assert.equal(ship.startLanding(), null);
+  for (let i = 0; i < 1600 && ship.landingPhase !== "landed"; i++) ship.step(0.05, emptyInput());
+  assert.equal(ship.landingPhase, "landed");
+  assert(Math.abs(ship.environment.groundAltitudeKm) < 0.00001);
+});

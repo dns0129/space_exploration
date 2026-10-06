@@ -75,7 +75,8 @@ export class SurfaceScene {
     this.groundDetail.needsUpdate = true;
     this.sky = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.skyMaterial);
     this.sky.frustumCulled = false;
-    this.sky.renderOrder = 100;
+    // Composite the sky before local terrain so mountain silhouettes occlude it.
+    this.sky.renderOrder = -20;
     this.sky.visible = false;
     this.group.add(this.light, this.light.target, this.ambient);
     this.group.visible = false;
@@ -110,7 +111,7 @@ export class SurfaceScene {
     this.group.visible = env.profile.solid && env.groundAltitudeKm < 70 && !ship.warping;
     if (!this.group.visible) return;
     const surfacePoint = center.clone().addScaledVector(env.outward, env.body.radius);
-    if (!this.terrain || this.bodyId !== env.body.id || this.anchor.distanceTo(surfacePoint) * ship.config.unitsKm > Math.max(1.5, this.tileExtentKm * 0.35)
+    if (!this.terrain || this.bodyId !== env.body.id || this.anchor.distanceTo(surfacePoint) * ship.config.unitsKm > (env.body.id === "earth" && env.groundAltitudeKm < 10 ? 2 : Math.max(1.5, this.tileExtentKm * 0.35))
       || this.tileExtentKm > this.requiredExtentKm(ship) * 1.7
       || this.tileExtentKm < this.requiredExtentKm(ship) * 0.58) {
       this.rebuild(ship, surfacePoint);
@@ -130,7 +131,7 @@ export class SurfaceScene {
   private requiredExtentKm(ship: ShipDynamics) {
     // Cover the curved horizon while concentrating vertices around the pilot.
     const env = ship.environment;
-    return Math.max(28, Math.min(900, Math.sqrt(env.body.radius * ship.config.unitsKm * Math.max(0.02, env.groundAltitudeKm)) * 1.9));
+    return Math.max(env.body.id === "earth" ? 100 : 28, Math.min(900, Math.sqrt(env.body.radius * ship.config.unitsKm * Math.max(0.02, env.groundAltitudeKm)) * 1.9));
   }
   private rebuild(ship: ShipDynamics, point: THREE.Vector3) {
     if (this.terrain) {
@@ -150,7 +151,7 @@ export class SurfaceScene {
     const tangent = new THREE.Vector3(0, 1, 0).cross(this.normal).normalize();
     if (tangent.lengthSq() < 0.1) tangent.set(1, 0, 0);
     const bitangent = this.normal.clone().cross(tangent).normalize();
-    const segments = env.groundAltitudeKm < 2 ? 144 : 96;
+    const segments = env.body.id === "earth" ? (env.groundAltitudeKm < 10 ? 192 : 160) : (env.groundAltitudeKm < 2 ? 144 : 96);
     const extentKm = this.tileExtentKm = this.requiredExtentKm(ship);
     this.terrainUniforms.groundExtent.value = extentKm * 1000;
     const positions: number[] = [], colors: number[] = [], indices: number[] = [], uvs: number[] = [];
@@ -165,12 +166,13 @@ export class SurfaceScene {
         .addScaledVector(this.normal, -env.body.radius);
       positions.push(local.x, local.y, local.z);
       uvs.push(dx * ship.config.unitsKm * 1000 / 128, dy * ship.config.unitsKm * 1000 / 128);
-      const shade = 0.72 + height * 3;
+      const shade = env.body.id === "earth" ? 0.88 + Math.min(height, 4) * 0.035 : 0.72 + height * 3;
       const color = ground.clone().multiplyScalar(shade);
       if (env.body.id === "earth") {
         const meadow = new THREE.Color("#70834f"), rock = new THREE.Color("#7d755b");
         color.lerp(meadow, 0.16 + 0.14 * Math.sin(radial.x * 2700 + radial.z * 1200));
-        color.lerp(rock, THREE.MathUtils.smoothstep(height, 0.09, 0.12) * 0.28);
+        color.lerp(rock, THREE.MathUtils.smoothstep(height, 1.2, 3.2) * 0.75);
+        color.lerp(new THREE.Color("#dce3e5"), THREE.MathUtils.smoothstep(height, 3.4, 4.7) * 0.85);
       }
       colors.push(color.r, color.g, color.b);
       if (x < segments && y < segments) {
@@ -201,7 +203,7 @@ export class SurfaceScene {
           diffuseColor.rgb *= 1.0 + grit * 0.07 * fade;`)
         .replace("#include <opaque_fragment>", `
           float groundDistance = length(groundPosition - groundCamera);
-          float haze = (1.0 - exp(-groundDistance / 23000.0)) * groundAtmosphere * 0.6;
+          float haze = (1.0 - exp(-groundDistance / 65000.0)) * groundAtmosphere * 0.48;
           vec3 groundView = normalize(groundPosition - groundCamera);
           float sunsetGlow = pow(max(dot(groundView, groundSun), 0.0), 12.0);
           outgoingLight = mix(outgoingLight, groundFog + vec3(0.06, 0.035, 0.012) * sunsetGlow * groundAtmosphere, haze);
