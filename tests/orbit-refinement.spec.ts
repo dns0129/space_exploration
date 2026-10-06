@@ -24,7 +24,7 @@ test("左右跃迁直线减速抵达，星球留在前方，存档保留落点",
     await page.getByRole("button",{name:"自由航行",exact:true}).click();
     await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode","flight");
     await page.locator("#flight-quality").selectOption("standard");
-    await expect(page.locator("canvas")).toHaveAttribute("data-ship-length-km","150");
+    await expect(page.locator("canvas")).toHaveAttribute("data-ship-length-km","10");
     await page.locator("#flight-resume").click();
     await page.keyboard.press("j");
     await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "arrival", { timeout: 40_000 });

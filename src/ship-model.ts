@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
-export const SHIP_LENGTH_KM = 150;
+export const SHIP_LENGTH_KM = 10;
 
 type HullSection = { z: number; width: number; top: number; bottom: number };
 const HULL_SECTIONS: HullSection[] = [
