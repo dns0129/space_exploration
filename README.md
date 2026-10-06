@@ -6,6 +6,12 @@
 
 [查看手机网站首页](docs/screenshots/site-mobile.png)。
 
+## 桌面客户端
+
+游戏现在支持独立 Electron 客户端，打开后直接进入自由航行，全部贴图随应用打包，航行存档保存为本机文件。运行 `npm ci` 后执行 `npm run desktop` 启动；执行 `npm run package:desktop -- --mac --arm64` 生成 Apple 芯片 Mac 的 DMG 与 ZIP。其他平台配置、存档目录、验证和测试包签名状态见 [桌面客户端说明](docs/DESKTOP.md)。
+
+桌面安装包可在本机打包；仓库提供可启用的手动构建工作流模板，当前没有自动发布的客户端下载地址。
+
 **阶段 05：恒星系、大气、地表与着陆。** 在太阳系、半人马座 α 与参宿四的 3D 航区中驾驶飞船，环绕太阳和八颗行星，自由加速、平移、升降与翻滚；可使用座舱或外部视角。现在使用原生 8192 × 4096 银河全景（紧凑/软件渲染设备使用 4K），太阳、行星、卫星与半人马座天体使用高清影像及独立程序化细节，近距离不再出现贴图马赛克；行星半径和平均日距保持真实比例。跃迁引擎提供蓄能、航道飞行、减速抵达和冷却；Node.js 后端保存航行状态，原有观测功能保留。
 
 ## 下载即玩
@@ -174,9 +180,13 @@ npm run test:offline # 导出并验证断网驾驶、跃迁、本机保存与恢
 - `src/flight-controls.ts`、`src/flight-ui.ts`：键盘与触屏驾驶与仪表。
 - `src/ship-model.ts`：外部飞船模型与引擎尾焰。
 - `src/warp-effect.ts`：跃迁星光、航道和视场效果。
-- `src/flight-store.ts`：服务端存档与本机回退。
+- `src/flight-store.ts`：与平台无关的存档校验、按序保存及服务端/本机回退。
+- `src/core/flight-input.ts`：与 DOM 无关的六轴输入、语义动作和输入来源接口。
+- `src/platform/`：浏览器存储、HTTP 后端和统一纹理资源解析；未来客户端可注入自己的适配器。
 - `shared/`：前后端共用世界配置及航行状态校验。
 - `server/`：HTTP 服务、静态游戏页面、持久保存与测试。
 - `scripts/`：开发启动、独立导出与离线验证。
 - `src/body-textures.ts`：各天体的贴图、实测/概念标注、起伏与细节参数。
 - `public/textures/`：全部天体高清贴图，来源见 [ASSETS.md](ASSETS.md)；`scripts/prepare-body-textures.py` 按固定版本下载、校验和处理。
+
+网页版、网站和独立 HTML 共用同一套飞行与存档策略。未来客户端接口及迁移范围见 [客户端架构说明](docs/CLIENT-ARCHITECTURE.md)。

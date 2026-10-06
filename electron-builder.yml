@@ -1,0 +1,46 @@
+appId: com.voyager.spaceexploration
+productName: 星际探索
+executableName: Voyager
+artifactName: Voyager-${version}-${os}-${arch}.${ext}
+asar: true
+npmRebuild: false
+directories:
+  output: release-desktop
+  buildResources: desktop/build
+files:
+  - dist-desktop/**/*
+  - desktop/**/*.mjs
+  - desktop/preload.cjs
+  - desktop/build/icon.png
+  - shared/**/*.mjs
+  - shared/**/*.json
+  - package.json
+  - '!desktop/**/*.test.mjs'
+  - '!**/.env*'
+  - '!**/data/**'
+  - '!**/test-results/**'
+mac:
+  category: public.app-category.games
+  icon: desktop/build/icon.icns
+  identity: null
+  target:
+    - dmg
+    - zip
+dmg:
+  title: 星际探索 ${version}
+win:
+  icon: desktop/build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+linux:
+  category: Game
+  icon: desktop/build/icon.png
+  target:
+    - target: AppImage
+      arch: [x64]

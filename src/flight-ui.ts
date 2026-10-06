@@ -9,7 +9,7 @@ const $ = <T extends HTMLElement = HTMLElement>(s: string) =>
 export class FlightInterface {
   active = false;
   private scene?: SolarScene;
-  private store = new FlightStore();
+  private readonly store: FlightStore;
   private saved: FlightState | null = null;
   private paused = false;
   private warpPhase: FlightStats["warpPhase"] = "ready";
@@ -29,7 +29,9 @@ export class FlightInterface {
   constructor(
     notify: (message: string) => void,
     changed: (active: boolean, target?: BodyId) => void,
+    store: FlightStore,
   ) {
+    this.store = store;
     this.notify = notify;
     this.changed = changed;
     document.querySelector(".main")!.insertAdjacentHTML(
@@ -149,6 +151,13 @@ export class FlightInterface {
       $<HTMLButtonElement>("#flight-resume").disabled = !saved;
     });
     return true;
+  }
+  async saveBeforeClose(): Promise<void> {
+    this.pause(true);
+    const state = this.active ? this.scene?.flightState() : undefined;
+    // Queue a fresh checkpoint even when an autosave is still being written.
+    if (state) await this.store.save(state);
+    await this.store.flush();
   }
   stop() {
     if (this.active) {

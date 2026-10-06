@@ -6,6 +6,7 @@ import { build } from "vite";
 
 const project = fileURLToPath(new URL("../", import.meta.url));
 const filename = "voyager-warp.html";
+const assetManifestModule = join(project, "src/platform/asset-manifest.ts");
 const textures = {};
 for (const file of (await readdir(join(project, "public/textures"))).filter((file) => /\.(jpg|png)$/.test(file)).sort()) {
   const bytes = await readFile(join(project, "public/textures", file));
@@ -20,17 +21,11 @@ const result = await build({
   publicDir: false,
   plugins: [
     {
-      name: "standalone-local-textures",
+      name: "standalone-asset-manifest",
       enforce: "pre",
-      transform(code, id) {
-        if (!id.endsWith("/src/planet-scene.ts")) return;
-        const location = "`${import.meta.env.BASE_URL}textures/${file}`";
-        if (!code.includes(location))
-          throw new Error("Texture loader changed; update the export adapter.");
-        return {
-          code: `const inlineTextureAssets = ${JSON.stringify(textures)};\n` + code.replaceAll(location, "inlineTextureAssets[file]"),
-          map: null,
-        };
+      load(id) {
+        if (id !== assetManifestModule) return;
+        return `export const textureAssets = ${JSON.stringify(textures)};\nexport const embeddedAssets = true;`;
       },
     },
   ],
