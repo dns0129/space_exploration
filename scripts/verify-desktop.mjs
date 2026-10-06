@@ -71,7 +71,11 @@ try {
   assert(manual && manual.elapsed > 0 && manual.camera === "chase");
   assert.equal(await page.evaluate(() => localStorage.getItem("voyager-flight-v1")), null);
 
-  const pixels = PNG.sync.read(await page.locator("canvas").screenshot());
+  // Adaptive resolution can change the canvas's intrinsic size between frames.
+  // Capture its visible viewport without waiting for intrinsic geometry stability.
+  const bounds = await page.locator("canvas").boundingBox();
+  assert(bounds && bounds.width > 0 && bounds.height > 0);
+  const pixels = PNG.sync.read(await page.screenshot({ clip: bounds }));
   let bright = 0;
   for (let i = 0; i < pixels.data.length; i += 4)
     if (pixels.data[i] + pixels.data[i + 1] + pixels.data[i + 2] > 240) bright++;
