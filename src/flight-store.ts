@@ -7,6 +7,7 @@ export class FlightStore {
   online = false;
   private readonly services: FlightStoreServices;
   private pendingSave: Promise<void> = Promise.resolve();
+  private lastSave: Promise<"server" | "local"> | undefined;
 
   constructor(services: FlightStoreServices) {
     this.services = services;
@@ -53,7 +54,13 @@ export class FlightStore {
     // File and IPC adapters are asynchronous: checkpoints must finish in order.
     const saving = this.pendingSave.then(() => this.write(safe));
     this.pendingSave = saving.then(() => {}, () => {});
+    this.lastSave = saving;
     return saving;
+  }
+
+  /** Wait for checkpoints queued when leaving flight before native shutdown. */
+  flush(): Promise<void> {
+    return this.lastSave ? this.lastSave.then(() => {}) : Promise.resolve();
   }
 
   private async write(safe: FlightState): Promise<"server" | "local"> {
