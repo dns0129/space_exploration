@@ -25,6 +25,10 @@ export function validateFlightState(value) {
     !vector(value.orientation, 4, 1.01) ||
     !ids.has(value.target) ||
     (value.systemId !== undefined && !systemIds.has(value.systemId)) ||
+    (value.escapeBody !== undefined && !ids.has(value.escapeBody)) ||
+    (value.engineMode !== undefined && !["standard", "interstellar"].includes(value.engineMode)) ||
+    (value.atmosphericSpeedMps !== undefined && (typeof value.atmosphericSpeedMps !== "number"
+      || !Number.isFinite(value.atmosphericSpeedMps) || value.atmosphericSpeedMps < 1 || value.atmosphericSpeedMps > 1000)) ||
     !["cockpit", "chase"].includes(value.camera) ||
     typeof value.assist !== "boolean" ||
     typeof value.elapsed !== "number" ||
@@ -63,6 +67,8 @@ export function validateFlightState(value) {
     ...(value.landedBody ? { landedBody: value.landedBody } : {}),
     systemId: value.version === 1 ? "solar" : value.systemId ?? "solar",
     ...(value.version === 2 && ids.has(value.escapeBody) ? { escapeBody: value.escapeBody } : {}),
+    engineMode: value.version === 2 ? value.engineMode ?? "standard" : "standard",
+    atmosphericSpeedMps: value.version === 2 ? value.atmosphericSpeedMps ?? 1000 : 1000,
     position,
     velocity: value.version === 1 ? [0, 0, 0] : [...value.velocity],
     orientation: value.orientation.map((n) => n / (Math.abs(norm - 1) < 1e-10 ? 1 : norm)),

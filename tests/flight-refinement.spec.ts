@@ -89,9 +89,19 @@ test("大气层内恢复高速存档会限为最低档，切换目标和 J 都�
   await page.locator("#flight-resume").click();
   await page.getByRole("button", { name: "暂停航行", exact: true }).click();
   await expect(page.locator("#flight-ui")).toHaveAttribute("data-environment", "atmosphere");
-  await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 大气层");
+  await expect(page.locator("#flight-engine")).toHaveText("极低大气引擎 · 大气层");
   await expect(page.locator("#flight-jump")).toBeDisabled();
-  await expect(page.locator("#warp-hint")).toContainText("1000 km 内禁止跃迁");
+  await expect(page.locator("#flight-orbital")).toBeDisabled();
+  await page.keyboard.press("o");
+  await expect(page.locator("#flight-engine")).toHaveAttribute("data-engine", "atmospheric");
+  await page.locator("#flight-propulsion summary").click();
+  await page.locator("#flight-engine-mode").selectOption("interstellar");
+  await expect(page.locator("#flight-engine-mode")).toHaveValue("standard");
+  await page.locator("#flight-low-speed-number").fill("250");
+  await page.locator("#flight-low-speed-number").press("Tab");
+  await expect(page.locator("#flight-low-speed")).toHaveValue("250");
+  await expect(page.locator("#flight-engine-range")).toHaveText("1–1,000 m/s · 当前上限 250 m/s");
+  await expect(page.locator("#warp-hint")).toContainText("大气层内禁止跃迁");
   await page.locator('button[data-body="mars"]').click();
   await page.keyboard.press("j");
   await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready");
@@ -99,7 +109,59 @@ test("大气层内恢复高速存档会限为最低档，切换目标和 J 都�
   await page.locator("#flight-save").click();
   await expect(page.locator("#flight-storage")).toHaveText("已保存 · 服务端");
   const saved = await (await page.request.get("/api/flight/save")).json();
-  expect(Math.hypot(...saved.state.velocity) * world.unitsKm).toBeLessThanOrEqual(100.00001);
+  expect(Math.hypot(...saved.state.velocity) * world.unitsKm).toBeLessThanOrEqual(0.25001);
+  expect(saved.state.engineMode).toBe("standard");
+  expect(saved.state.atmosphericSpeedMps).toBe(250);
   expect(saved.state.target).toBe("mars");
   await page.screenshot({ path: info.outputPath("atmosphere-restriction.png") });
+});
+
+test("朝太空且高于十公里时按 O 手动启动轨道引擎，大气内仍遵守选定航速并保存启动状态", async ({ page }, info) => {
+  test.setTimeout(120000);
+  const world = await (await page.request.get("/api/world")).json();
+  const earth = world.bodies.find((body: any) => body.id === "earth");
+  await page.request.get("/api/flight/save");
+  const response = await page.request.post("/api/flight/save", { data: {
+    version: 2, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 40 / world.unitsKm],
+    velocity: [0, 0, 0], orientation: [0, 1, 0, 0], target: "earth", camera: "cockpit", assist: true, elapsed: 0,
+    engineMode: "standard", atmosphericSpeedMps: 600,
+  } });
+  expect(response.ok()).toBe(true);
+  await launch(page);
+  await page.locator("#flight-resume").click();
+  await expect(page.locator("#flight-engine")).toHaveText("极低大气引擎 · 大气层");
+  await expect(page.locator("#flight-orbital")).toBeEnabled();
+  if (info.project.name === "mobile") await page.locator("#flight-orbital").click();
+  else await page.keyboard.press("o");
+  await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 大气层");
+  await expect(page.locator("#flight-orbital")).toBeDisabled();
+  await expect(page.locator("#flight-engine-range")).toHaveText("1–1,000 m/s · 当前上限 600 m/s");
+  if (info.project.name === "mobile") {
+    const button = page.locator('[data-flight-input="KeyW"]');
+    const box = (await button.boundingBox())!;
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 0 }] });
+    try {
+      await expect.poll(async () => Number((await page.locator("#flight-speed").innerText()).replace(/[^0-9.]/g, ""))).toBeGreaterThan(0.1);
+    } finally {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await cdp.detach();
+    }
+  } else {
+    await page.keyboard.down("KeyW");
+    try {
+      await expect.poll(async () => Number((await page.locator("#flight-speed").innerText()).replace(/[^0-9.]/g, ""))).toBeGreaterThan(0.1);
+    } finally {
+      await page.keyboard.up("KeyW");
+    }
+  }
+  await page.getByRole("button", { name: "暂停航行", exact: true }).click();
+  await page.locator("#flight-save").click();
+  await expect(page.locator("#flight-storage")).toHaveText("已保存 · 服务端");
+  const saved = await (await page.request.get("/api/flight/save")).json();
+  expect(saved.state.escapeBody).toBe("earth");
+  expect(saved.state.atmosphericSpeedMps).toBe(600);
+  expect(Math.hypot(...saved.state.velocity) * world.unitsKm).toBeLessThanOrEqual(0.60001);
+  await page.locator("#flight-resume").click();
+  await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 大气层");
 });

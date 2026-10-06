@@ -53,13 +53,13 @@ test("100 km 大气可见、随高度连续变浓，越过边界不跳变，夜�
     await expect(page.locator("#flight-altitude")).toHaveText(`${altitude.toLocaleString("en-US", { maximumFractionDigits: 0 })} km 高度`);
     if (id === "earth" && altitude < 160) await expect(page.locator("#flight-ui")).toHaveAttribute("data-environment", "atmosphere");
     else await expect(page.locator("#flight-atmosphere")).toHaveText("真空环境 · 无大气阻力");
-    const image = PNG.sync.read(await page.locator("canvas").screenshot({ style: ".flight-ui { visibility: hidden !important; }" }));
+    const image = PNG.sync.read(await page.locator("canvas").screenshot({ style: ".flight-ui, .destination-selectors { visibility: hidden !important; }" }));
     images.set(name, average(image));
     await page.screenshot({ path: info.outputPath(`atmosphere-${name}.png`) });
     if (name === "entry" || name === "horizon" || name === "entry-down") {
       await page.locator("#flight-camera").click();
       await expect(page.locator("#flight-ui")).toHaveAttribute("data-environment", "atmosphere");
-      const chase = PNG.sync.read(await page.locator("canvas").screenshot({ style: ".flight-ui { visibility: hidden !important; }" }));
+      const chase = PNG.sync.read(await page.locator("canvas").screenshot({ style: ".flight-ui, .destination-selectors { visibility: hidden !important; }" }));
       expect(average(chase)[2], "外部镜头在 100 km 仍应看到大气").toBeGreaterThan(35);
       await page.screenshot({ path: info.outputPath(`atmosphere-${name}-chase.png`) });
     }
@@ -70,6 +70,7 @@ test("100 km 大气可见、随高度连续变浓，越过边界不跳变，夜�
   expect(Math.abs(blue("edge-out") - blue("edge-in")), "大气边界两侧应连续").toBeLessThan(8);
   expect(blue("entry") - blue("night"), "夜面不能出现白昼的蓝天").toBeGreaterThan(25);
   expect(blue("low") - blue("moon"), "无大气天体不应产生蓝色天空").toBeGreaterThan(50);
+  expect(images.get("entry-down")![1], "独立星球场景在100km俯视必须保留完整地表与云层，不能形成黑洞").toBeGreaterThan(35);
   expect(errors).toEqual([]);
 });
 
@@ -93,7 +94,7 @@ test("俯冲时外部镜头保持飞船在画内，并以行星地平线稳定�
   await page.locator("#flight-resume").click();
   await expect(page.locator("#flight-altitude")).toHaveText("100 km 高度");
   await expect(page.locator("#flight-ui")).toHaveAttribute("data-environment", "atmosphere");
-  const image = PNG.sync.read(await page.locator("canvas").screenshot({ style: ".flight-ui { visibility: hidden !important; }" }));
+  const image = PNG.sync.read(await page.locator("canvas").screenshot({ style: ".flight-ui, .destination-selectors { visibility: hidden !important; }" }));
   let trim = 0;
   for (let y = Math.floor(image.height * 0.2); y < image.height * 0.8; y++)
     for (let x = Math.floor(image.width * 0.25); x < image.width * 0.75; x++) {

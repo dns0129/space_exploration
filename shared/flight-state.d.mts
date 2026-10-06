@@ -9,6 +9,8 @@ export interface FlightState {
   assist: boolean;
   elapsed: number;
   escapeBody?: BodyId;
+  engineMode?: "standard" | "interstellar";
+  atmosphericSpeedMps?: number;
   landedBody?: BodyId;
   systemId: SystemId;
 }
@@ -27,7 +29,7 @@ export interface WorldConfig {
     warpTargetRadiusFactor: number;
   };
   engines: {
-    id: "orbital" | "planetary" | "interstellar";
+    id: "atmospheric" | "orbital" | "planetary" | "interstellar";
     name: string;
     minSpeedKm: number;
     maxSpeedKm: number;

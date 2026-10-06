@@ -3,6 +3,18 @@ export function atmosphereStrength(id: string) {
   return id === "mars" ? 0.55 : id === "venus" || id === "titan" ? 2.2 : 1.5;
 }
 
+/** Local weather art is separate from orbital texture maps and collision density. */
+export function atmosphereCloudProfile(id: string, atmosphereKm: number) {
+  if (id === "earth") return { scale: 1, opacity: 1, coverage: 0, tint: "#ffffff" };
+  if (id === "venus") return { scale: 3, opacity: 1, coverage: 0.22, tint: "#eed0a0" };
+  if (id === "titan") return { scale: 2.2, opacity: 0.7, coverage: 0.12, tint: "#dbc3a2" };
+  if (id === "proxima-b") return { scale: 0.8, opacity: 0.75, coverage: 0.08, tint: "#e7cdbd" };
+  if (id === "proxima-c") return { scale: 3, opacity: 0.85, coverage: 0.1, tint: "#d3e6ed" };
+  if (["jupiter", "saturn", "uranus", "neptune"].includes(id))
+    return { scale: Math.max(3, Math.min(16, atmosphereKm / 100)), opacity: 0.95, coverage: 0.24, tint: "#eee4d3" };
+  return { scale: 1, opacity: 0, coverage: 0, tint: "#ffffff" };
+}
+
 /** Shared by the orbital shell and the local sky; all lengths use the caller's same unit. */
 export const atmosphereScattering = /* glsl */ `
   vec4 scatterAtmosphere(vec3 up, float altitude, vec3 ray, float radius,
@@ -35,6 +47,11 @@ export const atmosphereScattering = /* glsl */ `
     float mu = dot(ray, sunDirection);
     float rayleigh = 0.68 * (1.0 + mu * mu);
     float mie = 0.055 / pow(max(1.0 + 0.72 * 0.72 - 1.44 * mu, 0.07), 1.5);
+    // Blue worlds retain a deeper zenith above their pale aerosol horizon;
+    // orange dusty atmospheres keep their own profile instead of turning blue.
+    float blueSky = smoothstep(1.1, 1.5, tint.b / max(tint.r, 0.02));
+    vec3 molecularTint = tint * mix(vec3(1.0), vec3(0.54, 0.77, 1.06),
+      smoothstep(0.1, 0.8, dot(up, ray)) * blueSky * 0.32);
     for (int i = 0; i < 8; i++) {
       float t = entry + (float(i) + 0.5) * stepLength;
       vec3 point = up * radial + ray * t;
@@ -49,7 +66,7 @@ export const atmosphereScattering = /* glsl */ `
       float day = smoothstep(-0.16 - horizonDip, 0.14, solarElevation);
       float sunset = exp(-pow((solarElevation + 0.035) * 7.0, 2.0));
       float lowLayer = aerosol / max(molecular + aerosol, 0.00001);
-      vec3 molecularColor = tint * rayleigh * mix(0.004, 1.0, day);
+      vec3 molecularColor = molecularTint * rayleigh * mix(0.004, 1.0, day);
       vec3 aerosolColor = mix(tint * 0.72, vec3(0.9, 0.84, 0.75), lowLayer * 0.8);
       vec3 color = mix(molecularColor, aerosolColor * day, lowLayer * 0.6);
       // Longer paths at the terminator remove blue light before it reaches us.

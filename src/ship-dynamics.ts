@@ -45,6 +45,8 @@ export class ShipDynamics {
   bank = 0;
   deceleration = 0;
   private escapeBody: BodyId | null = null;
+  atmosphericSpeedMps = 1000;
+  engineMode: "standard" | "interstellar" = "standard";
   target: BodyId = "earth";
   systemId: SystemId = "solar";
   camera: "cockpit" | "chase" = "cockpit";
@@ -115,6 +117,8 @@ export class ShipDynamics {
       ...(this.landedBody ? { landedBody: this.landedBody } : {}),
       systemId: this.systemId,
       ...(this.escapeBody ? { escapeBody: this.escapeBody } : {}),
+      engineMode: this.engineMode,
+      atmosphericSpeedMps: this.atmosphericSpeedMps,
       position: this.position.toArray(),
       velocity: this.velocity.toArray(),
       orientation: this.orientation.toArray(),
@@ -138,6 +142,8 @@ export class ShipDynamics {
     this.bank = 0;
     this.target = saved.target;
     this.escapeBody = saved.escapeBody ?? null;
+    this.engineMode = saved.engineMode ?? "standard";
+    this.atmosphericSpeedMps = saved.atmosphericSpeedMps ?? 1000;
     this.camera = saved.camera;
     this.assist = saved.assist;
     this.elapsed = saved.elapsed;
@@ -167,27 +173,61 @@ export class ShipDynamics {
     const density = atmospheric ? profile.density * Math.exp(-Math.max(0, altitudeKm) / profile.scaleKm) : 0;
     const headingOut = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation).dot(outward) > 0.25;
     const movingOut = this.velocity.dot(outward) >= -1e-9;
-    const escaping = altitudeKm <= nearHeightKm + SURFACE_EPSILON_KM && headingOut && movingOut
-      && (altitudeKm <= 100 + SURFACE_EPSILON_KM || this.escapeBody === body.id);
-    const restricted = altitudeKm <= nearHeightKm + SURFACE_EPSILON_KM && !escaping;
+    const lowFlight = atmospheric || (profile.solid && groundAltitudeKm <= 10 + SURFACE_EPSILON_KM);
+    const escaping = this.escapeBody === body.id && headingOut && movingOut
+      && groundAltitudeKm > 10 + SURFACE_EPSILON_KM;
+    const orbitalRequired = altitudeKm <= nearHeightKm + SURFACE_EPSILON_KM && !escaping;
+    const restricted = lowFlight || orbitalRequired;
     return { body, altitudeKm: Math.max(0, altitudeKm), atmospheric, restricted, nearHeightKm, escaping,
-      profile, density, groundHeightKm, groundAltitudeKm, outward };
+      profile, density, groundHeightKm, groundAltitudeKm, outward, headingOut, movingOut, lowFlight, orbitalRequired };
   }
   get speedLimit() {
     const environment = this.environment;
-    if (environment.profile.solid && environment.groundAltitudeKm < 5)
-      return Math.min(100, 0.02 + environment.groundAltitudeKm * 4) / this.config.unitsKm;
-    return (environment.restricted ? this.config.engines[0].maxSpeedKm
-      : environment.escaping ? this.config.engines[1].maxSpeedKm
-      : this.config.boostSpeed * this.config.unitsKm) / this.config.unitsKm;
+    return (environment.lowFlight ? this.atmosphericSpeedMps / 1000
+      : environment.orbitalRequired ? this.config.engines.find(engine => engine.id === "orbital")!.maxSpeedKm
+      : this.engineMode === "interstellar" ? this.config.boostSpeed * this.config.unitsKm
+      : this.config.cruiseSpeed * this.config.unitsKm) / this.config.unitsKm;
   }
   get engine() {
     const environment = this.environment;
-    if (environment.restricted) return this.config.engines[0];
-    if (environment.escaping) return this.config.engines[1];
+    if (environment.lowFlight) return this.config.engines.find(engine => engine.id ===
+      (environment.escaping ? "orbital" : "atmospheric"))!;
+    if (environment.orbitalRequired) return this.config.engines.find(engine => engine.id === "orbital")!;
+    if (this.engineMode === "interstellar") return this.config.engines.find(engine => engine.id === "interstellar")!;
     const speedKm = this.velocity.length() * this.config.unitsKm;
-    return this.config.engines.find((engine) => speedKm < engine.maxSpeedKm)
-      ?? this.config.engines[this.config.engines.length - 1];
+    return this.config.engines.find((engine) => engine.id === "orbital" && speedKm < engine.maxSpeedKm)
+      ?? this.config.engines.find(engine => engine.id === "planetary")!;
+  }
+  setAtmosphericSpeed(metresPerSecond: number) {
+    if (!Number.isFinite(metresPerSecond)) return;
+    this.atmosphericSpeedMps = THREE.MathUtils.clamp(metresPerSecond, 1, 1000);
+    if (this.environment.lowFlight) this.velocity.clampLength(0, this.speedLimit);
+  }
+  setEngineMode(mode: "standard" | "interstellar"): string | null {
+    if (mode !== "standard" && mode !== "interstellar") return "未知引擎档位";
+    if (mode === "interstellar") {
+      if (this.warping || this.landingPhase !== "manual") return "请先结束自动航行，再切换星际引擎";
+      if (this.environment.restricted) return "请先启动近地轨道引擎并离开大气与低空区域，再切换星际引擎";
+    }
+    this.engineMode = mode;
+    this.velocity.clampLength(0, this.speedLimit);
+    return null;
+  }
+  get orbitalEngineActive() { return this.environment.escaping; }
+  get orbitalBlockReason(): string | null {
+    if (this.warping || this.landingPhase !== "manual") return "请先结束跃迁、着陆或起飞辅助";
+    const environment = this.environment;
+    if (environment.groundAltitudeKm <= 10 + SURFACE_EPSILON_KM) return "离地超过 10,000 m 后才能启动近地轨道引擎";
+    if (!environment.headingOut) return "请将船头朝向太空，再启动近地轨道引擎";
+    if (!environment.movingOut) return "请先刹停向地表漂移，再启动近地轨道引擎";
+    if (environment.escaping) return "近地轨道引擎已启动";
+    return null;
+  }
+  startOrbitalEngine(): string | null {
+    const blocked = this.orbitalBlockReason;
+    if (blocked) return blocked;
+    this.escapeBody = this.environment.body.id;
+    return null;
   }
   step(seconds: number, input: FlightInput) {
     const duration = Math.max(0, Math.min(seconds, 0.25));
@@ -242,17 +282,20 @@ export class ShipDynamics {
       this.velocity.copy(local.applyQuaternion(this.orientation));
     }
     const environment = this.environment;
-    this.escapeBody = environment.escaping ? environment.body.id : null;
+    if (!environment.escaping) this.escapeBody = null;
     const previousSpeedKm = this.velocity.length() * this.config.unitsKm;
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation);
-    const slowing = input.throttle < 0 && this.velocity.dot(forward) * this.config.unitsKm > 1;
+    const slowing = input.throttle < 0 && this.velocity.dot(forward) * this.config.unitsKm > 0.000001;
     const acceleration = new THREE.Vector3(
       input.strafe,
       input.lift,
       slowing ? 0 : -input.throttle,
     );
     if (acceleration.lengthSq() > 1) acceleration.normalize();
-    const engine = this.engine;
+    // Orbital thrust prepares a departure, while air and low-altitude control
+    // retain metre-scale acceleration and the manually selected speed cap.
+    const engine = environment.lowFlight
+      ? this.config.engines.find(engine => engine.id === "atmospheric")! : this.engine;
     acceleration
       .applyQuaternion(this.orientation)
       .multiplyScalar(
@@ -260,12 +303,15 @@ export class ShipDynamics {
           / this.config.unitsKm,
       );
     this.velocity.addScaledVector(acceleration, dt);
-    if (environment.atmospheric) this.velocity.multiplyScalar(Math.exp(-Math.min(4, environment.density * 0.45) * dt));
+    // Powered flight compensates drag; releasing thrust restores atmospheric
+    // drag and assisted drift, so each selected cruise speed remains reachable.
+    if (environment.atmospheric && !acceleration.lengthSq())
+      this.velocity.multiplyScalar(Math.exp(-Math.min(4, environment.density * 0.45) * dt));
     // Assisted near-ground flight counters local gravity; inertial flight must use lift.
     if (!this.assist && environment.profile.solid && environment.groundAltitudeKm < 5)
       this.velocity.addScaledVector(environment.outward, -environment.profile.gravity / 1000 / this.config.unitsKm * dt);
     if (input.brake || slowing) this.velocity.multiplyScalar(Math.exp(-(input.brake ? 8 : 2.8) * dt));
-    else if (this.assist) {
+    else if (this.assist && !acceleration.lengthSq()) {
       this.velocity.multiplyScalar(Math.exp(-0.1 * dt));
     }
     this.velocity.clampLength(0, this.speedLimit);
@@ -276,13 +322,17 @@ export class ShipDynamics {
     if (travel.lengthSq()) {
       for (const body of this.activeBodies) {
         const center = new THREE.Vector3().fromArray(body.position);
-        // An outward departure may cross its own safety shell; other bodies still brake it.
-        if (this.escapeBody === body.id && environment.escaping) continue;
-        const radius = body.radius + this.config.flightSafety.nearSurfaceMinKm / this.config.unitsKm;
+        const ownDeparture = this.escapeBody === body.id && environment.escaping;
+        // Explicit departure only unlocks the vacuum safety shell. Every
+        // atmospheric and low-altitude layer still brakes the entire vector.
+        const hardShellKm = Math.max(body.atmosphereKm ?? 0,
+          surfaceProfile(body.id).solid ? 10.125 : 0);
         const t = THREE.MathUtils.clamp(center.clone().sub(previous).dot(travel) / travel.lengthSq(), 0, 1);
-        if (previous.clone().addScaledVector(travel, t).distanceTo(center) <= radius) {
-          this.velocity.clampLength(0, this.config.engines[0].maxSpeedKm / this.config.unitsKm);
-          break;
+        const closestDistance = previous.clone().addScaledVector(travel, t).distanceTo(center);
+        if (hardShellKm > 0 && closestDistance <= body.radius + hardShellKm / this.config.unitsKm) {
+          this.velocity.clampLength(0, this.atmosphericSpeedMps / 1000 / this.config.unitsKm);
+        } else if (!ownDeparture && closestDistance <= body.radius + this.config.flightSafety.nearSurfaceMinKm / this.config.unitsKm) {
+          this.velocity.clampLength(0, this.config.engines.find(engine => engine.id === "orbital")!.maxSpeedKm / this.config.unitsKm);
         }
       }
     }
@@ -309,6 +359,7 @@ export class ShipDynamics {
     if (this.landingPhase !== "manual") return "请先起飞或中止着陆，再启动跃迁";
     if (this.warpPhase !== "ready") return "跃迁引擎正在工作或冷却";
     const environment = this.environment;
+    if (environment.atmospheric) return "大气层内禁止跃迁，请先启动近地轨道引擎并飞向太空";
     if (environment.altitudeKm <= this.config.flightSafety.nearSurfaceMinKm + SURFACE_EPSILON_KM) return "距天体表面 1000 km 内禁止跃迁，请先向太空离开";
     const target = this.config.bodies.find((body) => body.id === this.target)!;
     const altitudeKm = (this.targetRelative.length() - target.radius) * this.config.unitsKm;
@@ -410,8 +461,10 @@ export class ShipDynamics {
           const center = new THREE.Vector3().fromArray(body.position);
           const t = THREE.MathUtils.clamp(center.clone().sub(a).dot(line) / lengthSq, 0, 1);
           const closest = a.clone().addScaledVector(line, t);
+          const clearanceKm = Math.max(this.config.flightSafety.nearSurfaceMinKm,
+            body.atmosphereKm ? body.atmosphereKm + 50 : 0);
           const radius = Math.max(body.radius * (body.kind === "star" ? 1.3 : 1.005),
-            body.radius + this.config.flightSafety.nearSurfaceMinKm / this.config.unitsKm);
+            body.radius + clearanceKm / this.config.unitsKm);
           if (closest.distanceTo(center) >= radius) continue;
           if (t <= 0 || t >= 1) return null;
           const outward = closest.sub(center);
@@ -625,11 +678,19 @@ export class ShipDynamics {
     const altitude = (this.position.distanceTo(center) - body.radius) * this.config.unitsKm - ground;
     const ascending = this.landingPhase === "ascending";
     this.surfaceAttitude(normal, ascending);
-    const speedKm = ascending ? Math.min(0.5, Math.max(0.015, altitude * 0.8))
+    const proposedSpeedKm = ascending ? Math.min(0.5, Math.max(0.015, altitude * 0.8))
       : Math.min(2500, Math.max(0.005, altitude * 0.65));
+    const lowShellKm = Math.max(body.atmosphereKm ?? 0, ground + 10);
+    const lowFlightSpeedKm = this.atmosphericSpeedMps / 1000;
+    const radialAltitudeKm = ground + altitude;
+    let speedKm = proposedSpeedKm;
+    if (radialAltitudeKm <= lowShellKm + SURFACE_EPSILON_KM) speedKm = Math.min(lowFlightSpeedKm, speedKm);
+    else if (!ascending && radialAltitudeKm - speedKm * dt < lowShellKm)
+      speedKm = Math.min(speedKm, (radialAltitudeKm - lowShellKm) / dt);
     const nextAltitude = ascending ? altitude + speedKm * dt : Math.max(0, altitude - speedKm * dt);
     this.position.copy(center).addScaledVector(normal, body.radius + (ground + nextAltitude) / this.config.unitsKm);
-    this.velocity.copy(normal).multiplyScalar((ascending ? 1 : -1) * speedKm / this.config.unitsKm);
+    const finalSpeedKm = ground + nextAltitude <= lowShellKm + SURFACE_EPSILON_KM ? Math.min(lowFlightSpeedKm, speedKm) : speedKm;
+    this.velocity.copy(normal).multiplyScalar((ascending ? 1 : -1) * finalSpeedKm / this.config.unitsKm);
     this.elapsed += dt;
     if (!ascending && nextAltitude <= 0.00001) this.touchDown(body.id);
     else if (ascending && nextAltitude >= 2) { this.landingPhase = "manual"; this.landingBody = null; }

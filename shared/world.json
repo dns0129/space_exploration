@@ -2,9 +2,17 @@
   "version": 2,
   "unitsKm": 6371,
   "auKm": 149597870.7,
-  "cruiseSpeed": 7.848061528802386,
-  "boostSpeed": 7.848061528802386,
+  "cruiseSpeed": 1.5696123057604771,
+  "boostSpeed": 15.696123057604771,
   "engines": [
+    {
+      "id": "atmospheric",
+      "name": "极低大气引擎",
+      "minSpeedKm": 0.001,
+      "maxSpeedKm": 1,
+      "accelerationKm": 0.3,
+      "boostAccelerationKm": 0.8
+    },
     {
       "id": "orbital",
       "name": "近地轨道引擎",
@@ -25,7 +33,7 @@
       "id": "interstellar",
       "name": "星际引擎",
       "minSpeedKm": 10000,
-      "maxSpeedKm": 50000,
+      "maxSpeedKm": 100000,
       "accelerationKm": 10000,
       "boostAccelerationKm": 30000
     }

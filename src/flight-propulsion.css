@@ -1,0 +1,21 @@
+#flight-orbital { display: block; width: 100%; margin-top: 8px; }
+.flight-propulsion { margin-top: 10px; color: #a9cbd9; font-size: 11px; pointer-events: auto; }
+.flight-propulsion summary { cursor: pointer; padding: 5px 0; }
+.flight-propulsion label { display: block; margin: 12px 0 7px; }
+.flight-propulsion .flight-low-speed-fields { display: flex; align-items: center; gap: 8px; }
+.flight-low-speed-fields input { min-width: 0; pointer-events: auto; accent-color: #a3dce6; }
+.flight-low-speed-fields input[type="range"] { flex: 1; width: 100%; }
+.flight-low-speed-fields input[type="number"] { width: 62px; padding: 6px; border: 1px solid #7fb8ca55; border-radius: 4px; background: #091620; color: #d0e9ef; }
+.flight-propulsion select { width: 100%; max-width: 100%; }
+.flight-propulsion small { display: block; margin-top: 8px; line-height: 1.6; }
+.flight-title, .flight-instruments, .flight-marker, .flight-key-guide { text-shadow: 0 1px 3px #061019; }
+.flight-navigation:has(.flight-propulsion[open]) { max-height: calc(100% - 355px); overflow-y: auto; background: #0b1825ed; z-index: 5; }
+@media (min-width: 801px) {
+  .flight-surface { left: auto; right: 32px; top: 170px; bottom: auto; }
+}
+@media (max-width: 800px) {
+  .flight-propulsion { font-size: 9px; }
+  .flight-navigation:has(.flight-propulsion[open]) { max-height: calc(100% - 235px); }
+  .flight-ui:has(.flight-propulsion[open]) .flight-surface { visibility: hidden; }
+}
+@media (max-width: 700px) { .flight-surface { top: 365px; } }
