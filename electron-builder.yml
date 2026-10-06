@@ -24,10 +24,8 @@ mac:
   icon: desktop/build/icon.icns
   identity: null
   target:
-    - target: dmg
-      arch: [arm64, x64]
-    - target: zip
-      arch: [arm64, x64]
+    - dmg
+    - zip
 dmg:
   title: 星际探索 ${version}
 win:
