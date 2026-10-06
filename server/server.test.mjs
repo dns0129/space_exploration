@@ -775,13 +775,13 @@ test("a warp already inside the arrival margin preserves attitude and eases out 
   assert(Math.abs(ship.environment.altitudeKm - 1100) < 1e-5);
 });
 
-test("physical hull length is 150 km, small beside Earth's diameter", () => {
+test("physical hull length is 10 km, small beside Earth's diameter", () => {
   const model=createShip();
   const scale=SHIP_LENGTH_KM/(world.unitsKm*model.hullLength);
   model.group.scale.setScalar(scale); model.group.updateMatrixWorld(true);
   const hull=new THREE.Box3();
   for (const mesh of model.group.children.filter(child=>child instanceof THREE.Mesh)) hull.expandByObject(mesh);
-  assert(Math.abs((hull.max.z-hull.min.z)*world.unitsKm-150)<1e-5);
+  assert(Math.abs((hull.max.z-hull.min.z)*world.unitsKm-10)<1e-5);
   assert((hull.max.z-hull.min.z)/2<0.012);
 });
 
