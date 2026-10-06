@@ -57,7 +57,7 @@ Mac 默认存档为 `~/Library/Application Support/星际探索/flight.json`。�
 已打包的应用可以指定实际可执行文件运行同一验证。例如 Apple 芯片 Mac 的未压缩应用：
 
 ```sh
-VOYAGER_DESKTOP_EXECUTABLE="/absolute/path/release-desktop/mac-arm64/星际探索.app/Contents/MacOS/Voyager" node scripts/verify-desktop.mjs
+VOYAGER_DESKTOP_EXECUTABLE="/absolute/path/release-desktop/mac-arm64/Voyager.app/Contents/MacOS/Voyager" node scripts/verify-desktop.mjs
 ```
 
 路径需替换为本机实际输出。单元测试、源码运行、应用目录运行和安装包安装属于不同验证阶段；只有实际完成的阶段才可在交付记录中宣称通过。
