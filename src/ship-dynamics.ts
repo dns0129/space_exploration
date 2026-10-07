@@ -118,6 +118,7 @@ export class ShipDynamics {
   snapshot(): FlightState {
     return {
       version: 2,
+      worldLayoutVersion: this.config.layoutVersion ?? 1,
       ...(this.landedBody ? { landedBody: this.landedBody } : {}),
       systemId: this.systemId,
       ...(this.escapeBody ? { escapeBody: this.escapeBody } : {}),

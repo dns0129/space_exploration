@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { CelestialBody } from "./solar-system";
 import type { PlanetModel } from "./planet-models";
+import { orbitPosition } from "../shared/solar-orbits.mjs";
 
 /** Original fictional facility; unit radius bounds the complete 120 km span. */
 export function createStationModel(body: CelestialBody): PlanetModel {
@@ -61,9 +62,12 @@ export function createAsteroidBelt(unitsKm: number, auKm: number, ceres: number[
     let au: number;
     do { au = 2.1 + random() * 1.2; } while (Math.abs(au - 2.5) < 0.025 || Math.abs(au - 2.82) < 0.025 || Math.abs(au - 2.95) < 0.02);
     const radius = au * auKm / unitsKm;
-    positions[i] = Math.cos(angle) * radius;
-    positions[i + 1] = (random() - 0.5) * radius * 0.035;
-    positions[i + 2] = Math.sin(angle) * radius;
+    // Independent orbital planes form a broad belt around the ecliptic.
+    // A Rayleigh distribution favours modest inclinations, with a sparse tail;
+    // these are illustrative particles, not a measured asteroid catalogue.
+    const inclinationDeg = Math.min(30, 6 * Math.sqrt(-2 * Math.log(1 - random())));
+    const ascendingNodeDeg = random() * 360;
+    positions.set(orbitPosition(radius, angle * 180 / Math.PI, inclinationDeg, ascendingNodeDeg), i);
     const brightness = 0.25 + random() * 0.4;
     colors.set([brightness, brightness * 0.85, brightness * 0.68], i);
   }

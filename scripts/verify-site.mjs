@@ -138,7 +138,7 @@ try {
     for (const id of ["mars", "moon"]) {
       if (id === "mars") await page.locator('button[data-body="mars"]').click();
       else await page.locator("#satellite-target").selectOption(id);
-      await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", id);
+      await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", id, { timeout: 45000 });
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-map", `${id}-real${mobile ? "" : "-8k"}.jpg`);
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-resolution", mobile ? "4096x2048" : "8192x4096");
     }

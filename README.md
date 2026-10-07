@@ -10,6 +10,8 @@
 
 ## 下载即玩
 
+太阳系行星和谷神星已按参考轨道倾角与升交点方向分布在不同平面，小行星带也具有立体厚度。平均日距保持不变，卫星随母星移动，旧近景、着陆和徒步存档支持迁移；位置仍为静态示意，详见 [轨道与带区说明](docs/ORBITAL-EXPLORATION.md)。
+
 最新离线 ZIP 包含精细飞船、独立程序星球、8K 银河与立体穿云/地表过渡。也可进入 [在线游戏](https://dns0129.github.io/space_exploration/game.html) 驾驶。
 
 下载 [自由航行游戏包](https://github.com/dns0129/space_exploration/raw/refs/heads/main/downloads/voyager-warp.zip)，解压后将 **`voyager-warp.html`** 拖入 Chrome 或 Edge。点击顶部“自由航行”，再按 **W** 出发。
