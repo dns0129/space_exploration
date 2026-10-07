@@ -81,7 +81,7 @@ try {
     if (id === "earth") {
       await page.locator("#quality").selectOption("ultra");
       await expect(page.locator("canvas")).toHaveAttribute("data-earth-maps", "8k", { timeout: 60_000 });
-      await page.locator('.primary-button[data-view="close"]').click();
+      await page.locator('#control-panel button[data-view="close"]').click();
       await expect(page.locator("canvas")).toHaveAttribute("data-earth-detail-tiles", "4", { timeout: 60_000 });
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-kind", "native");
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-body", "earth");
@@ -101,7 +101,7 @@ try {
     }
     if (id !== "earth" && id !== "earth-station") {
       await page.locator("#quality").selectOption("ultra");
-      await page.locator('.primary-button[data-view="close"]').click();
+      await page.locator('#control-panel button[data-view="close"]').click();
       const canvas = page.locator("canvas");
       await expect(canvas).toHaveAttribute("data-surface-detail-status", "ready", { timeout: 60_000 });
       await expect(canvas).toHaveAttribute("data-surface-detail-body", id);
