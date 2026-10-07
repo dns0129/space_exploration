@@ -7,6 +7,7 @@ import { chromium, expect, devices } from "@playwright/test";
 import { PNG } from "pngjs";
 import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
+import { verifyWalkingFlight } from "./verify-walking.mjs";
 
 const root = fileURLToPath(new URL("../dist-site/", import.meta.url));
 const output = fileURLToPath(new URL("../test-results/site/", import.meta.url));
@@ -218,6 +219,7 @@ try {
     await page.screenshot({ path: resolve(output, `centauri-${name}.png`) });
     await verifyBetelgeuseFlight(page);
     await verifySurfaceFlight(page);
+    await verifyWalkingFlight(page);
     await page.screenshot({ path: resolve(output, `landed-${name}.png`) });
     // A changed deployment offers refresh and leaves the current flight intact.
     await page.route("**/version.json?*", (route) =>

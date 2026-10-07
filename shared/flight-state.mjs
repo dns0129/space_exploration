@@ -15,6 +15,48 @@ const vector = (value, count, bound) =>
   value.every(
     (n) => typeof n === "number" && Number.isFinite(n) && Math.abs(n) <= bound,
   );
+// Keep walking saves in the ship's metre-scale frame; never subtract two AU-scale character positions.
+export function validateWalkingState(value, flight, config = world) {
+  if (!value || typeof value !== "object" || !flight || value.bodyId !== flight.landedBody
+    || !vector(value.offsetM, 3, 1e6) || Math.hypot(...value.offsetM) > 1e6
+    || !vector(value.velocityMps, 3, 60) || Math.hypot(...value.velocityMps) > 60
+    || !vector(value.orientation, 4, 1.01)
+    || typeof value.pitch !== "number" || !Number.isFinite(value.pitch) || Math.abs(value.pitch) > 1.35
+    || typeof value.grounded !== "boolean"
+    || (value.camera !== undefined && !["first", "third"].includes(value.camera))
+    || !vector(flight.position, 3, 1e12) || !vector(flight.velocity, 3, 1e12)
+    || Math.hypot(...flight.velocity) > 1e-9) return null;
+  const body = config.bodies.find(candidate => candidate.id === value.bodyId);
+  if (!body || !surfaceProfile(body.id).solid || body.kind === "star" || body.kind === "station"
+    || (body.systemId ?? "solar") !== (flight.systemId ?? "solar")) return null;
+  const norm = Math.hypot(...value.orientation);
+  if (norm < 0.95 || norm > 1.05) return null;
+  const meters = config.unitsKm * 1000;
+  const anchorRadial = flight.position.map((n, i) => (n - body.position[i]) * meters);
+  const anchorDistance = Math.hypot(...anchorRadial);
+  if (!anchorDistance) return null;
+  const landingRadius = body.radius * meters
+    + (terrainHeightKm(body.id, anchorRadial.map(n => n / anchorDistance)) + LANDING_CLEARANCE_KM) * 1000;
+  if (Math.abs(anchorDistance - landingRadius) > 0.1) return null;
+  const radial = anchorRadial.map((n, i) => n + value.offsetM[i]);
+  const distance = Math.hypot(...radial);
+  if (!distance) return null;
+  const normal = radial.map(n => n / distance);
+  const clearance = distance - body.radius * meters - terrainHeightKm(body.id, normal) * 1000;
+  // 1.5 cm allows the landing anchor's floating-point round-off even at Neptune.
+  if (clearance < -0.015 || clearance > 2000
+    || (value.grounded && (Math.abs(clearance) > 0.015
+      || Math.abs(value.velocityMps.reduce((sum, n, i) => sum + n * normal[i], 0)) > 0.1))) return null;
+  return {
+    bodyId: value.bodyId,
+    offsetM: [...value.offsetM],
+    velocityMps: [...value.velocityMps],
+    orientation: value.orientation.map(n => n / norm),
+    pitch: value.pitch,
+    grounded: value.grounded,
+    ...(value.camera !== undefined ? { camera: value.camera } : {}),
+  };
+}
 export function validateFlightState(value) {
   if (
     !value ||
@@ -62,9 +104,14 @@ export function validateFlightState(value) {
     const height = terrainHeightKm(ground.id, offset.map((n) => n / distance)) + LANDING_CLEARANCE_KM;
     if (Math.abs(altitude - height) > 0.0001) return null;
   }
+  const walking = value.walking === undefined ? undefined : validateWalkingState(value.walking, {
+    position, velocity: value.velocity, landedBody: value.landedBody, systemId: value.systemId ?? "solar",
+  });
+  if (value.walking !== undefined && (value.version !== 2 || !walking)) return null;
   return {
     version: 2,
     ...(value.landedBody ? { landedBody: value.landedBody } : {}),
+    ...(walking ? { walking } : {}),
     systemId: value.version === 1 ? "solar" : value.systemId ?? "solar",
     ...(value.version === 2 && ids.has(value.escapeBody) ? { escapeBody: value.escapeBody } : {}),
     engineMode: value.version === 2 ? value.engineMode ?? "standard" : "standard",

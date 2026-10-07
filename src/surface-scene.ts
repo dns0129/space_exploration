@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { surfaceProfile, terrainHeightKm } from "../shared/surface.mjs";
 import type { ShipDynamics } from "./ship-dynamics";
+import type { WalkingDynamics } from "./walking-dynamics";
 import { atmosphereCloudProfile, atmosphereScattering, atmosphereStrength } from "./atmosphere";
 import { entryClouds } from "./entry-clouds";
 
@@ -18,6 +19,7 @@ export class SurfaceScene {
   private normal = new THREE.Vector3();
   private bodyId = "";
   private tileExtentKm = 10;
+  private walkingDetail = false;
   private readonly terrainUniforms = {
     groundCamera: { value: new THREE.Vector3() },
     groundFog: { value: new THREE.Color() },
@@ -152,7 +154,7 @@ export class SurfaceScene {
     uniforms.cloudColor.value.set(weather.tint);
     uniforms.time.value = ship.elapsed;
   }
-  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight) {
+  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight, walker?: WalkingDynamics) {
     this.updateSky(ship, camera, sunlight, true);
     const env = ship.environment;
     const center = new THREE.Vector3().fromArray(env.body.position);
@@ -160,12 +162,14 @@ export class SurfaceScene {
     const day = THREE.MathUtils.smoothstep(env.outward.dot(sun), -0.18, 0.12);
     this.group.visible = (env.profile.solid || !!env.body.atmosphereKm) && !ship.warping;
     if (!this.group.visible) return;
-    const surfacePoint = center.clone().addScaledVector(env.outward, env.body.radius);
+    const walking = !!walker?.active;
+    const surfacePoint = center.clone().addScaledVector(walking ? walker!.outward : env.outward, env.body.radius);
     if (!this.horizon || this.horizonBodyId !== env.body.id) this.rebuildHorizon(ship);
     const detailVisible = env.profile.solid && env.groundAltitudeKm < 70;
-    if (detailVisible && (!this.terrain || this.bodyId !== env.body.id || this.anchor.distanceTo(surfacePoint) * ship.config.unitsKm > (env.body.id === "earth" && env.groundAltitudeKm < 10 ? 2 : Math.max(1.5, this.tileExtentKm * 0.35))
+    if (detailVisible && (!this.terrain || this.walkingDetail !== walking || this.bodyId !== env.body.id || this.anchor.distanceTo(surfacePoint) * ship.config.unitsKm > (walking ? 0.032 : env.body.id === "earth" && env.groundAltitudeKm < 10 ? 2 : Math.max(1.5, this.tileExtentKm * 0.35))
       || this.tileExtentKm > this.requiredExtentKm(ship) * 1.7
       || this.tileExtentKm < this.requiredExtentKm(ship) * 0.58)) {
+      this.walkingDetail = walking;
       this.rebuild(ship, surfacePoint);
     }
     if (!detailVisible) this.anchor.copy(surfacePoint);
@@ -217,7 +221,7 @@ export class SurfaceScene {
     }
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     geometry.computeVertexNormals();
-    const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96 });
+    const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, transparent: true });
     material.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, this.terrainUniforms);
       shader.vertexShader = shader.vertexShader.replace("#include <common>",
@@ -259,6 +263,7 @@ export class SurfaceScene {
     };
     this.horizon = new THREE.Mesh(geometry, material);
     this.horizon.frustumCulled = false;
+    this.horizon.renderOrder = -15;
     this.group.add(this.horizon);
   }
   private requiredExtentKm(ship: ShipDynamics) {
@@ -280,19 +285,28 @@ export class SurfaceScene {
     const env = ship.environment;
     this.bodyId = env.body.id;
     this.anchor.copy(point);
-    this.normal.copy(env.outward);
+    this.normal.copy(point).sub(new THREE.Vector3().fromArray(env.body.position)).normalize();
     const tangent = new THREE.Vector3(0, 1, 0).cross(this.normal).normalize();
     if (tangent.lengthSq() < 0.1) tangent.set(1, 0, 0);
     const bitangent = this.normal.clone().cross(tangent).normalize();
-    const segments = env.body.id === "earth" ? (env.groundAltitudeKm < 10 ? 192 : 160) : (env.groundAltitudeKm < 2 ? 144 : 96);
+    const segments = this.walkingDetail ? 192 : env.body.id === "earth" ? (env.groundAltitudeKm < 10 ? 192 : 160) : (env.groundAltitudeKm < 2 ? 144 : 96);
     const extentKm = this.tileExtentKm = this.requiredExtentKm(ship);
     this.terrainUniforms.groundExtent.value = extentKm * 1000;
     const positions: number[] = [], colors: number[] = [], indices: number[] = [], uvs: number[] = [];
     const ground = new THREE.Color(surfaceProfile(env.body.id).ground);
+    const coordinate = (fraction: number) => {
+      const t = fraction * 2 - 1;
+      if (!this.walkingDetail) return Math.sinh(t * 4) / Math.sinh(4) * extentKm / ship.config.unitsKm;
+      // Keep a dense 180 m patch around the explorer and retain the existing distant horizon.
+      const a = Math.abs(t);
+      const km = a <= 0.7 ? a / 0.7 * 0.09
+        : 0.09 + (extentKm - 0.09) * ((a - 0.7) / 0.3) ** 3;
+      return Math.sign(t) * km / ship.config.unitsKm;
+    };
     for (let y = 0; y <= segments; y++) for (let x = 0; x <= segments; x++) {
       // Nonuniform spacing gives nearby hills fine geometry and a soft distant horizon.
-      const dx = Math.sinh((x / segments * 2 - 1) * 4) / Math.sinh(4) * extentKm / ship.config.unitsKm;
-      const dy = Math.sinh((y / segments * 2 - 1) * 4) / Math.sinh(4) * extentKm / ship.config.unitsKm;
+      const dx = coordinate(x / segments);
+      const dy = coordinate(y / segments);
       const radial = this.normal.clone().multiplyScalar(env.body.radius).addScaledVector(tangent, dx).addScaledVector(bitangent, dy).normalize();
       const height = terrainHeightKm(env.body.id, radial.toArray());
       const local = radial.clone().multiplyScalar(env.body.radius + height / ship.config.unitsKm)
@@ -349,7 +363,7 @@ export class SurfaceScene {
     this.terrain.renderOrder = -10;
     this.group.add(this.terrain);
     this.rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0),
-      new THREE.MeshStandardMaterial({ color: ground.clone().multiplyScalar(0.7), roughness: 1 }), 140);
+      new THREE.MeshStandardMaterial({ color: ground.clone().multiplyScalar(0.7), roughness: 1, transparent: true }), 140);
     const pose = new THREE.Object3D();
     for (let i = 0; i < 140; i++) {
       const angle = i * 2.399963;

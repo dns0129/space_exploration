@@ -2176,3 +2176,137 @@ dialog h2 {
 /* Keep long exploration destination titles above the facts and controls. */
 .planet-info[data-body="earth-station"] h1,
 .planet-info[data-body="ceres"] h1 { font-size: clamp(30px, 3vw, 44px); line-height: 1.25; }
+
+/* Surface exploration shares the flight overlay and leaves the scene available for dragging. */
+.walking-panel {
+  position: absolute;
+  top: 248px;
+  left: 34px;
+  width: 300px;
+  padding: 18px;
+  display: grid;
+  gap: 13px;
+  border: 1px solid #78cdb873;
+  border-left: 3px solid #8cddc3;
+  background: linear-gradient(120deg, #091d22f2, #07151ae6);
+  box-shadow: 0 12px 36px #0003;
+}
+.walking-panel[hidden] { display: none; }
+.walking-panel > strong { color: #e1eee9; font-size: 18px; font-weight: 400; letter-spacing: 2px; }
+.walking-panel .eyebrow { color: #91c9ba; font-size: 9px; }
+.walking-telemetry { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 10px; }
+.walking-telemetry > div { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.walking-telemetry > div:last-child { grid-column: 1 / -1; }
+.walking-telemetry span { color: #89a9aa; font-size: 9px; }
+.walking-telemetry b { color: #d4eee4; font-size: 17px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.walking-telemetry small { color: #a0b9b5; font-size: 10px; }
+.walking-panel p { margin: 0; color: #99b8b4; font-size: 10px; line-height: 1.8; }
+.flight-ui #flight-exit {
+  width: 100%;
+  padding: 12px 16px;
+  color: #dcfff0;
+  font-size: 13px;
+  background: #215443ed;
+  border-color: #9ae0ba99;
+  box-shadow: 0 0 22px #6db89b14;
+}
+.flight-ui #flight-exit:hover { background: #2b6c57; border-color: #c9ffde; }
+.flight-ui[data-mode="walking"] .flight-navigation,
+.flight-ui[data-landed="true"] .flight-navigation { padding: 10px 14px; }
+.flight-ui[data-mode="walking"] .flight-navigation > :not(#flight-target-label):not(#flight-target):not(#flight-land) { display: none; }
+.flight-ui[data-landed="true"]:not([data-mode="walking"]) .flight-navigation > :not(#flight-land) { display: none; }
+.flight-ui[data-mode="walking"] .flight-navigation h3 { margin: 9px 0 8px; font-size: 18px; }
+.flight-ui[data-mode="walking"] .walking-panel { top: 302px; }
+.flight-ui[data-mode="walking"] #flight-land { color: #d8f3e7; border-color: #8dd7b477; }
+.flight-ui[data-mode="walking"] [data-control-mode="flight"],
+.flight-ui[data-mode="walking"] .cockpit-frame,
+.flight-ui[data-mode="walking"] .flight-deceleration { display: none; }
+.flight-ui[data-mode="walking"] .flight-crosshair { width: 8px; height: 8px; border-color: #d3e9df88; }
+.flight-ui[data-mode="walking"] .flight-crosshair::before,
+.flight-ui[data-mode="walking"] .flight-crosshair::after { width: 2px; height: 2px; background: #e1eee9; }
+.flight-mode:has(#flight-ui[data-mode="walking"]) canvas { cursor: grab; }
+.flight-mode:has(#flight-ui[data-mode="walking"]) canvas:active { cursor: grabbing; }
+.flight-ui[data-mode="walking"] .flight-thrust-pad [data-flight-input="KeyW"] { grid-column: 2; grid-row: 1; }
+.flight-ui[data-mode="walking"] .flight-thrust-pad [data-flight-input="KeyA"] { grid-column: 1; grid-row: 2; }
+.flight-ui[data-mode="walking"] .flight-thrust-pad [data-flight-input="Space"] { grid-column: 2; grid-row: 2; border-color: #a2dbc48c; color: #d5f5e7; }
+.flight-ui[data-mode="walking"] .flight-thrust-pad [data-flight-input="KeyD"] { grid-column: 3; grid-row: 2; }
+.flight-ui[data-mode="walking"] .flight-thrust-pad [data-flight-input="KeyS"] { grid-column: 2; grid-row: 3; }
+.walking-guide { color: #a9c5ca; font-size: 12px; line-height: 1.9; }
+.walking-guide strong { color: #c5ebd9; }
+@media (max-width: 800px) {
+  .walking-panel,
+  .flight-ui[data-mode="walking"] .walking-panel { top: 232px; left: 20px; width: min(330px, calc(100% - 40px)); padding: 12px 14px; gap: 10px; }
+  .walking-panel > strong { font-size: 15px; }
+  .walking-telemetry { grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .walking-telemetry > div:last-child { grid-column: auto; }
+  .walking-telemetry span { font-size: 8px; }
+  .walking-telemetry b { font-size: 13px; }
+  .walking-telemetry small { font-size: 8px; line-height: 1.6; }
+  .walking-panel p { font-size: 9px; }
+  .flight-ui #flight-exit { padding: 11px 12px; font-size: 12px; }
+  .flight-ui[data-mode="walking"] .flight-navigation,
+  .flight-ui[data-landed="true"] .flight-navigation { top: 152px; left: 20px; padding: 8px 10px; width: 180px; }
+  .flight-ui[data-mode="walking"] .flight-navigation h3 { font-size: 14px; margin: 5px 0; }
+  .flight-ui[data-mode="walking"] .flight-navigation > #flight-land { margin-top: 3px; }
+  .flight-ui[data-mode="walking"] .flight-touch { bottom: 108px; }
+}
+@media (pointer: coarse) and (min-width: 801px) {
+  .flight-touch { display: flex; position: absolute; left: 24px; right: 24px; bottom: 160px; justify-content: space-between; align-items: end; }
+  .flight-thrust-pad, .flight-steer-pad { display: grid; grid-template-columns: repeat(3, 44px); gap: 5px; }
+  .flight-touch button { width: 44px; height: 40px; padding: 3px; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .flight-steer-pad [data-flight-input="ArrowUp"] { grid-column: 2; grid-row: 1; }
+  .flight-steer-pad [data-flight-input="ArrowLeft"] { grid-column: 1; grid-row: 2; }
+  .flight-steer-pad [data-flight-input="ShiftLeft"] { grid-column: 2; grid-row: 2; }
+  .flight-steer-pad [data-flight-input="ArrowRight"] { grid-column: 3; grid-row: 2; }
+  .flight-steer-pad [data-flight-input="ArrowDown"] { grid-column: 2; grid-row: 3; }
+}
+@media (max-height: 650px) and (min-width: 801px) {
+  .walking-panel, .flight-ui[data-mode="walking"] .walking-panel { top: 218px; width: 300px; padding: 12px; gap: 8px; }
+  .walking-telemetry { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .walking-telemetry > div:last-child { grid-column: auto; }
+  .walking-telemetry b { font-size: 13px; }
+  .walking-telemetry small { font-size: 8px; }
+  .flight-ui[data-mode="walking"] .flight-navigation { top: 158px; }
+  .flight-ui[data-mode="walking"] .flight-navigation > #flight-target { display: none; }
+}
+@media (max-height: 560px) and (max-width: 800px) {
+  .walking-panel, .flight-ui[data-mode="walking"] .walking-panel { left: auto; right: 14px; top: 158px; width: 280px; gap: 7px; padding: 10px 12px; }
+  .walking-panel .eyebrow, .walking-panel p { display: none; }
+  .walking-panel > strong { font-size: 12px; }
+  .walking-telemetry b { font-size: 12px; }
+  .flight-ui[data-mode="walking"] .flight-navigation { width: 150px; }
+  .flight-ui[data-mode="walking"] .flight-navigation h3 { display: none; }
+  .flight-ui[data-mode="walking"] .flight-touch { bottom: 80px; }
+}
+
+@media (max-width: 800px) {
+  .flight-ui[data-mode="walking"] .flight-navigation {
+    top: 126px;
+    left: 20px;
+    width: auto;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+  .flight-ui[data-mode="walking"] .flight-navigation > #flight-target-label,
+  .flight-ui[data-mode="walking"] .flight-navigation > #flight-target { display: none; }
+  .flight-ui[data-mode="walking"] .flight-navigation > #flight-land { margin: 0; padding: 9px 13px; font-size: 11px; }
+  .flight-ui[data-mode="walking"] .walking-panel {
+    top: 172px;
+    left: 20px;
+    right: 20px;
+    width: auto;
+    padding: 10px 12px;
+    gap: 0;
+    background: #091d22dc;
+  }
+  .flight-ui[data-mode="walking"] .walking-panel > .eyebrow,
+  .flight-ui[data-mode="walking"] .walking-panel > strong,
+  .flight-ui[data-mode="walking"] .walking-panel > p,
+  .flight-ui[data-mode="walking"] .walking-telemetry > div:last-child > small { display: none; }
+  .flight-ui[data-mode="walking"] .walking-telemetry { grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .flight-ui[data-mode="walking"] .walking-telemetry > div:last-child { grid-column: auto; }
+  .flight-ui[data-mode="walking"] .walking-telemetry b { font-size: 13px; }
+  .flight-ui[data-mode="walking"] .flight-instruments #flight-engine,
+  .flight-ui[data-mode="walking"] .flight-instruments #flight-engine-range { display: none; }
+}

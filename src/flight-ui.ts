@@ -4,6 +4,7 @@ import { getBody, STAR_SYSTEMS } from "./solar-system";
 import type { BodyId } from "./solar-system";
 import type { SolarScene, FlightStats, FlightTrackingStats } from "./planet-scene";
 import type { FlightState } from "../shared/flight-state.mjs";
+import { surfaceProfile } from "../shared/surface.mjs";
 import "./flight-propulsion.css";
 const $ = <T extends HTMLElement = HTMLElement>(s: string) =>
   document.querySelector<T>(s)!;
@@ -15,6 +16,7 @@ export class FlightInterface {
   private paused = false;
   private warpPhase: FlightStats["warpPhase"] = "ready";
   private landingPhase: FlightStats["landingPhase"] = "manual";
+  private walking = false;
   private generation = 0;
   private saving = false;
   private saveRevision = 0;
@@ -25,6 +27,8 @@ export class FlightInterface {
   private aim!: HTMLElement;
   private deceleration!: HTMLElement;
   private trackedTarget?: BodyId;
+  private trackedWalking = false;
+  private navigationTitles = new Map<HTMLElement, string>();
   private notify: (message: string) => void;
   private changed: (active: boolean, target?: BodyId) => void;
   constructor(
@@ -38,15 +42,16 @@ export class FlightInterface {
       `<section id="flight-ui" class="flight-ui" aria-label="飞船驾驶台" hidden>
   <div class="flight-title"><span class="eyebrow">REAL SCALE / 星际航行</span><h2>VOYAGER <b>01</b></h2><span id="flight-system" class="flight-system">当前位置 · 太阳系</span><span id="flight-status">手动驾驶 · 引擎待命</span></div>
   <div class="flight-toolbar"><button id="flight-camera" aria-pressed="false">切换外部视角 <kbd>C</kbd></button><button id="flight-assist" aria-pressed="true">驾驶辅助：开</button><button id="flight-pause" aria-pressed="false">暂停航行</button><button id="flight-save">保存航行</button><button id="flight-resume" disabled>恢复存档</button><select id="flight-quality" aria-label="航行画质"><option value="ultra">超清</option><option value="high">高清</option><option value="standard">标准</option></select></div>
-  <aside class="flight-navigation"><span class="eyebrow">导航目标 / DESTINATION</span><h3 id="flight-target">地球</h3><p><strong id="flight-distance">—</strong><small id="flight-distance-unit"> km</small></p><small id="flight-distance-au"></small><div><button id="flight-align">对准目标</button><button id="flight-jump">启动跃迁 <kbd>J</kbd></button></div><button id="flight-land">自动着陆（L）</button><button id="flight-orbital">启动近地轨道引擎 <kbd>O</kbd></button><details id="flight-propulsion" class="flight-propulsion"><summary>推力航速与引擎档位</summary><label for="flight-low-speed">大气 / 低空航速（m/s）</label><div class="flight-low-speed-fields"><input id="flight-low-speed" type="range" min="1" max="1000" step="1" value="1000" aria-label="大气与低空航速"><input id="flight-low-speed-number" type="number" min="1" max="1000" step="1" value="1000" aria-label="大气与低空航速米每秒"></div><small>1–1,000 m/s · W 施加推力，空格停稳</small><label for="flight-engine-mode">太空引擎档位</label><select id="flight-engine-mode" aria-label="太空引擎档位"><option value="standard">常规 · 最高 10,000 km/s</option><option value="interstellar">星际 · 最高 100,000 km/s</option></select><small id="flight-orbital-hint">离地超过 10,000 m，朝向太空后按 O</small></details><small class="flight-nav-note">真实距离 · 1 AU ≈ 1.496 亿 km</small></aside>
+  <aside class="flight-navigation"><span class="eyebrow" id="flight-target-label">导航目标 / DESTINATION</span><h3 id="flight-target">地球</h3><p><strong id="flight-distance">—</strong><small id="flight-distance-unit"> km</small></p><small id="flight-distance-au"></small><div><button id="flight-align">对准目标</button><button id="flight-jump">启动跃迁 <kbd>J</kbd></button></div><button id="flight-land">自动着陆（L）</button><button id="flight-orbital">启动近地轨道引擎 <kbd>O</kbd></button><details id="flight-propulsion" class="flight-propulsion"><summary>推力航速与引擎档位</summary><label for="flight-low-speed">大气 / 低空航速（m/s）</label><div class="flight-low-speed-fields"><input id="flight-low-speed" type="range" min="1" max="1000" step="1" value="1000" aria-label="大气与低空航速"><input id="flight-low-speed-number" type="number" min="1" max="1000" step="1" value="1000" aria-label="大气与低空航速米每秒"></div><small>1–1,000 m/s · W 施加推力，空格停稳</small><label for="flight-engine-mode">太空引擎档位</label><select id="flight-engine-mode" aria-label="太空引擎档位"><option value="standard">常规 · 最高 10,000 km/s</option><option value="interstellar">星际 · 最高 100,000 km/s</option></select><small id="flight-orbital-hint">离地超过 10,000 m，朝向太空后按 O</small></details><small class="flight-nav-note">真实距离 · 1 AU ≈ 1.496 亿 km</small></aside>
   <aside class="warp-engine" id="warp-engine" data-phase="ready" aria-label="跃迁引擎"><span class="eyebrow">HYPERDRIVE / 跃迁引擎</span><strong id="warp-label">引擎就绪</strong><div class="warp-track"><i id="warp-progress"></i></div><small id="warp-hint">选择目的地，按 J 蓄能启航</small><button id="warp-cancel" hidden>中止跃迁</button></aside>
   <aside id="flight-surface" class="flight-surface" data-phase="manual" aria-label="着陆系统"><span class="eyebrow">SURFACE / 着陆系统</span><strong id="flight-surface-state">手动航行</strong><b id="flight-surface-altitude">— m</b><small id="flight-atmosphere">真空环境</small><small id="flight-landing-hint">L 自动着陆</small></aside>
+  <aside id="walking-panel" class="walking-panel" data-active="false" data-grounded="true" aria-label="地表探索仪表" hidden><span class="eyebrow">EXPLORER / 地表探索</span><strong id="walking-planet">地球</strong><div class="walking-telemetry"><div><span>当地重力</span><b id="walking-gravity">— m/s²</b><small id="walking-gravity-relative">— 地球 g</small></div><div><span>移动速度</span><b id="walking-speed">0.0 m/s</b><small id="walking-grounded">在飞船内</small></div><div><span>距离飞船</span><b id="walking-distance">0.0 m</b><small>飞船停留原地</small></div></div><button id="flight-exit">离开飞船 <kbd>E</kbd></button><p id="walking-hint">着陆后可步行探索当地地形</p></aside>
   <div id="flight-deceleration" class="flight-deceleration" aria-hidden="true"><span>减速制动 / DECELERATING</span></div>
   <div class="flight-crosshair" aria-hidden="true"><i></i><b></b></div><div class="flight-aim" id="flight-aim" aria-hidden="true" hidden></div><div class="flight-marker" id="flight-marker" aria-hidden="true"><i></i><span>地球</span></div>
   <div class="cockpit-frame" aria-hidden="true"><i class="cockpit-left"></i><i class="cockpit-right"></i><i class="cockpit-dashboard"></i></div>
-  <div class="flight-instruments"><div><span>航速 / SPEED</span><strong id="flight-speed">0</strong><small id="flight-speed-unit">km/s</small><small id="flight-engine" data-engine="orbital">近地轨道引擎 · 常规</small><small id="flight-engine-range">1–100 km/s</small></div><div><span>最近天体 / NEAREST</span><strong id="flight-nearest">地球</strong><small id="flight-altitude">— km 高度</small></div><div><span>航向 / HEADING</span><strong id="flight-heading">000°</strong><small id="flight-time">00:00</small></div><div class="flight-save-info"><span>航行存档 / SAVE</span><strong id="flight-storage">准备存档</strong><small>每 20 秒自动保存</small></div></div>
-  <p class="flight-key-guide"><kbd>W S</kbd> 前进/减速 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>↑ ↓ ← →</kbd> 转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车</p>
-  <div class="flight-touch" aria-label="触屏驾驶控制"><div class="flight-thrust-pad"><button data-flight-input="KeyR" aria-label="飞船上升">升</button><button data-flight-input="KeyW" aria-label="飞船前进">前进</button><button data-flight-input="KeyF" aria-label="飞船下降">降</button><button data-flight-input="KeyA" aria-label="飞船左移">左移</button><button data-flight-input="Space" aria-label="飞船刹车">刹车</button><button data-flight-input="KeyD" aria-label="飞船右移">右移</button><button data-flight-input="KeyQ" aria-label="飞船左翻滚">↶</button><button data-flight-input="KeyS" aria-label="飞船减速或倒车">减速</button><button data-flight-input="KeyE" aria-label="飞船右翻滚">↷</button></div><div class="flight-steer-pad"><button data-flight-input="ArrowUp" aria-label="飞船抬头">↑</button><button data-flight-input="ArrowLeft" aria-label="飞船左转">←</button><button data-flight-input="ShiftLeft" aria-label="飞船加速">加速</button><button data-flight-input="ArrowRight" aria-label="飞船右转">→</button><button data-flight-input="ArrowDown" aria-label="飞船低头">↓</button></div></div>
+  <div class="flight-instruments"><div><span id="flight-speed-label">航速 / SPEED</span><strong id="flight-speed">0</strong><small id="flight-speed-unit">km/s</small><small id="flight-engine" data-engine="orbital">近地轨道引擎 · 常规</small><small id="flight-engine-range">1–100 km/s</small></div><div><span>最近天体 / NEAREST</span><strong id="flight-nearest">地球</strong><small id="flight-altitude">— km 高度</small></div><div><span>航向 / HEADING</span><strong id="flight-heading">000°</strong><small id="flight-time">00:00</small></div><div class="flight-save-info"><span>航行存档 / SAVE</span><strong id="flight-storage">准备存档</strong><small>每 20 秒自动保存</small></div></div>
+  <p class="flight-key-guide" id="flight-key-guide"><kbd>W S</kbd> 前进/减速 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>↑ ↓ ← →</kbd> 转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车</p>
+  <div class="flight-touch" aria-label="触屏驾驶控制"><div class="flight-thrust-pad"><button data-flight-input="KeyR" data-control-mode="flight" aria-label="飞船上升">升</button><button data-flight-input="KeyW" aria-label="飞船前进">前进</button><button data-flight-input="KeyF" data-control-mode="flight" aria-label="飞船下降">降</button><button data-flight-input="KeyA" aria-label="飞船左移">左移</button><button data-flight-input="Space" aria-label="飞船刹车">刹车</button><button data-flight-input="KeyD" aria-label="飞船右移">右移</button><button data-flight-input="KeyQ" data-control-mode="flight" aria-label="飞船左翻滚">↶</button><button data-flight-input="KeyS" aria-label="飞船减速或倒车">减速</button><button data-flight-input="KeyE" data-control-mode="flight" aria-label="飞船右翻滚">↷</button></div><div class="flight-steer-pad"><button data-flight-input="ArrowUp" aria-label="飞船抬头">↑</button><button data-flight-input="ArrowLeft" aria-label="飞船左转">←</button><button data-flight-input="ShiftLeft" aria-label="飞船加速">加速</button><button data-flight-input="ArrowRight" aria-label="飞船右转">→</button><button data-flight-input="ArrowDown" aria-label="飞船低头">↓</button></div></div>
  </section>`,
     );
     this.marker = $("#flight-marker");
@@ -55,6 +60,7 @@ export class FlightInterface {
     this.deceleration = $("#flight-deceleration");
     $("#flight-camera").onclick = () => this.camera();
     $("#flight-assist").onclick = () => {
+      if (this.scene?.walking) { this.notify("请先返回飞船，再设置驾驶辅助"); return; }
       const state = this.scene?.flightState();
       if (!state) return;
       this.scene?.setFlightAssist(!state.assist);
@@ -71,11 +77,13 @@ export class FlightInterface {
       }
     };
     $("#flight-align").onclick = () => {
+      if (this.scene?.walking) { this.notify("请先返回飞船，再对准目标"); return; }
       this.scene?.alignFlight();
       this.notify("航向已对准目标，按 W 启动推力");
     };
     $("#flight-jump").onclick = () => this.jump();
     $("#flight-land").onclick = () => this.land();
+    $("#flight-exit").onclick = () => this.explore();
     $("#flight-orbital").onclick = () => this.orbital();
     const setLowSpeed = (value: string) => {
       if (!value.trim()) return;
@@ -129,6 +137,10 @@ export class FlightInterface {
         event.preventDefault();
         this.camera();
       }
+      if (event.code === "KeyE" && (this.scene?.walking || this.landingPhase === "landed")) {
+        event.preventDefault();
+        this.explore();
+      }
     });
     document.addEventListener("visibilitychange", () => {
       if (this.active && document.hidden) this.pause(true);
@@ -171,6 +183,8 @@ export class FlightInterface {
     return true;
   }
   stop() {
+    const wasActive = this.active;
+    const target = this.scene?.flightState()?.target;
     if (this.active) {
       const state = this.scene?.flightState();
       if (state) void this.store.save(state).catch(() => {});
@@ -179,21 +193,44 @@ export class FlightInterface {
     clearInterval(this.timer);
     this.scene?.leaveFlight();
     this.active = false;
+    this.walking = false;
+    this.paused = false;
+    this.landingPhase = "manual";
+    this.warpPhase = "ready";
+    this.trackedWalking = false;
+    this.trackedTarget = undefined;
+    this.markerName.textContent = target ? getBody(target).name : "导航目标";
+    $("#flight-ui").dataset.mode = "flight";
+    $("#flight-ui").dataset.exploration = "ship";
+    delete $("#flight-ui").dataset.landed;
+    $("#walking-panel").hidden = true;
+    $("#walking-panel").dataset.active = "false";
+    if (wasActive) {
+      document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("[data-body], #satellite-target, #star-system").forEach((button) => {
+        button.disabled = false;
+        const title = this.navigationTitles.get(button);
+        if (title !== undefined) button.title = title;
+      });
+    }
+    this.navigationTitles.clear();
     $("#flight-ui").hidden = true;
     this.changed(false);
   }
   target(id: BodyId) {
+    if (this.scene?.walking) { this.notify("请先返回飞船，再设置导航目标"); return; }
     if (["charging", "transit", "arrival"].includes(this.warpPhase)) return;
     this.scene?.setDestination(id);
     $("#flight-target").textContent = getBody(id).name;
   }
   private jump() {
+    if (this.scene?.walking) { this.notify("人物正在舱外探索，请先返回飞船再启动跃迁"); return; }
     const error = this.scene?.jumpFlight();
     if (error) { this.notify(error); return; }
     this.pause(false);
     this.notify("跃迁引擎开始蓄能，可随时暂停或中止");
   }
   private land() {
+    if (this.scene?.walking) { this.explore(); return; }
     const previous = this.landingPhase;
     const error = this.scene?.landFlight();
     if (error) { this.notify(error); return; }
@@ -202,29 +239,70 @@ export class FlightInterface {
       ? "自动着陆启动，刹车或手动操纵可中止" : "已中止自动航行，恢复手动驾驶");
   }
   private orbital() {
+    if (this.scene?.walking) { this.notify("请先返回飞船，再启动近地轨道引擎"); return; }
     const error = this.scene?.startOrbitalFlight();
     if (error) { this.notify(error); return; }
     this.pause(false);
     this.notify("近地轨道引擎已启动，按 W 飞向太空；大气内仍最高 1,000 m/s");
   }
+  private explore() {
+    if (!this.active || !this.scene) return;
+    if (this.paused) { this.notify("请先继续航行或探索，再离舱或返回飞船"); return; }
+    const returning = this.scene.walking;
+    const error = this.scene.walkFlight();
+    if (error) { this.notify(error); return; }
+    this.sync();
+    this.notify(returning ? "已返回飞船，按 L 起飞" : "已离开飞船 · WASD 行走，空格跳跃，Shift 奔跑；靠近飞船按 E 返回");
+  }
   private sync() {
     const state = this.scene?.flightState();
     if (!state) return;
-    $("#flight-camera").innerHTML =
-      `${state.camera === "cockpit" ? "切换外部视角" : "切换座舱视角"} <kbd>C</kbd>`;
+    this.walking = this.scene?.walking ?? false;
+    const thirdPerson = this.scene?.walkingCamera === "third";
+    $("#flight-ui").dataset.mode = this.walking ? "walking" : "flight";
+    $("#flight-ui").dataset.exploration = this.walking ? "walking" : "ship";
+    $("#flight-ui").setAttribute("aria-label", this.walking ? "地表探索控制台" : "飞船驾驶台");
+    $("#flight-camera").innerHTML = this.walking
+      ? `${thirdPerson ? "切换第一人称" : "切换第三人称"} <kbd>C</kbd>`
+      : `${state.camera === "cockpit" ? "切换外部视角" : "切换座舱视角"} <kbd>C</kbd>`;
     $("#flight-camera").setAttribute(
       "aria-pressed",
-      String(state.camera === "chase"),
+      String(this.walking ? thirdPerson : state.camera === "chase"),
     );
-    $(".cockpit-frame").hidden = state.camera === "chase";
-    $("#flight-assist").textContent = `驾驶辅助：${state.assist ? "开" : "关"}`;
+    $(".cockpit-frame").hidden = this.walking || state.camera === "chase";
+    $("#flight-assist").textContent = this.walking ? "驾驶辅助：需返舱" : `驾驶辅助：${state.assist ? "开" : "关"}`;
     $("#flight-assist").setAttribute("aria-pressed", String(state.assist));
-    $("#flight-target").textContent = getBody(state.target).name;
+    $<HTMLButtonElement>("#flight-assist").disabled = this.walking;
+    $("#flight-assist").title = this.walking ? "人物离舱后，飞船停留原地；返舱后可设置驾驶辅助" : "辅助速度方向跟随船头";
+    $("#flight-target-label").textContent = this.walking ? "飞船 / RETURN TO SHIP" : "导航目标 / DESTINATION";
+    $("#flight-target").textContent = this.walking ? "VOYAGER 01" : getBody(state.target).name;
+    $("#flight-speed-label").textContent = this.walking ? "移动速度 / SPEED" : "航速 / SPEED";
+    $("#flight-key-guide").innerHTML = this.walking
+      ? "<kbd>W S A D</kbd> 行走 <kbd>鼠标拖动 / 方向键</kbd> 看向 <kbd>Shift</kbd> 奔跑 <kbd>空格</kbd> 跳跃 <kbd>E</kbd> 靠近返舱 <kbd>C</kbd> 第一/第三人称 <kbd>H</kbd> 帮助"
+      : "<kbd>W S</kbd> 前进/减速 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>↑ ↓ ← →</kbd> 转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车 <kbd>E</kbd> 着陆后离舱";
+    const touchLabels: Record<string, [string, string, string]> = {
+      KeyW: ["前进", "向前行走", "飞船前进"], KeyS: [this.walking ? "后退" : "减速", "向后行走", "飞船减速或倒车"],
+      KeyA: ["左移", "向左行走", "飞船左移"], KeyD: ["右移", "向右行走", "飞船右移"],
+      Space: [this.walking ? "跳跃" : "刹车", "人物跳跃", "飞船刹车"], ShiftLeft: [this.walking ? "奔跑" : "加速", "按住奔跑", "飞船加速"],
+      ArrowUp: ["↑", "向上看", "飞船抬头"], ArrowDown: ["↓", "向下看", "飞船低头"],
+      ArrowLeft: ["←", "向左看", "飞船左转"], ArrowRight: ["→", "向右看", "飞船右转"],
+    };
+    for (const [key, [label, walkingLabel, flightLabel]] of Object.entries(touchLabels)) {
+      const button = $<HTMLButtonElement>(`[data-flight-input="${key}"]`);
+      button.textContent = label;
+      button.setAttribute("aria-label", this.walking ? walkingLabel : flightLabel);
+    }
+    $(".flight-touch").setAttribute("aria-label", this.walking ? "触屏行走、跳跃与视角控制" : "触屏驾驶控制");
     $<HTMLInputElement>("#flight-low-speed").value = String(state.atmosphericSpeedMps ?? 1000);
     $<HTMLInputElement>("#flight-low-speed-number").value = String(state.atmosphericSpeedMps ?? 1000);
     $<HTMLSelectElement>("#flight-engine-mode").value = state.engineMode ?? "standard";
   }
   private camera() {
+    if (this.scene?.walking) {
+      this.scene.setWalkingCamera(this.scene.walkingCamera === "first" ? "third" : "first");
+      this.sync();
+      return;
+    }
     const state = this.scene?.flightState();
     if (!state) return;
     this.scene?.setFlightCamera(
@@ -236,7 +314,7 @@ export class FlightInterface {
     if (!this.active) return;
     this.paused = paused;
     this.scene?.setFlightPaused(paused);
-    $("#flight-pause").textContent = paused ? "继续航行" : "暂停航行";
+    $("#flight-pause").textContent = this.scene?.walking ? paused ? "继续探索" : "暂停探索" : paused ? "继续航行" : "暂停航行";
     $("#flight-pause").setAttribute("aria-pressed", String(paused));
   }
   private async save(automatic: boolean) {
@@ -270,6 +348,7 @@ export class FlightInterface {
   }
   private update(stats: FlightStats) {
     if (!this.active) return;
+    if (this.walking !== !!this.scene?.walking) this.sync();
     const number = (n: number) => Math.round(n).toLocaleString("zh-CN");
     const lightspeed = stats.warpPhase === "transit" && stats.speedKm > 299792.458;
     const metres = !lightspeed && stats.environment.lowFlight;
@@ -286,7 +365,7 @@ export class FlightInterface {
     $("#flight-system").textContent = `当前位置 · ${STAR_SYSTEMS.find(system => system.id === stats.systemId)!.name}`;
     const labels = { ready: "引擎就绪", charging: "引擎蓄能", transit: "跃迁航行", arrival: "减速抵达", cooldown: "引擎冷却" };
     const activeWarp = ["charging", "transit", "arrival"].includes(stats.warpPhase);
-    if (stats.landingPhase === "landed" && this.landingPhase !== "landed") this.notify(`已在${getBody(stats.nearest).name}地表着陆，按 L 或 R 起飞`);
+    if (stats.landingPhase === "landed" && this.landingPhase !== "landed") this.notify(`已在${getBody(stats.nearest).name}地表着陆，按 E 离舱探索，或 L / R 起飞`);
     this.landingPhase = stats.landingPhase;
     const flightLand = $<HTMLButtonElement>("#flight-land");
     flightLand.textContent = stats.landingPhase === "landed" ? "起飞（L）" : stats.landingPhase === "descending"
@@ -301,7 +380,7 @@ export class FlightInterface {
     $("#flight-atmosphere").textContent = stats.environment.atmospheric
       ? `大气密度 ${stats.environment.density.toFixed(3)} · ${stats.environment.density > 0.02 ? "气动阻力生效" : "稀薄大气"}`
       : "真空环境 · 无大气阻力";
-    $("#flight-landing-hint").textContent = stats.landingPhase === "landed" ? "L / R 起飞 · 可保存地表位置"
+    $("#flight-landing-hint").textContent = stats.landingPhase === "landed" ? "E 离舱探索 · L / R 起飞 · 可保存地表位置"
       : stats.landingPhase === "descending" || stats.landingPhase === "ascending" ? "空格或手动操纵中止 · 暂停冻结进度"
       : stats.landingBlockReason ?? "L 自动着陆 · 近地自动限速";
     const nearGround = stats.environment.profile.solid && stats.environment.groundAltitudeKm <= 10;
@@ -368,19 +447,82 @@ export class FlightInterface {
           : stats.speedKm < 1
             ? "手动驾驶 · 引擎待命"
             : "手动驾驶 · 自由航行";
+    this.updateWalking(stats);
+  }
+  private updateWalking(stats: FlightStats) {
+    const walking = stats.walking;
+    const active = !!this.scene?.walking;
+    const landed = stats.landingPhase === "landed";
+    $("#flight-ui").dataset.landed = String(landed);
+    const panel = $("#walking-panel");
+    panel.hidden = !active && !landed;
+    panel.dataset.active = String(active);
+    panel.dataset.grounded = String(walking?.grounded ?? true);
+    $("#flight-surface").hidden = active || landed;
+    const gravity = walking?.gravity ?? stats.environment.profile.gravity;
+    const estimatedGravity = surfaceProfile(walking?.bodyId ?? stats.nearest).gravityEstimated;
+    const relativeGravity = gravity / 9.80665;
+    const relativeGravityLabel = relativeGravity > 0 && relativeGravity < 0.01
+      ? relativeGravity.toLocaleString("zh-CN", { maximumSignificantDigits: 3 }) : relativeGravity.toFixed(2);
+    $("#walking-planet").textContent = `${getBody(walking?.bodyId ?? stats.nearest).name} · ${active ? "舱外探索" : "已着陆"}`;
+    $("#walking-gravity").textContent = `${gravity.toLocaleString("zh-CN", { maximumFractionDigits: 3 })} m/s²`;
+    $("#walking-gravity-relative").textContent = `${relativeGravityLabel} 地球 g${estimatedGravity ? " · 估算" : ""}`;
+    $("#walking-speed").textContent = `${(walking?.speedMps ?? 0).toFixed(1)} m/s`;
+    $("#walking-distance").textContent = `${(walking?.distanceToShipM ?? 0).toLocaleString("zh-CN", { maximumFractionDigits: 1 })} m`;
+    $("#walking-grounded").textContent = active ? walking?.grounded ? "在地面" : "腾空中" : "在飞船内 · 已停稳";
+    $("#flight-exit").hidden = active;
+    $<HTMLButtonElement>("#flight-exit").disabled = this.paused;
+    const gravityHint = gravity < 0.35 ? " 极低重力：宇航服回落辅助已启用。" : estimatedGravity ? " 当地重力采用估算值。" : "";
+    $("#walking-hint").textContent = (active
+      ? "空格跳跃 · Shift 奔跑 · 鼠标拖动 / 方向键看向；靠近飞船并落地后，按 E 返回。飞船停留原地。"
+      : "按 E 离舱，探索当地地形。不同重力会改变跳跃高度、滞空时间和行走抓地感。") + gravityHint;
+    $("#warp-engine").hidden = active || landed;
+    for (const id of ["flight-low-speed", "flight-low-speed-number", "flight-engine-mode"]) {
+      $<HTMLInputElement | HTMLSelectElement>(`#${id}`).disabled = active;
+    }
+    document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("[data-body], #satellite-target, #star-system").forEach((button) => {
+      button.disabled = active || ["charging", "transit", "arrival"].includes(stats.warpPhase);
+      if (active) {
+        if (!this.navigationTitles.has(button)) this.navigationTitles.set(button, button.title);
+        button.title = "请先返回飞船，再选择航行目的地";
+      } else if (this.navigationTitles.has(button)) {
+        button.title = this.navigationTitles.get(button)!;
+        this.navigationTitles.delete(button);
+      }
+    });
+    if (!active) return;
+    $("#flight-system").textContent = `当前位置 · ${getBody(walking?.bodyId ?? stats.nearest).name}地表`;
+    $("#flight-pause").textContent = this.paused ? "继续探索" : "暂停探索";
+    $("#flight-status").textContent = this.paused ? "地表探索已暂停" : walking?.grounded ? "地表探索 · E 靠近返舱" : "地表探索 · 腾空中";
+    $("#flight-speed").textContent = (walking?.speedMps ?? 0).toFixed(1);
+    $("#flight-speed-unit").textContent = "m/s";
+    $("#flight-engine").textContent = "人物行走 · 飞船原地待命";
+    $("#flight-engine-range").textContent = "空格跳跃 · Shift 奔跑";
+    $("#flight-altitude").textContent = walking?.grounded ? "在地面 · 跟随当地重力" : "腾空中 · 重力持续生效";
+    const flightLand = $<HTMLButtonElement>("#flight-land");
+    flightLand.textContent = "返回飞船（E）";
+    flightLand.disabled = this.paused || !walking?.grounded || walking.distanceToShipM > 12;
+    flightLand.title = this.paused ? "请先继续探索" : !walking?.grounded ? "请先落地，再返回飞船"
+      : walking.distanceToShipM > 12 ? "请靠近停泊飞船至 12 米内，再进入飞船" : "返回飞船；返舱后可起飞";
+    for (const id of ["flight-align", "flight-jump", "flight-orbital"]) {
+      const button = $<HTMLButtonElement>(`#${id}`);
+      button.disabled = true;
+      button.title = "人物正在舱外探索，请先返回飞船";
+    }
   }
   private updateTracking(stats: FlightTrackingStats) {
     if (!this.active) return;
     this.marker.style.transform = `translate3d(${stats.targetX * stats.width / 100}px, ${stats.targetY * stats.height / 100}px, 0) translate(-50%, -50%)`;
     this.marker.style.setProperty("--target-angle", `${stats.angle}deg`);
     this.marker.classList.toggle("offscreen", !stats.inView);
-    if (stats.target !== this.trackedTarget) {
-      this.markerName.textContent = getBody(stats.target).name;
+    if (stats.target !== this.trackedTarget || this.walking !== this.trackedWalking) {
+      this.markerName.textContent = this.walking ? "停泊飞船" : getBody(stats.target).name;
       this.trackedTarget = stats.target;
+      this.trackedWalking = this.walking;
     }
-    this.deceleration.style.opacity = stats.deceleration.toFixed(3);
+    this.deceleration.style.opacity = this.walking ? "0" : stats.deceleration.toFixed(3);
     this.deceleration.style.setProperty("--brake-scale", String(0.72 + stats.deceleration * 0.28));
-    this.aim.hidden = !stats.steering;
+    this.aim.hidden = this.walking || !stats.steering;
     this.aim.style.transform = `translate3d(${(0.5 + stats.aimX * 0.35) * stats.width}px, ${(0.5 + stats.aimY * 0.35) * stats.height}px, 0) translate(-50%, -50%)`;
   }
 }

@@ -9,6 +9,9 @@ import type { PlanetModel } from "./planet-models";
 import { bodySystem, systemConfig } from "../shared/world-navigation.mjs";
 import { ShipDynamics } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
+import { WalkingDynamics } from "./walking-dynamics";
+import { ExplorerView } from "./explorer-view";
+import { validateFlightState } from "../shared/flight-state.mjs";
 import { createShip, SHIP_LENGTH_KM } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
 import { FlightLight } from "./flight-light";
@@ -57,6 +60,7 @@ export interface FlightStats {
   collision: BodyId | null;
   landingPhase: ShipDynamics["landingPhase"];
   landingBlockReason: string | null;
+  walking: null | { gravity: number; speedMps: number; grounded: boolean; distanceToShipM: number; bodyId: BodyId; camera: "first" | "third" };
 }
 export interface FlightTrackingStats extends FlightTargetStats {
   target: BodyId;
@@ -255,6 +259,7 @@ export class SolarScene {
   private readonly ship = createShip();
   private readonly shipScene = new THREE.Scene();
   private readonly shipCamera = new THREE.PerspectiveCamera(58, 1, 0.01, 200);
+  private readonly walkingRenderCamera = new THREE.PerspectiveCamera();
   private readonly shipSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
   private readonly shipAmbient = new THREE.HemisphereLight(0xc1e6ee, 0x233643, 0.85);
   private readonly shipRim = new THREE.DirectionalLight(0x77bfff, 0.45);
@@ -292,6 +297,9 @@ export class SolarScene {
   private readonly flightGeometries = new Map<THREE.Mesh, THREE.BufferGeometry>();
   private readonly flightSpheres = new Map<PlanetModel, THREE.Mesh[]>();
   private dynamics?: ShipDynamics;
+  private walker?: WalkingDynamics;
+  private readonly explorerView = new ExplorerView();
+  private explorerCamera: "first" | "third" = "third";
   private flightControls?: FlightControls;
   private flying = false;
   private flightPaused = false;
@@ -390,7 +398,7 @@ export class SolarScene {
     });
     this.spaceScene.add(this.planet);
     this.spaceScene.add(this.galaxySky.mesh);
-    this.surfaceWorldScene.add(this.surfaceGalaxySky.mesh, this.surfaceScene.group, this.surfaceScene.sky);
+    this.surfaceWorldScene.add(this.surfaceGalaxySky.mesh, this.surfaceScene.group, this.surfaceScene.sky, this.explorerView.group);
     this.observeSun.position.set(-3, 1.8, 4);
     this.flightRoot.visible = false;
     this.flightSun.visible = false;
@@ -934,7 +942,20 @@ export class SolarScene {
       this.renderer.domElement.dataset.surfaceFrameIdle = String(reuseFrame);
       // RAF, controls, tracking and HUD continue above; retain the last canvas frame instead of repeating GPU work.
       if (reuseFrame) return;
-      this.renderer.render(this.renderPolicy.mode === "surface" ? this.surfaceWorldScene : this.spaceScene, this.camera);
+      if (this.walking && this.renderPolicy.mode === "surface") {
+        // Logarithmic depth loses metre-scale precision when 1 world unit is 6371 km.
+        // Convert only this draw to metres; physics, terrain uniforms and the parked origin stay unchanged.
+        const metres = this.dynamics!.config.unitsKm * 1000;
+        const camera = this.walkingRenderCamera;
+        camera.copy(this.camera, false);
+        camera.position.multiplyScalar(metres);
+        camera.near *= metres;
+        camera.far *= metres;
+        camera.updateProjectionMatrix();
+        this.surfaceWorldScene.scale.setScalar(metres);
+        try { this.renderer.render(this.surfaceWorldScene, camera); }
+        finally { this.surfaceWorldScene.scale.setScalar(1); }
+      } else this.renderer.render(this.renderPolicy.mode === "surface" ? this.surfaceWorldScene : this.spaceScene, this.camera);
       this.recordFlightRender();
       if (this.ship.group.visible) {
         // The hull pass uses the same physical scale as the world camera.
@@ -1017,6 +1038,8 @@ export class SolarScene {
       this.flightRoot.add(this.asteroidBelt);
     }
     this.dynamics = new ShipDynamics(config);
+    this.walker = new WalkingDynamics(config);
+    this.explorerCamera = "third";
     this.shipScale = SHIP_LENGTH_KM / (config.unitsKm * this.ship.hullLength);
     this.renderer.domElement.dataset.shipLengthKm = String(SHIP_LENGTH_KM);
     this.dynamics.jump(id);
@@ -1098,6 +1121,8 @@ export class SolarScene {
   leaveFlight() {
     if (!this.flying) return;
     this.flying = false;
+    this.walker?.reset();
+    this.explorerView.group.visible = false;
     this.flightFrameDirty = true;
     this.renderPolicy.reset();
     this.resumeSpaceWork();
@@ -1134,12 +1159,46 @@ export class SolarScene {
     this.flightControls?.clear();
   }
   flightState(): FlightState | null {
-    return this.dynamics?.snapshot() ?? null;
+    const state = this.dynamics?.snapshot();
+    if (!state) return null;
+    const walking = this.walker?.snapshot();
+    return walking ? { ...state, walking: { ...walking, camera: this.explorerCamera } } : state;
   }
   restoreFlight(state: unknown) {
     const restored = this.dynamics?.restore(state) ?? false;
-    if (restored) { this.flightFrameDirty = true; this.updateFlightCamera(1); }
+    if (restored) {
+      const saved = validateFlightState(state)!;
+      this.walker?.restore(saved.walking, this.dynamics!);
+      this.explorerCamera = saved.walking?.camera ?? "third";
+      this.flightControls?.setWalking(this.walking);
+      this.flightControls?.clear();
+      this.camera.near = this.walking ? 0.03 / (this.dynamics!.config.unitsKm * 1000) : 1e-8;
+      this.camera.updateProjectionMatrix();
+      this.flightFrameDirty = true;
+      this.updateFlightCamera(1);
+    }
     return restored;
+  }
+  get walking() { return this.walker?.active ?? false; }
+  get walkingCamera() { return this.explorerCamera; }
+  setWalkingCamera(view: "first" | "third") {
+    this.explorerCamera = view;
+    this.flightFrameDirty = true;
+    if (this.walking) this.updateFlightCamera(1);
+  }
+  walkFlight(): string | null {
+    if (!this.dynamics || !this.walker) return "飞船尚未就绪";
+    const error = this.walking ? this.walker.board(this.dynamics) : this.walker.disembark(this.dynamics);
+    if (!error) {
+      this.flightControls?.setWalking(this.walking);
+      this.flightControls?.clear();
+      this.flightFrameDirty = true;
+      this.flightMetrics = 0;
+      this.camera.near = this.walking ? 0.03 / (this.dynamics.config.unitsKm * 1000) : 1e-8;
+      this.camera.updateProjectionMatrix();
+      this.updateFlightCamera(1);
+    }
+    return error;
   }
   setDestination(id: BodyId) {
     if (this.dynamics && !this.dynamics.warping) this.dynamics.target = id;
@@ -1155,6 +1214,7 @@ export class SolarScene {
   }
   jumpFlight(): string | null {
     if (!this.dynamics) return "飞船尚未就绪";
+    if (this.walking) return "请先返回飞船，再启动跃迁";
     const error = this.dynamics.startWarp();
     if (!error) this.flightFrameDirty = true;
     this.flightControls?.clear();
@@ -1164,17 +1224,20 @@ export class SolarScene {
     if (this.dynamics?.warping) this.flightFrameDirty = true;
     this.dynamics?.cancelWarp();
   }
-  setAtmosphericFlightSpeed(mps: number) { this.dynamics?.setAtmosphericSpeed(mps); }
+  setAtmosphericFlightSpeed(mps: number) { if (!this.walking) this.dynamics?.setAtmosphericSpeed(mps); }
   setFlightEngineMode(mode: ShipDynamics["engineMode"]): string | null {
+    if (this.walking) return "请先返回飞船，再切换引擎";
     return this.dynamics?.setEngineMode(mode) ?? (this.dynamics ? null : "飞船尚未就绪");
   }
   startOrbitalFlight(): string | null {
     if (!this.dynamics) return "飞船尚未就绪";
+    if (this.walking) return "请先返回飞船，再启动轨道引擎";
     const error = this.dynamics.startOrbitalEngine();
     this.flightControls?.clear();
     return error;
   }
   landFlight(): string | null {
+    if (this.walking) return "请先返回飞船，再起飞";
     if (!this.dynamics) return "飞船尚未就绪";
     this.flightControls?.clear();
     if (this.dynamics.landingPhase !== "manual" && this.dynamics.landingPhase !== "landed") {
@@ -1186,6 +1249,7 @@ export class SolarScene {
     return error;
   }
   setFlightCamera(view: "cockpit" | "chase") {
+    if (this.walking) return;
     if (this.dynamics) {
       this.flightFrameDirty = true;
       this.dynamics.camera = view;
@@ -1193,7 +1257,7 @@ export class SolarScene {
     }
   }
   setFlightAssist(assist: boolean) {
-    if (this.dynamics) this.dynamics.assist = assist;
+    if (this.dynamics && !this.walking) this.dynamics.assist = assist;
   }
   private updateSpaceWorld() {
     const ship = this.dynamics!;
@@ -1287,57 +1351,66 @@ export class SolarScene {
     this.ship.group.scale.setScalar(1);
     const attitude = ship.orientation.clone().multiply(this.bankRotation.setFromAxisAngle(this.flightAxis, ship.bank));
     this.ship.group.quaternion.copy(attitude);
-    this.ship.group.visible = ship.camera === "chase" && !ship.warping;
+    this.ship.group.visible = ship.camera === "chase" && !ship.warping && !this.walking;
     const cameraScale = THREE.MathUtils.lerp(scale,0.000015,surfaceView);
     const chaseY = THREE.MathUtils.lerp(1.2,0.19,surfaceView);
     const chaseZ = THREE.MathUtils.lerp(9+this.flightBoost*0.6,0.72,surfaceView);
-    const offset = new THREE.Vector3(0,ship.camera === "chase" ? chaseY : 0,ship.camera === "chase" ? chaseZ : 0).multiplyScalar(cameraScale).applyQuaternion(ship.orientation);
-    if (ship.camera === "chase") {
-      this.camera.position.lerp(offset, blend);
-      // Keep the chase camera in the pilot's altitude band, including a steep descent.
-      // A several-hundred-km hull framing offset must not move the sky back into space.
-      if (environment.body.atmosphereKm && environment.altitudeKm < environment.body.atmosphereKm * 4) {
-        const relative = ship.position.clone().sub(new THREE.Vector3().fromArray(environment.body.position));
-        const near = 1 - THREE.MathUtils.smoothstep(environment.altitudeKm, environment.body.atmosphereKm, environment.body.atmosphereKm * 4);
-        const maxOffsetKm = THREE.MathUtils.lerp(1200, Math.max(0.02, environment.altitudeKm * 0.15), near);
-        const limit = maxOffsetKm / ship.config.unitsKm;
-        const radialOffset = this.camera.position.dot(environment.outward);
-        if (Math.abs(radialOffset) > limit) {
-          const distance = this.camera.position.length();
-          const tangent = this.camera.position.clone().addScaledVector(environment.outward, -radialOffset);
-          if (tangent.lengthSq() < 1e-12) tangent.set(1, 0, 0).applyQuaternion(attitude).projectOnPlane(environment.outward);
-          const radial = THREE.MathUtils.clamp(radialOffset, -limit, limit);
-          this.camera.position.copy(tangent.normalize().multiplyScalar(Math.sqrt(Math.max(0, distance * distance - radial * radial))))
-            .addScaledVector(environment.outward, radial);
+    if (!this.walking) {
+      const offset = new THREE.Vector3(0,ship.camera === "chase" ? chaseY : 0,ship.camera === "chase" ? chaseZ : 0).multiplyScalar(cameraScale).applyQuaternion(ship.orientation);
+      if (ship.camera === "chase") {
+        this.camera.position.lerp(offset, blend);
+        // Keep the chase camera in the pilot's altitude band, including a steep descent.
+        // A several-hundred-km hull framing offset must not move the sky back into space.
+        if (environment.body.atmosphereKm && environment.altitudeKm < environment.body.atmosphereKm * 4) {
+          const relative = ship.position.clone().sub(new THREE.Vector3().fromArray(environment.body.position));
+          const near = 1 - THREE.MathUtils.smoothstep(environment.altitudeKm, environment.body.atmosphereKm, environment.body.atmosphereKm * 4);
+          const maxOffsetKm = THREE.MathUtils.lerp(1200, Math.max(0.02, environment.altitudeKm * 0.15), near);
+          const limit = maxOffsetKm / ship.config.unitsKm;
+          const radialOffset = this.camera.position.dot(environment.outward);
+          if (Math.abs(radialOffset) > limit) {
+            const distance = this.camera.position.length();
+            const tangent = this.camera.position.clone().addScaledVector(environment.outward, -radialOffset);
+            if (tangent.lengthSq() < 1e-12) tangent.set(1, 0, 0).applyQuaternion(attitude).projectOnPlane(environment.outward);
+            const radial = THREE.MathUtils.clamp(radialOffset, -limit, limit);
+            this.camera.position.copy(tangent.normalize().multiplyScalar(Math.sqrt(Math.max(0, distance * distance - radial * radial))))
+              .addScaledVector(environment.outward, radial);
+          }
+          const cameraRadial = relative.clone().add(this.camera.position);
+          const minRadius = environment.body.radius + Math.max(environment.groundHeightKm + 0.002, environment.altitudeKm - maxOffsetKm) / ship.config.unitsKm;
+          const maxRadius = environment.body.radius + (environment.altitudeKm + maxOffsetKm) / ship.config.unitsKm;
+          cameraRadial.clampLength(minRadius, Math.max(minRadius, maxRadius));
+          this.camera.position.copy(cameraRadial.sub(relative));
         }
-        const cameraRadial = relative.clone().add(this.camera.position);
-        const minRadius = environment.body.radius + Math.max(environment.groundHeightKm + 0.002, environment.altitudeKm - maxOffsetKm) / ship.config.unitsKm;
-        const maxRadius = environment.body.radius + (environment.altitudeKm + maxOffsetKm) / ship.config.unitsKm;
-        cameraRadial.clampLength(minRadius, Math.max(minRadius, maxRadius));
-        this.camera.position.copy(cameraRadial.sub(relative));
+        this.camera.up.set(0, 1, 0).applyQuaternion(attitude);
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.orientation);
+        const nearAtmosphere = environment.body.atmosphereKm
+          ? 1 - THREE.MathUtils.smoothstep(environment.altitudeKm, environment.body.atmosphereKm, environment.body.atmosphereKm * 4) : 0;
+        this.camera.up.lerp(environment.outward, nearAtmosphere * Math.pow(forward.dot(environment.outward), 2)).normalize();
+        const lookAhead = 5 * cameraScale * (1 - nearAtmosphere * Math.abs(forward.dot(environment.outward)) * 0.92);
+        this.camera.lookAt(forward.multiplyScalar(lookAhead));
+      } else {
+        this.camera.position.copy(offset);
+        this.camera.quaternion.slerp(attitude, blend);
       }
-      this.camera.up.set(0, 1, 0).applyQuaternion(attitude);
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.orientation);
-      const nearAtmosphere = environment.body.atmosphereKm
-        ? 1 - THREE.MathUtils.smoothstep(environment.altitudeKm, environment.body.atmosphereKm, environment.body.atmosphereKm * 4) : 0;
-      this.camera.up.lerp(environment.outward, nearAtmosphere * Math.pow(forward.dot(environment.outward), 2)).normalize();
-      const lookAhead = 5 * cameraScale * (1 - nearAtmosphere * Math.abs(forward.dot(environment.outward)) * 0.92);
-      this.camera.lookAt(forward.multiplyScalar(lookAhead));
-    } else {
-      this.camera.position.copy(offset);
-      this.camera.quaternion.slerp(attitude, blend);
     }
     const strength = ship.warpPhase === "transit" ? Math.sin(ship.warpProgress * Math.PI) * 0.65 + 0.35 : ship.warpPhase === "charging" ? ship.warpProgress * 0.15 : ship.warpPhase === "arrival" ? (1 - ship.warpProgress) ** 2 * 0.35 : 0;
     this.warpEffect.mesh.visible = strength > 0;
     this.warpEffect.material.uniforms.strength.value = strength;
     this.warpEffect.material.uniforms.time.value = ship.elapsed;
     this.warpEffect.material.uniforms.aspect.value = this.camera.aspect;
-    const fov = 58 + strength * 25 + this.flightBoost * 9;
+    const fov = this.walking ? 65 : 58 + strength * 25 + this.flightBoost * 9;
     if (Math.abs(this.camera.fov - fov) > 0.01) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
     }
-    if (mode === "surface") this.surfaceScene.update(ship, this.camera, this.flightSun);
+    if (this.walking) this.explorerView.update(this.walker!, ship, this.camera, this.explorerCamera,
+      blend >= 1 ? 0 : -Math.log(Math.max(1e-9, 1 - blend)) / 9, this.flightPaused, blend >= 1);
+    else this.explorerView.group.visible = false;
+    this.renderer.domElement.dataset.exploration = this.walking ? "walking" : "ship";
+    this.renderer.domElement.setAttribute("aria-label", this.walking
+      ? "地表探索：WASD 行走，Shift 奔跑，空格跳跃，方向键或拖动看向，E 返回飞船"
+      : "自由驾驶飞船：W/S 推力，方向键或触屏拖动转向，空格刹车");
+    if (mode === "surface") this.surfaceScene.update(ship, this.camera, this.flightSun, this.walking ? this.walker : undefined);
     else this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
     this.flightLight.update(ship, this.camera, this.flightSun);
     this.useSystemBackground(ship.systemId);
@@ -1347,10 +1420,15 @@ export class SolarScene {
     const ship = this.dynamics!;
     const input = this.flightControls!.read();
     if (!this.flightPaused) {
-      ship.step(delta, input);
+      if (this.walking) {
+        this.walker!.step(delta, input);
+        // The parked ship advances its clock and cooldown with no pilot input.
+        ship.step(delta, { ...input, throttle: 0, strafe: 0, lift: 0, yaw: 0, pitch: 0,
+          roll: 0, boost: false, brake: false, mouseX: 0, mouseY: 0 });
+      } else ship.step(delta, input);
     }
     if (!this.flightPaused) this.flightBoost = THREE.MathUtils.lerp(this.flightBoost,
-      input.boost && ship.velocity.length() > 0 && !ship.warping ? 1 : 0, 1 - Math.exp(-delta * 4));
+      !this.walking && input.boost && ship.velocity.length() > 0 && !ship.warping ? 1 : 0, 1 - Math.exp(-delta * 4));
     const exhaust = this.flightPaused || ship.warping ? 0.1 : input.boost && input.throttle > 0 ? 2.4 : input.throttle > 0 ? 1 : 0.22;
     this.ship.exhaust.scale.z = THREE.MathUtils.lerp(this.ship.exhaust.scale.z, exhaust, 1 - Math.exp(-delta * 10));
     this.updateFlightCamera(1 - Math.exp(-delta * 9));
@@ -1365,7 +1443,9 @@ export class SolarScene {
       }
     const target = ship.config.bodies.find((b) => b.id === ship.target)!;
     this.flightRelative.copy(ship.targetRelative);
-    const tracking = projectFlightTarget(this.flightRelative, this.camera);
+    const markerRelative = this.walking ? ship.environment.outward.clone()
+      .multiplyScalar(-6 / (ship.config.unitsKm * 1000)) : this.flightRelative;
+    const tracking = projectFlightTarget(markerRelative, this.camera);
     const aim = this.flightControls!.aim;
     this.flightTargetHandler?.({ ...tracking, target: ship.target, deceleration: ship.deceleration,
       aimX: aim.x, aimY: aim.y, steering: aim.active && !this.flightPaused,
@@ -1404,6 +1484,9 @@ export class SolarScene {
       collision: ship.collision,
       landingPhase: ship.landingPhase,
       landingBlockReason: ship.landingBlockReason,
+      walking: this.walking ? { gravity: this.walker!.gravity, speedMps: this.walker!.speedMps,
+        grounded: this.walker!.grounded, distanceToShipM: this.walker!.distanceToShipM,
+        bodyId: this.walker!.bodyId!, camera: this.explorerCamera } : null,
     });
   }
 
@@ -1518,6 +1601,7 @@ export class SolarScene {
     this.spaceScene.traverse(collect);
     this.surfaceWorldScene.traverse(collect);
     this.shipScene.traverse(collect);
+    this.surfaceWorldScene.traverse(collect);
     this.models.forEach((model) => model.group.traverse(collect));
     geometries.forEach((geometry) => geometry.dispose());
     materials.forEach((material) => material.dispose());

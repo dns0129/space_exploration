@@ -1,4 +1,14 @@
 import type { BodyId, SystemId, SystemGroupId } from "../src/solar-system";
+export interface WalkingState {
+  bodyId: BodyId;
+  /** Metres along world axes relative to the parked ship, measured at the character's feet. */
+  offsetM: number[];
+  velocityMps: number[];
+  orientation: number[];
+  pitch: number;
+  grounded: boolean;
+  camera?: "first" | "third";
+}
 export interface FlightState {
   version: 2;
   position: number[];
@@ -12,6 +22,7 @@ export interface FlightState {
   engineMode?: "standard" | "interstellar";
   atmosphericSpeedMps?: number;
   landedBody?: BodyId;
+  walking?: WalkingState;
   systemId: SystemId;
 }
 export interface WorldConfig {
@@ -41,3 +52,4 @@ export interface WorldConfig {
 }
 export const world: WorldConfig;
 export function validateFlightState(value: unknown): FlightState | null;
+export function validateWalkingState(value: unknown, flight: Pick<FlightState, "position" | "velocity" | "landedBody" | "systemId">, config?: WorldConfig): WalkingState | null;

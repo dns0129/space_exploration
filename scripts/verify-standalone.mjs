@@ -5,6 +5,7 @@ import { chromium, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
+import { verifyWalkingFlight } from "./verify-walking.mjs";
 import { createServer } from "node:http";
 
 const html = await readFile(
@@ -162,6 +163,7 @@ try {
   assert.equal(await page.locator("canvas").count(), 1);
   await verifyBetelgeuseFlight(page);
   await verifySurfaceFlight(page);
+  await verifyWalkingFlight(page);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(

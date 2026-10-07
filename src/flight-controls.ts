@@ -9,6 +9,7 @@ export class FlightControls {
   private lastX = 0;
   private lastY = 0;
   private steering = false;
+  private walking = false;
   private canvas: HTMLCanvasElement;
   private cleanups: (() => void)[] = [];
   constructor(canvas: HTMLCanvasElement) {
@@ -19,6 +20,7 @@ export class FlightControls {
     };
     on(window, "keydown", ((e: KeyboardEvent) => {
       if (
+        e.defaultPrevented ||
         e.ctrlKey ||
         e.metaKey ||
         e.altKey ||
@@ -56,14 +58,15 @@ export class FlightControls {
     on(window, "blur", (() => this.clear()) as EventListener);
     on(document, "visibilitychange", (() => this.clear()) as EventListener);
     on(canvas, "pointerdown", ((e: PointerEvent) => {
-      if (e.button !== 0 || e.pointerType === "mouse") return;
+      if (e.button !== 0 || (e.pointerType === "mouse" && !this.walking) || document.querySelector("dialog[open]")) return;
+      e.preventDefault();
       this.pointer = e.pointerId;
       this.lastX = e.clientX;
       this.lastY = e.clientY;
       canvas.setPointerCapture(e.pointerId);
     }) as EventListener);
     on(canvas, "pointermove", ((e: PointerEvent) => {
-      if (e.pointerType === "mouse") return;
+      if (e.pointerType === "mouse" && !this.walking) return;
       if (this.pointer !== e.pointerId) return;
       this.mouseX = Math.max(-1, Math.min(1, (e.clientX - this.lastX) / 80));
       this.mouseY = Math.max(-1, Math.min(1, (e.clientY - this.lastY) / 80));
@@ -72,7 +75,7 @@ export class FlightControls {
     const stop = ((e: PointerEvent) => {
       if (this.pointer === e.pointerId) {
         this.pointer = null;
-        if (e.pointerType !== "mouse") this.centerSteering();
+        this.centerSteering();
       }
     }) as EventListener;
     on(canvas, "pointerup", stop);
@@ -84,6 +87,7 @@ export class FlightControls {
       .forEach((button) => {
         const action = button.dataset.flightInput!;
         on(button, "pointerdown", ((e: PointerEvent) => {
+          if (document.querySelector("dialog[open]")) return;
           e.preventDefault();
           button.setPointerCapture(e.pointerId);
           this.touch.add(action);
@@ -111,10 +115,10 @@ export class FlightControls {
       ...emptyInput(),
       throttle: value("KeyW", "KeyS"),
       strafe: value("KeyD", "KeyA"),
-      lift: value("KeyR", "KeyF"),
+      lift: this.walking ? 0 : value("KeyR", "KeyF"),
       yaw: value("ArrowLeft", "ArrowRight"),
       pitch: value("ArrowUp", "ArrowDown"),
-      roll: value("KeyQ", "KeyE"),
+      roll: this.walking ? 0 : value("KeyQ", "KeyE"),
       boost: has("ShiftLeft", "ShiftRight"),
       brake: has("Space"),
       mouseX: this.deadzone(this.mouseX),
@@ -125,6 +129,11 @@ export class FlightControls {
   private deadzone(value: number) {
     return Math.sign(value) * Math.max(0, (Math.abs(value) - 0.08) / 0.92);
   }
+  setWalking(active: boolean) {
+    if (this.walking === active) return;
+    this.clear();
+    this.walking = active;
+  }
   get aim() { return { x: this.mouseX, y: this.mouseY, active: this.steering }; }
   private centerSteering() {
     this.mouseX = 0;
@@ -132,10 +141,13 @@ export class FlightControls {
     this.steering = false;
   }
   clear() {
+    const pointer = this.pointer;
+    this.pointer = null;
+    if (pointer !== null && this.canvas.hasPointerCapture(pointer))
+      this.canvas.releasePointerCapture(pointer);
     this.keys.clear();
     this.touch.clear();
     this.centerSteering();
-    this.pointer = null;
     document
       .querySelectorAll("[data-flight-input]")
       .forEach((b) => b.classList.remove("held"));

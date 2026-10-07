@@ -7,9 +7,10 @@ const profiles = {
   "alpha-centauri-b": { solid: false, sky: "#ffcb92", gravity: 300 },
   "proxima-centauri": { solid: false, sky: "#ff805a", gravity: 1000 },
   betelgeuse: { solid: false, sky: "#ff9d63", gravity: 0.007 },
-  "proxima-b": { sky: "#af8976", ground: "#a2785c", gravity: 10, density: 0.6, scaleKm: 9 },
-  "proxima-c": { sky: "#93bdce", ground: "#81999f", gravity: 12, density: 1, scaleKm: 40 },
-  "proxima-d": { ground: "#aa8872", gravity: 5 },
+  // Exoplanet gravities are gameplay estimates, not measured surface values.
+  "proxima-b": { sky: "#af8976", ground: "#a2785c", gravity: 10, gravityEstimated: true, density: 0.6, scaleKm: 9 },
+  "proxima-c": { sky: "#93bdce", ground: "#81999f", gravity: 12, gravityEstimated: true, density: 1, scaleKm: 40 },
+  "proxima-d": { ground: "#aa8872", gravity: 5, gravityEstimated: true },
   mercury: { sky: "#000000", ground: "#84796b", gravity: 3.7 },
   venus: { sky: "#d9a45c", ground: "#a16c3b", gravity: 8.87, density: 8, scaleKm: 16 },
   earth: { sky: "#72b8ef", ground: "#657d49", gravity: 9.81, density: 1, scaleKm: 8.5 },
@@ -18,10 +19,39 @@ const profiles = {
   saturn: { solid: false, sky: "#dfc899", gravity: 10.44, density: 2, scaleKm: 160 },
   uranus: { solid: false, sky: "#83cbd0", gravity: 8.69, density: 2, scaleKm: 100 },
   neptune: { solid: false, sky: "#547bbd", gravity: 11.15, density: 2, scaleKm: 100 },
+  // Approximate mean surface gravity in m/s²; g = GM / R² with km converted to metres.
+  // NASA Moon fact sheet: https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+  // JPL satellite GM/radii: https://ssd.jpl.nasa.gov/sats/phys_par/
+  // Small irregular moons are simplified spheres; their values are rounded gameplay inputs.
+  moon: { gravity: 1.62 },
+  io: { gravity: 1.796 },
+  europa: { gravity: 1.315 },
+  ganymede: { gravity: 1.428 },
+  callisto: { gravity: 1.236 },
+  mimas: { gravity: 0.064 },
+  enceladus: { gravity: 0.113 },
+  tethys: { gravity: 0.145 },
+  dione: { gravity: 0.232 },
+  rhea: { gravity: 0.264 },
   titan: { sky: "#cc9856", ground: "#a38355", gravity: 1.35, density: 1.5, scaleKm: 40 },
+  hyperion: { gravity: 0.02 },
+  iapetus: { gravity: 0.223 },
+  miranda: { gravity: 0.079 },
+  ariel: { gravity: 0.269 },
+  umbriel: { gravity: 0.2 },
+  titania: { gravity: 0.379 },
+  oberon: { gravity: 0.347 },
+  naiad: { gravity: 0.012 },
+  thalassa: { gravity: 0.013 },
+  despina: { gravity: 0.026 },
+  galatea: { gravity: 0.018 },
+  larissa: { gravity: 0.03 },
+  proteus: { gravity: 0.07 },
+  triton: { gravity: 0.779 },
+  nereid: { gravity: 0.071 },
 };
 export function surfaceProfile(id) {
-  return { solid: true, sky: "#000000", ground: "#aaa79b", gravity: 1.62, density: 0, scaleKm: 1, ...profiles[id] };
+  return { solid: true, sky: "#000000", ground: "#aaa79b", gravity: 1.62, gravityEstimated: false, density: 0, scaleKm: 1, ...profiles[id] };
 }
 // Smooth 3D value noise avoids longitude seams and remains stable when tiles move.
 function earthNoise(x, y, z) {
