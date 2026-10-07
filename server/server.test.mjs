@@ -23,6 +23,9 @@ function placeAtAltitude(ship, id, altitudeKm, normal = new THREE.Vector3(0, 0, 
   ship.velocity.set(0, 0, 0);
   return body;
 }
+function placeAboveGround(ship, id, groundAltitudeKm, normal = new THREE.Vector3(0, 0, 1)) {
+  return placeAtAltitude(ship, id, terrainHeightKm(id, normal.toArray()) + LANDING_CLEARANCE_KM + groundAltitudeKm, normal);
+}
 function faceOutward(ship) {
   ship.orientation.setFromUnitVectors(new THREE.Vector3(0, 0, -1), ship.environment.outward);
 }
@@ -444,7 +447,7 @@ test("planet proximity blocks warp without changing position or cooldown; changi
   assert.equal(ship.warpPhase, "ready");
 });
 
-test("unarmed vacuum flight preserves the orbital safety cap while every atmospheric altitude uses the low-speed dial", () => {
+test("unarmed vacuum flight keeps its orbital safety cap while atmosphere above 10 km ignores the low-speed dial", () => {
   for (const [id, altitude, atmosphere] of [["earth", 50, true], ["earth", 500, false], ["jupiter", 1500, true]]) {
     const ship = new ShipDynamics();
     placeAtAltitude(ship, id, altitude, new THREE.Vector3(1, 0, 0));
@@ -452,14 +455,14 @@ test("unarmed vacuum flight preserves the orbital safety cap while every atmosph
     ship.assist = false;
     ship.velocity.set(10000 / world.unitsKm, 20000 / world.unitsKm, -50000 / world.unitsKm);
     assert.equal(ship.environment.atmospheric, atmosphere);
-    assert.equal(ship.engine.id, atmosphere ? "atmospheric" : "orbital");
+    assert.equal(ship.engine.id, "orbital");
     const restored = new ShipDynamics();
     assert(restored.restore(ship.snapshot()));
-    assert(speedKm(restored) <= (atmosphere ? 0.25 : 100) + 1e-8);
+    assert(speedKm(restored) <= (atmosphere ? 1 : 100) + 1e-8);
     for (let i = 0; i < 20; i++) {
       ship.step(0.05, { ...emptyInput(), throttle: 1, strafe: 1, lift: 1, boost: true });
-      assert.equal(ship.engine.id, atmosphere ? "atmospheric" : "orbital");
-      assert(speedKm(ship) <= (atmosphere ? 0.25 : 100) + 1e-8, "three controls cannot each receive the full speed allowance");
+      assert.equal(ship.engine.id, "orbital");
+      assert(speedKm(ship) <= (atmosphere ? 1 : 100) + 1e-8, "three controls cannot each receive the full speed allowance");
     }
     ship.setEngineMode("interstellar");
     assert.equal(ship.engineMode, "standard", "the high gear cannot bypass a low-speed environment");
@@ -474,7 +477,7 @@ test("unarmed vacuum flight preserves the orbital safety cap while every atmosph
 
 test("the low-speed dial covers 1 to 1000 m/s, clamps finite input and ignores non-finite input", () => {
   const ship = new ShipDynamics();
-  placeAtAltitude(ship, "earth", 50);
+  placeAboveGround(ship, "earth", 5);
   assert.equal(ship.atmosphericSpeedMps, 1000);
   for (const [requested, expected] of [[1, 1], [135, 135], [1000, 1000], [0, 1], [1500, 1000]]) {
     ship.setAtmosphericSpeed(requested);
@@ -492,21 +495,121 @@ test("the low-speed dial covers 1 to 1000 m/s, clamps finite input and ignores n
   }
 });
 
-test("1 m/s low flight reaches and holds its total-vector cap; release and braking may bring the ship to rest", () => {
-  const ship = new ShipDynamics();
-  placeAtAltitude(ship, "earth", 50, new THREE.Vector3(1, 0, 0));
-  ship.setAtmosphericSpeed(1);
-  const thrust = { ...emptyInput(), throttle: 1, strafe: 1, lift: 1, boost: true };
-  for (let i = 0; i < 80; i++) {
-    ship.step(0.05, thrust);
-    assert(Math.abs(speedKm(ship) - 0.001) < 1e-8, "W plus strafe and lift still totals one metre per second");
+test("1 and 133 m/s low flight reach their total-vector caps above real terrain; release and braking allow zero", () => {
+  for (const id of ["earth", "moon"]) for (const selectedMps of [1, 133]) {
+    const ship = new ShipDynamics();
+    placeAboveGround(ship, id, 1, new THREE.Vector3(1, 0, 0));
+    ship.setAtmosphericSpeed(selectedMps);
+    assert.equal(ship.engine.id, "atmospheric");
+    const thrust = { ...emptyInput(), throttle: 1, strafe: 1, lift: 1, boost: true };
+    for (let i = 0; i < 80; i++) {
+      ship.step(0.05, thrust);
+      assert(speedKm(ship) <= selectedMps / 1000 + 1e-8, "diagonal thrust receives one shared speed allowance");
+    }
+    assert(Math.abs(speedKm(ship) - selectedMps / 1000) < 1e-8);
+    assert(ship.velocity.x && ship.velocity.y && ship.velocity.z, "the cap must apply to a genuinely diagonal velocity");
+    const speed = speedKm(ship);
+    ship.step(0.25, emptyInput());
+    assert(speedKm(ship) > 0 && speedKm(ship) < speed, "release with assistance gently reduces speed");
+    for (let i = 0; i < 80; i++) ship.step(0.05, { ...emptyInput(), brake: true });
+    assert.equal(ship.velocity.length(), 0, "the minimum selectable speed must allow braking to zero");
+    assert(validateFlightState(ship.snapshot()));
   }
-  const speed = speedKm(ship);
-  ship.step(0.25, emptyInput());
-  assert(speedKm(ship) > 0 && speedKm(ship) < speed, "release with assistance gently reduces speed");
-  for (let i = 0; i < 80; i++) ship.step(0.05, { ...emptyInput(), brake: true });
-  assert.equal(ship.velocity.length(), 0, "the minimum selectable cruise speed must allow braking to zero");
-  assert(validateFlightState(ship.snapshot()));
+});
+
+test("orbital thrust above 10 km permits a short slow start but sustained power reaches at least 1 km/s", () => {
+  for (const [id, groundAltitude, atmospheric] of [["earth", 50, true], ["moon", 50, false], ["jupiter", 1500, true]]) {
+    const ship = new ShipDynamics();
+    placeAboveGround(ship, id, groundAltitude);
+    faceOutward(ship);
+    ship.setAtmosphericSpeed(1);
+    assert.equal(ship.environment.atmospheric, atmospheric);
+    assert(!ship.environment.lowFlight, "atmosphere alone must not select the near-ground engine");
+    assert.equal(ship.engine.id, "orbital");
+    ship.step(0.005, { ...emptyInput(), throttle: 1 });
+    assert(speedKm(ship) > 0 && speedKm(ship) < 1, "speed must rise naturally rather than jumping to the engine range minimum");
+    for (let i = 0; i < 20; i++) ship.step(0.05, { ...emptyInput(), throttle: 1 });
+    assert(speedKm(ship) >= 1 - 1e-8, `${id}: continuous orbital thrust must pass the old low-speed ceiling`);
+    if (atmospheric) assert(Math.abs(speedKm(ship) - 1) < 1e-8);
+    for (let i = 0; i < 80; i++) ship.step(0.05, { ...emptyInput(), brake: true });
+    assert.equal(ship.velocity.length(), 0);
+  }
+});
+
+test("the manual engine and preset switch on both sides of the actual 10 km terrain boundary", () => {
+  const normal = new THREE.Vector3(0, 0, 1);
+  assert(terrainHeightKm("earth", normal.toArray()) > 3, "the boundary fixture must lie above a kilometre-scale mountain");
+  for (const id of ["earth", "moon"]) {
+    const ship = new ShipDynamics();
+    ship.setAtmosphericSpeed(133);
+    for (const groundAltitude of [10.1, 10, 9.9, 10.1]) {
+      placeAboveGround(ship, id, groundAltitude, normal);
+      ship.orientation.identity();
+      const low = groundAltitude <= 10;
+      assert(Math.abs(ship.environment.groundAltitudeKm - groundAltitude) < 1e-6);
+      assert.equal(ship.environment.lowFlight, low);
+      assert.equal(ship.engine.id, low ? "atmospheric" : "orbital");
+      assert(Math.abs(ship.speedLimit * world.unitsKm - (low ? 0.133 : id === "earth" ? 1 : 100)) < 1e-8);
+      ship.velocity.set(0.6 / world.unitsKm, 0.8 / world.unitsKm, 0);
+      const restored = new ShipDynamics();
+      assert(restored.restore(ship.snapshot()));
+      assert(Math.abs(speedKm(restored) - (low ? 0.133 : 1)) < 1e-8, "restoration must use ground clearance rather than radial altitude");
+    }
+    placeAboveGround(ship, id, 10.5, normal);
+    faceOutward(ship);
+    ship.velocity.copy(normal).multiplyScalar(0.8 / world.unitsKm);
+    ship.setAtmosphericSpeed(1);
+    assert(Math.abs(speedKm(ship) - 0.8) < 1e-8, "changing the stored preset above 10 km must not slow orbital flight");
+    ship.step(0.05, { ...emptyInput(), throttle: 1 });
+    assert(speedKm(ship) >= 1 - 1e-8);
+  }
+  for (const selectedMps of [1, 133]) {
+    const climbing = new ShipDynamics();
+    placeAboveGround(climbing, "earth", 9.9999, normal);
+    faceOutward(climbing);
+    climbing.setAtmosphericSpeed(selectedMps);
+    assert.equal(climbing.engine.id, "atmospheric");
+    for (let i = 0; i < 12; i++) climbing.step(0.05, { ...emptyInput(), throttle: 1 });
+    assert(climbing.environment.groundAltitudeKm > 10.00001, "manual thrust must genuinely climb across the terrain boundary");
+    assert.equal(climbing.engine.id, "orbital");
+    assert.equal(climbing.atmosphericSpeedMps, selectedMps);
+    assert(Math.abs(speedKm(climbing) - 1) < 1e-8, "orbital thrust above the crossed boundary must ignore the stored low-speed preset");
+  }
+});
+
+test("swept descent into the 10 km layer follows a mountain's actual height without braking clear high-altitude flight", () => {
+  const normal = new THREE.Vector3(0, 0, 1);
+  const mountain = terrainHeightKm("earth", normal.toArray());
+  assert(mountain > 3);
+  for (const selectedMps of [1, 133]) {
+    const clear = new ShipDynamics();
+    placeAboveGround(clear, "earth", 10.5, normal);
+    faceOutward(clear);
+    clear.setAtmosphericSpeed(selectedMps);
+    clear.step(0.05, { ...emptyInput(), throttle: 1 });
+    assert(Math.abs(speedKm(clear) - 1) < 1e-8, "a conservative global mountain sphere must not apply the low preset above actual ground");
+    const ship = new ShipDynamics();
+    placeAboveGround(ship, "earth", 10.0001, normal);
+    assert(ship.environment.altitudeKm > 13, "the low layer must be far above the old 10.125 km radial shell");
+    ship.assist = false;
+    ship.orientation.identity();
+    ship.setAtmosphericSpeed(selectedMps);
+    ship.velocity.copy(normal).multiplyScalar(-1 / world.unitsKm);
+    let crossed = false;
+    for (let i = 0; i < 12; i++) {
+      const previous = ship.environment.groundAltitudeKm;
+      ship.step(0.05, { ...emptyInput(), throttle: 1 });
+      const current = ship.environment.groundAltitudeKm;
+      if (current <= 10 + 1e-5) {
+        crossed = true;
+        assert.equal(ship.engine.id, "atmospheric");
+        assert(speedKm(ship) <= selectedMps / 1000 + 1e-8);
+        assert(Math.min(previous, 10) - current <= selectedMps / 1000 * 0.05 + 2e-5,
+          "the part of a swept frame inside the low layer must use the chosen preset");
+      }
+    }
+    assert(crossed, `descent with a ${selectedMps} m/s preset must cross the actual boundary`);
+  }
 });
 
 test("a long frame cannot skip a planet safety zone and slow frame integration retains elapsed time", () => {
@@ -580,7 +683,8 @@ test("orbital departure needs an explicit outward launch above 10 km, stays slow
   const ship = new ShipDynamics();
   placeAtAltitude(ship, "earth", 99);
   faceOutward(ship);
-  assert.equal(ship.engine.id, "atmospheric", "looking outward alone cannot launch the orbital engine");
+  assert.equal(ship.engine.id, "orbital");
+  assert(!ship.environment.escaping, "looking outward alone cannot activate an outward departure");
   assert.equal(ship.startOrbitalEngine(), null);
   assert.equal(ship.engine.id, "orbital");
   assert.match(ship.startWarp(), /禁止跃迁/);
@@ -597,10 +701,11 @@ test("orbital departure needs an explicit outward launch above 10 km, stays slow
   assert(restored.velocity.equals(ship.velocity));
   ship.orientation.identity();
   ship.step(0.05, emptyInput());
-  assert.equal(ship.engine.id, "atmospheric");
+  assert.equal(ship.engine.id, "orbital");
+  assert(!ship.environment.escaping);
   assert(speedKm(ship) <= 1 + 1e-8);
   faceOutward(ship);
-  assert.equal(ship.engine.id, "atmospheric", "turning back out must require another manual launch");
+  assert(!ship.environment.escaping, "turning back out must require another manual launch");
   for (let i = 0; i < 1200 && restored.environment.altitudeKm <= 1000; i++)
     restored.step(0.25, { ...emptyInput(), throttle: 1, boost: true });
   assert(restored.environment.altitudeKm > 1000);
@@ -708,7 +813,7 @@ test("the 1000 km safety shell and atmospheric boundary are independent, includi
     assert.equal(ship.environment.orbitalRequired, false, `${body.id}: above 1000 km leaves the safety shell`);
     assert.equal(ship.environment.restricted, ship.environment.atmospheric);
     ship.velocity.set(0, 0, -10000 / world.unitsKm);
-    assert.equal(ship.engine.id, ship.environment.atmospheric ? "atmospheric" : "planetary");
+    assert.equal(ship.engine.id, ship.environment.atmospheric ? "orbital" : "planetary");
     assert.equal(!!ship.warpBlockReason, ship.environment.atmospheric);
   }
   placeAtAltitude(ship, "jupiter", 1500);
@@ -716,7 +821,7 @@ test("the 1000 km safety shell and atmospheric boundary are independent, includi
   assert(ship.environment.atmospheric);
   assert(!ship.environment.orbitalRequired);
   assert(ship.environment.restricted);
-  assert.equal(ship.engine.id, "atmospheric");
+  assert.equal(ship.engine.id, "orbital");
   assert(ship.warpBlockReason, "a giant planet's atmosphere remains restricted outside the 1000 km shell");
   faceOutward(ship);
   assert.equal(ship.startOrbitalEngine(), null);
@@ -822,7 +927,7 @@ test("a near Proxima planet blocks an interstellar target until a manually launc
   placeAtAltitude(ship, "proxima-b", 50);
   faceOutward(ship);
   ship.target = "earth";
-  assert.equal(ship.engine.id, "atmospheric");
+  assert.equal(ship.engine.id, "orbital");
   assert.equal(ship.startOrbitalEngine(), null);
   assert.match(ship.startWarp(), /禁止跃迁/);
   for (let i = 0; i < 1600 && ship.environment.altitudeKm <= 1000; i++) {
