@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import * as THREE from "three";
 import { PNG } from "pngjs";
+import { getBody, type BodyId } from "../src/solar-system";
 import { world } from "../shared/flight-state.mjs";
 import { terrainHeightKm, terrainMapNormal, LANDING_CLEARANCE_KM, TERRAIN_VERSION } from "../shared/surface.mjs";
 
@@ -11,38 +12,39 @@ const craterAngularRadius = .335;
 const sourceId = "mimas:surface-v2:16k";
 const pictureStyle = ".flight-ui, .destination-selectors, .toast { visibility: hidden !important; }";
 
-function checkpoint(normal: number[], clearanceKm: number, velocityKm = 0, landed = false) {
-  const body = world.bodies.find(candidate => candidate.id === "mimas")!;
+function checkpoint(normal: number[], clearanceKm: number, velocityKm = 0, landed = false, bodyId: BodyId = "mimas") {
+  const body = world.bodies.find(candidate => candidate.id === bodyId)!;
   const radial = new THREE.Vector3().fromArray(normal).normalize();
   const tangent = new THREE.Vector3(0, 1, 0).cross(radial).normalize();
   const up = radial.clone().cross(tangent).normalize();
   const orientation = new THREE.Quaternion().setFromRotationMatrix(
     new THREE.Matrix4().lookAt(new THREE.Vector3(), radial.clone().negate(), up));
-  const altitude = terrainHeightKm("mimas", radial.toArray()) + LANDING_CLEARANCE_KM + clearanceKm;
+  const altitude = terrainHeightKm(bodyId, radial.toArray()) + LANDING_CLEARANCE_KM + clearanceKm;
   return { version: 2, worldLayoutVersion: world.layoutVersion, terrainVersion: TERRAIN_VERSION,
-    systemId: "solar", target: "mimas", camera: "cockpit", assist: false, elapsed: 0,
+    systemId: body.systemId ?? "solar", target: bodyId, camera: "cockpit", assist: false, elapsed: 0,
     position: new THREE.Vector3().fromArray(body.position).addScaledVector(radial, body.radius + altitude / world.unitsKm).toArray(),
     velocity: radial.clone().multiplyScalar(-velocityKm / world.unitsKm).toArray(),
-    orientation: orientation.toArray(), ...(landed ? { landedBody: "mimas" } : {}) };
+    orientation: orientation.toArray(), ...(landed ? { landedBody: bodyId } : {}) };
 }
 
 async function launchSaved(page: Page, state: ReturnType<typeof checkpoint>, quality: "standard" | "ultra") {
   // Supply a normal user save through the existing storage API. Tests never
   // invoke scene internals or inject shader uniforms into the application.
   await page.route("**/api/flight/save", route => route.fulfill({ json: { state } }));
-  await page.goto("/#planet=mimas");
+  await page.goto(`/#planet=${state.target}`);
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
+  await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "flight");
   await expect(page.locator("#loading-overlay")).toBeHidden();
   await page.locator("#flight-quality").selectOption(quality);
   await page.locator("#flight-pause").click();
   await expect(page.locator("#flight-resume")).toBeEnabled();
   await page.locator("#flight-resume").click();
-  await expect(page.locator("#flight-nearest")).toHaveText("土卫一");
-  await expect(page.locator("canvas")).toHaveAttribute("data-surface-content-id", sourceId);
+  await expect(page.locator("#flight-nearest")).toHaveText(getBody(state.target).name);
+  await expect(page.locator("canvas")).toHaveAttribute("data-surface-content-id", `${state.target}:surface-v2:16k`);
 }
 
-async function actualTerrainSample(page: Page) {
+async function actualTerrainSample(page: Page, bodyId: BodyId = "mimas") {
   const canvas = page.locator("canvas");
   await expect.poll(() => canvas.getAttribute("data-surface-normal")).not.toBeNull();
   const normal = JSON.parse((await canvas.getAttribute("data-surface-normal"))!) as number[];
@@ -52,7 +54,7 @@ async function actualTerrainSample(page: Page) {
   expect(Number.isFinite(height)).toBe(true);
   // This diagnostic comes from the displaced Float32 vertex, not from calling
   // the height function again. One metre allows local geometry round-off.
-  expect(Math.abs(height - terrainHeightKm("mimas", normal)), "实际地面顶点必须使用与碰撞相同的地貌").toBeLessThan(.001);
+  expect(Math.abs(height - terrainHeightKm(bodyId, normal)), "实际地面顶点必须使用与碰撞相同的地貌").toBeLessThan(.001);
   return { normal, height };
 }
 
@@ -186,4 +188,60 @@ test("陨石坑底与坑缘落地都有一致的几何高度，手机降低采�
     }
   }
   expect(heights[1] - heights[0], "大坑在实际落地几何中仍须为凹坑，不能变为平地").toBeGreaterThan(.25);
+});
+
+test("地球直接恢复地表存档后实际显示原生 16K 分块，并保持共享 DEM 碰撞高度", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop");
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 900, height: 650 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => {
+    if (message.type() === "error") { errors.push(message.text()); console.error(message.text()); }
+  });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/textures/earth-detail-*.jpg", async route => { await gate; await route.continue(); });
+  try {
+    // A sunlit Australian land cell has positive measured DEM elevation and
+    // visible native colour variation at the fixed, landed camera location.
+    const normal = terrainMapNormal("earth", [.9, .4]);
+    expect(terrainHeightKm("earth", normal)).toBeGreaterThan(.5);
+    await launchSaved(page, checkpoint(normal, 0, 0, true, "earth"), "ultra");
+    const canvas = page.locator("canvas");
+    await expect(canvas).toHaveAttribute("data-render-mode", "surface");
+    await expect(canvas).toHaveAttribute("data-surface-detail-kind", "native");
+    await expect(canvas).toHaveAttribute("data-surface-height-source", "earth-terrain-8k.png");
+    await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "0");
+    // Settle the optional global-map upgrade before releasing the native tiles,
+    // so their pixel effect cannot be attributed to a simultaneous 4K→8K swap.
+    await expect(canvas).toHaveAttribute("data-earth-maps", "8k", { timeout: 60_000 });
+    await expect.poll(() => canvas.getAttribute("data-surface-normal")).not.toBeNull();
+    await actualTerrainSample(page, "earth");
+    await expect(canvas).toHaveAttribute("data-render-scale", "1.00");
+    const before = PNG.sync.read(await canvas.screenshot({ style: pictureStyle }));
+    release();
+    await expect(canvas).toHaveAttribute("data-surface-detail-status", "ready", { timeout: 60_000 });
+    await expect(canvas).toHaveAttribute("data-surface-detail-total-tiles", "4");
+    await expect(canvas).toHaveAttribute("data-surface-detail-resolution", "16384x8192");
+    await expect(canvas).toHaveAttribute("data-surface-detail-tile-resolution", "2064x2064");
+    const ids = JSON.parse((await canvas.getAttribute("data-surface-detail-tile-ids"))!) as string[];
+    expect(new Set(ids).size).toBe(4);
+    await page.waitForTimeout(900);
+    const after = PNG.sync.read(await canvas.screenshot({ path: info.outputPath("earth-native-16k-local.png"), style: pictureStyle }));
+    expect([after.width, after.height]).toEqual([before.width, before.height]);
+    let changed = 0;
+    for (let y = Math.floor(before.height * .2); y < before.height * .8; y++) for (let x = Math.floor(before.width * .2); x < before.width * .8; x++) {
+      const i = (y * before.width + x) * 4;
+      const difference = Math.abs(before.data[i] - after.data[i]) + Math.abs(before.data[i + 1] - after.data[i + 1]) + Math.abs(before.data[i + 2] - after.data[i + 2]);
+      if (difference > 3) changed++;
+    }
+    expect(changed, "在局部场景中加载原生分块必须改变真实地面像素，不能只更新诊断").toBeGreaterThan(500);
+    expect(JSON.parse((await canvas.getAttribute("data-surface-detail-tile-ids"))!)).toEqual(ids);
+    await actualTerrainSample(page, "earth");
+    expect(errors).toEqual([]);
+  } finally {
+    release();
+  }
 });
