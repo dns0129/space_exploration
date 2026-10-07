@@ -1,10 +1,12 @@
 # Visual assets and texture sources
 
-The texture images are included locally to avoid external requests during rendering. All 43 celestial bodies support 16384 × 8192 surface detail through bordered tiles. Earth uses a native 16K day mosaic; the other bodies combine their existing 2K/4K/8K source maps or original procedural base colours with new artistic material detail in GPU-generated 16K tiles. Source images retain their original delivered dimensions and provenance. Credit and ownership of the imagery remain with their respective creators; no exclusive ownership of third-party imagery is claimed.
+The texture images are included locally to avoid external requests during rendering. All celestial bodies have been restored to the imagery and procedural materials used before the generated 16K enhancement. Earth retains its original native 16K observation mosaic. Local ground now uses one closed sphere with concentrated subdivision near the observer, without AI enhancement tiles or a separate ground overlay. Credit and ownership of the imagery remain with their respective creators; no exclusive ownership of third-party imagery is claimed.
 
 The website posters `public/site/earth.png`, `mars.png`, and `saturn.png` are original 900 × 900 transparent screenshots of this application's planet renderer using the textures listed below. They retain the underlying imagery credits and applicable licenses; they are not additional stock imagery. The site background uses the same `milky-way-4k.jpg` panorama. The deployed website includes this document and `THIRD_PARTY_NOTICES.md` under `legal/`.
 
-## Enhanced 16K surfaces for every celestial body
+## Retired 16K enhancement — historical provenance
+
+The following section records the removed enhancement and its source credits. Its AI material atlas and generated tiles are no longer used by the game.
 
 The current navigation includes **43 celestial bodies and one space station**. On non-compact desktop devices in high or ultra quality, close views of bodies other than Earth use a **16384 × 8192** detail domain divided into eight columns and four rows. Generation begins within three body radii of the centre, with a GPU texture limit of at least 2064 pixels. Each generated tile has a **2048 × 2048** interior with an eight-pixel gutter on each edge, for a **2064 × 2064** texture; at most four tiles are resident for the active body. The GPU combines the original global map with finer rock, ice, cloud or stellar material detail, with separate seeds and morphology for each body. Cached tiles and their filtered direct fallback evaluate the same body-fixed material. Orbital models, the local horizon and detailed ground retain the same imagery and UV frame; entering the surface scene does not replace them with a different ground texture. Earth keeps its native 16K tile path in ultra quality. The game does not allocate 43 complete 16K textures.
 
