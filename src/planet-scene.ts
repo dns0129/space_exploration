@@ -25,6 +25,9 @@ import type { FlightTargetStats } from "./flight-target";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
 import { RenderBudget } from "./render-budget";
 import { EarthDetail, earthDetailSampling } from "./earth-detail";
+import { EnhancedSurface } from "./enhanced-surface";
+import type { EnhancedSurfaceState } from "./enhanced-surface";
+import { enhancedSurfaceProfile } from "./enhanced-surface-profile";
 import type { RenderQuality } from "./earth-detail";
 import { FlightRenderPolicy } from "./render-mode";
 import type { FlightRenderMode } from "./render-mode";
@@ -325,6 +328,11 @@ export class SolarScene {
   private earthMaps?: THREE.Texture[];
   private earthPromise?: Promise<THREE.Texture[]>;
   private readonly earthDetails = new Map<PlanetModel, EarthDetail>();
+  private readonly enhancedDetails = new Map<PlanetModel, EnhancedSurface>();
+  private readonly enhancedStates = new Map<PlanetModel, EnhancedSurfaceState>();
+  private materialAtlas?: THREE.Texture;
+  private atlasLoading?: Promise<void>;
+  private atlasRetryAt = 0;
   private earthHighMaps?: THREE.Texture[];
   private earthUpgrade?: Promise<void>;
   private earthUpgraded = false;
@@ -460,12 +468,14 @@ export class SolarScene {
           ? this.createEarthModel(maps!)
           : createPlanetModel(getBody(id), this.sunDirection, undefined, this.planetMaps.get(id) ?? lazyMap ?? undefined);
       this.models.set(id, model);
+      this.registerEnhancedSurface(model);
     } else if (lazyMap && model.mapUniforms?.detailMap.value !== lazyMap) setSurfaceMap(model, lazyMap, 1);
     this.mapFades.delete(model);
     this.planet.clear();
     this.planet.add(model.group);
     this.currentModel = model;
     this.publishSurfaceResolution(model);
+    this.publishSurfaceDetail(model);
     this.useSystemBackground(getBody(id).systemId ?? "solar");
     this.controls.maxDistance = id === "saturn" ? 12 : 7;
     this.targetPosition = null;
@@ -492,6 +502,79 @@ export class SolarScene {
       delete this.renderer.domElement.dataset.surfaceMap;
       delete this.renderer.domElement.dataset.surfaceResolution;
     }
+  }
+
+  private registerEnhancedSurface(model: PlanetModel) {
+    if (model.body.id === "earth" || model.body.kind === "station" || !model.enhancedSurface) return;
+    const detail = new EnhancedSurface(this.renderer, () => this.materialAtlas, state => {
+      this.enhancedStates.set(model, state);
+    });
+    Object.assign((model.enhancedSurface.material as THREE.ShaderMaterial).uniforms, detail.uniforms);
+    this.enhancedDetails.set(model, detail);
+  }
+
+  private publishSurfaceDetail(model?: PlanetModel, disabled = false) {
+    const data = this.renderer.domElement.dataset;
+    if (!model || model.body.kind === "station") {
+      for (const key of ["surfaceDetailKind", "surfaceDetailBody", "surfaceDetailResolution", "surfaceDetailTileResolution",
+        "surfaceDetailTiles", "surfaceDetailStatus", "surfaceDetailFamily"]) delete data[key];
+      return;
+    }
+    const native = model.body.id === "earth";
+    const state = this.enhancedStates.get(model);
+    const count = disabled ? 0 : native ? this.earthDetails.get(model)?.residentTiles ?? 0 : state?.residentTiles ?? 0;
+    data.surfaceDetailKind = native ? "native" : "enhanced";
+    data.surfaceDetailBody = model.body.id;
+    data.surfaceDetailFamily = native ? "earth" : enhancedSurfaceProfile(model.body).family;
+    data.surfaceDetailTiles = String(count);
+    data.surfaceDetailStatus = disabled ? "disabled" : count === 4 ? "ready" : count > 0 ? "pending"
+      : native ? data.earthDetail === "loading" ? "pending" : "global" : state?.status ?? "global";
+    if (count > 0) {
+      data.surfaceDetailResolution = native ? "16384x8192" : `${state!.width}x${state!.height}`;
+      data.surfaceDetailTileResolution = native ? "2064x2064" : `${state!.tileWidth}x${state!.tileHeight}`;
+    } else {
+      delete data.surfaceDetailResolution;
+      delete data.surfaceDetailTileResolution;
+    }
+  }
+
+  private loadMaterialAtlas(now: number) {
+    if (this.materialAtlas || this.atlasLoading || now < this.atlasRetryAt) return;
+    this.atlasLoading = (async () => {
+      await this.waitForSpaceWork();
+      const texture = await this.loadTexture("surface-material-atlas.jpg", false);
+      // The atlas is material height/albedo data, rather than a color photograph.
+      texture.colorSpace = THREE.NoColorSpace;
+      texture.needsUpdate = true;
+      this.renderer.initTexture(texture);
+      this.textures.add(texture);
+      this.materialAtlas = texture;
+      this.renderBudget.hold(1.5);
+    })().catch(() => {
+      // Generated detail is optional: complete base imagery continues to render.
+      this.atlasRetryAt = performance.now() + 30_000;
+    }).finally(() => { this.atlasLoading = undefined; });
+  }
+
+  private updateEnhancedSurfaces(delta: number, time: number) {
+    const active = this.flying ? this.flightModelById.get(this.dynamics!.environment.body.id) : this.currentModel;
+    const capable = !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 2064 && this.quality !== "standard";
+    // Release the previous world's tiles before materializing any tiles for the new world.
+    for (const [model, detail] of this.enhancedDetails) if (model !== active)
+      detail.update(undefined, this.camera, false, delta, time, undefined, enhancedSurfaceProfile(model.body));
+    if (active) {
+      const detail = this.enhancedDetails.get(active);
+      if (detail) {
+        const surface = active.enhancedSurface!;
+        surface.updateWorldMatrix(true, false);
+        const distance = surface.worldToLocal(this.flightRelative.copy(this.camera.position)).length();
+        const source = active.mapUniforms?.detailMap.value ?? undefined;
+        const enabled = capable && distance <= 3 && (!active.surfaceMap || !!source);
+        if (enabled) this.loadMaterialAtlas(time);
+        detail.update(surface, this.camera, enabled, delta, time, source, enhancedSurfaceProfile(active.body));
+      }
+    }
+    this.publishSurfaceDetail(active, !capable);
   }
 
   private loadSpaceTextures(): Promise<void> {
@@ -791,12 +874,15 @@ export class SolarScene {
   private updateEarthDetail(delta: number, time: number) {
     const model = this.flying ? this.flightModels.find(model => model.body.id === "earth") : this.models.get("earth");
     const active = !!model && (this.flying ? model.group.visible && this.dynamics?.systemId === "solar" : this.currentModel === model);
-    const capable = !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 8192
+    const capable = !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 2064
       && (this.renderer.domElement.dataset.softwareRenderer !== "true" || this.quality === "ultra");
     for (const [earth, detail] of this.earthDetails) if (earth !== model) detail.update(undefined, this.camera, false, delta, time);
     if (model) this.earthDetails.get(model)?.update(active ? model.surface : undefined,
-      this.camera, active && capable && this.earthUpgraded && this.quality === "ultra", delta, time);
-    if (!active || !capable || this.quality === "standard" || this.earthUpgraded || this.earthUpgrade || time < this.earthUpgradeAt) return;
+      this.camera, active && capable && this.quality === "ultra", delta, time);
+    // Native 16K tiles need only their own 2064px upload limit. The optional 8K
+    // global layers can stream separately and may fall back without disabling tiles.
+    if (!active || !capable || this.renderer.capabilities.maxTextureSize < 8192 || this.quality === "standard"
+      || this.earthUpgraded || this.earthUpgrade || time < this.earthUpgradeAt) return;
     const batch: THREE.Texture[] = [];
     this.earthUpgrade = (async () => {
       // Stagger decoding and uploads; one large map at a time avoids a burst of frame stalls.
@@ -986,6 +1072,7 @@ export class SolarScene {
       if (this.renderPolicy.mode === "space") {
         this.updateSurfaceMaps(delta, time);
         this.updateEarthDetail(delta, time);
+        this.updateEnhancedSurfaces(delta, time);
       }
       const reuseFrame = this.flightPaused && this.renderPolicy.mode === "surface"
         && this.stillSeconds > 0.4 && !this.flightFrameDirty && this.flightCameraQuiet();
@@ -1062,6 +1149,7 @@ export class SolarScene {
     }
     this.controls.update();
     this.updateEarthDetail(delta, time);
+    this.updateEnhancedSurfaces(delta, time);
     this.renderer.render(this.spaceScene, this.camera);
     this.frames++;
     if (!this.metricsStart) this.metricsStart = time;
@@ -1170,6 +1258,7 @@ export class SolarScene {
     this.flightRoot.add(model.group);
     this.flightModels.push(model);
     this.flightModelById.set(body.id, model);
+    this.registerEnhancedSurface(model);
     this.renderer.domElement.dataset.spaceModels = String(this.flightModels.length);
     return model;
   }
@@ -1390,6 +1479,12 @@ export class SolarScene {
     }
     this.renderer.domElement.dataset.renderMode = mode;
     this.renderer.domElement.dataset.spaceWorkActive = String(mode === "space");
+    if (mode !== previousMode && mode === "surface") {
+      // Preserve the independent local-world policy: no global tile generation in surface mode.
+      for (const [model, detail] of this.enhancedDetails)
+        detail.update(undefined, this.camera, false, 0, performance.now(), undefined, enhancedSurfaceProfile(model.body));
+      this.publishSurfaceDetail(this.flightModelById.get(environment.body.id), true);
+    }
     if (mode === "surface" && (previousMode !== "surface" || this.surfaceMapBody !== environment.body.id))
       this.snapshotSurfaceMaps(environment.body.id);
     if (mode === "space") this.updateSpaceWorld();
@@ -1631,6 +1726,7 @@ export class SolarScene {
     this.surfaceScene.dispose();
     this.shipSun.shadow.dispose();
     this.earthDetails.forEach(detail => detail.dispose());
+    this.enhancedDetails.forEach(detail => detail.dispose());
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
     document.removeEventListener("visibilitychange", this.visibilityHandler);

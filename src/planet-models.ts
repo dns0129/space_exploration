@@ -8,6 +8,7 @@ import { SURFACE_MAPS } from "./body-textures";
 import type { SurfaceMap } from "./body-textures";
 import { PROCEDURAL_DETAIL_WIDTH, proceduralBodyProfile } from "./procedural-body";
 import { SATURN_RING_INNER, SATURN_RING_OUTER, saturnRingOptics } from "./saturn-rings";
+import { createEnhancedSurfaceUniforms, enhancedSurfaceSampling } from "./enhanced-surface";
 
 export interface PlanetModel {
   body: CelestialBody;
@@ -20,6 +21,8 @@ export interface PlanetModel {
   /** Photographic or concept map shared by the surface (or Venus cloud deck) material. */
   surfaceMap?: SurfaceMap;
   mapUniforms?: SurfaceMapUniforms;
+  /** The visible globe texture lives on Venus's cloud deck and on other bodies' surface. */
+  enhancedSurface?: THREE.Mesh;
 }
 
 export interface SurfaceMapUniforms {
@@ -217,6 +220,7 @@ const planetFragment = /* glsl */ `
   varying vec3 vAxisZ;
   ${noise}
   ${mapSampling}
+  ${enhancedSurfaceSampling}
   #if BODY_KIND == 4
     ${saturnRingOptics}
   #endif
@@ -249,8 +253,9 @@ const planetFragment = /* glsl */ `
       #endif
       #ifdef SURFACE_MAP
         if (mapReady > 0.001) {
-          vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb;
+          vec3 photo = sampleEnhancedSurface(sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb, vUv, gx, gy).rgb;
           vec4 grain = magnify > 0.0 ? surfaceDetail(p, mapSize.x / 6.2832, footprint, magnify, detailStretch, bodySeed, detailRidges) : vec4(0.0);
+          grain *= 1.0 - enhancedSurfaceCoverage(vUv);
           // Illustrated stars keep the map's granulation and spots in their own temperature colour.
           vec3 stellar = stellarIllustration > 0.5
             ? stellarTint * 1.5 * pow(max(mapLuminance(photo) * mapTint.x, 0.0), 3.0)
@@ -339,6 +344,13 @@ const planetFragment = /* glsl */ `
     #endif
     #ifdef SURFACE_MAP
     }
+    #else
+      // Unimaged Ceres keeps its independent macro-geology beneath generated fine material.
+      vec2 detailGx, detailGy;
+      seamGradients(vUv, detailGx, detailGy);
+      vec4 generated = sampleEnhancedSurface(vec3(1.0), vUv, detailGx, detailGy);
+      color *= generated.rgb;
+      height += (generated.a - 0.5) * 0.006;
     #endif
     vec3 geometric = normalize(vNormal);
     vec3 normal = geometric;
@@ -349,9 +361,11 @@ const planetFragment = /* glsl */ `
     normal = normalize(max(abs(determinant),0.0000001)*normal-0.012*bodyRadius*gradient);
     #ifdef SURFACE_MAP
       if (mapReady > 0.001) {
-        vec3 photo = sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb;
+        vec4 enhanced = sampleEnhancedSurface(sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb, vUv, gx, gy);
+        vec3 photo = enhanced.rgb;
         // Grain only exists beyond the map's native resolution; skip it entirely otherwise.
         vec4 grain = magnify > 0.0 ? surfaceDetail(p, mapSize.x / 6.2832, footprint, magnify, detailStretch, bodySeed, detailRidges) : vec4(0.0);
+        grain *= 1.0 - enhancedSurfaceCoverage(vUv);
         vec3 slope = grain.yzw * mapGrain * 2.5;
         if (mapRelief > 0.0) {
           // Map brightness read as relief, differenced in texture space: smooth per-pixel normals, no 2x2 blocks.
@@ -372,6 +386,10 @@ const planetFragment = /* glsl */ `
         vec3 photoNormal = normalize(geometric - mat3(vAxisX, vAxisY, vAxisZ) * slope);
         color = mix(color, photo * mapTint * (1.0 + grain.x * mapGrain * 2.2), mapReady);
         normal = normalize(mix(normal, photoNormal, mapReady));
+        if (mapRelief > 0.0) {
+          vec3 fineGradient = sign(determinant) * (dFdx(enhanced.a) * r1 + dFdy(enhanced.a) * r2);
+          normal = normalize(max(abs(determinant), 0.0000001) * normal - 0.00008 * bodyRadius * fineGradient);
+        }
       }
     #endif
     // Detail normals never light terrain beyond the geometric terminator.
@@ -615,6 +633,7 @@ export function createPlanetModel(
       fragmentShader: planetFragment,
       defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(mapOnSurface ? { SURFACE_MAP: 1 } : {}), ...(body.id === "betelgeuse" ? { RED_SUPERGIANT: 1 } : {}) },
       uniforms: {
+        ...createEnhancedSurfaceUniforms(),
         ...proceduralUniforms,
         ...(mapOnSurface ? mapUniforms : {}),
         sunDirection: { value: sunDirection },
@@ -644,6 +663,7 @@ export function createPlanetModel(
     ringsEnabled,
     surfaceMap,
     mapUniforms,
+    enhancedSurface: surface,
   };
   if (body.layers.includes("atmosphere")) {
     const solar = body.id === "sun" || body.kind === "star";
@@ -693,6 +713,7 @@ export function createPlanetModel(
       clouds.material.fragmentShader = planetFragment;
       clouds.material.defines = { BODY_KIND: 1, SURFACE_MAP: 1 };
       Object.assign(clouds.material.uniforms, mapUniforms, {
+        ...createEnhancedSurfaceUniforms(),
         planetAxis: { value: axis },
         planetCenter: { value: placement.center },
         bodyRadius: { value: placement.radius },
@@ -703,6 +724,7 @@ export function createPlanetModel(
         stellarTint: { value: new THREE.Color(body.color) },
         stellarIllustration: { value: 0 },
       });
+      model.enhancedSurface = clouds;
     }
     clouds.scale.y = body.flattening;
     group.add(clouds);

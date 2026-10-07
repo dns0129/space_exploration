@@ -52,15 +52,17 @@ export class EarthDetail {
     }
   }
 
+  get residentTiles() { return this.slots.filter(Boolean).length; }
+
   update(surface: THREE.Mesh | undefined, camera: THREE.Camera, enabled: boolean, delta: number, now: number) {
     if (this.disposed) return;
+    if (!enabled || !surface) { this.clear(!!surface); return; }
     const blend = this.uniforms.detailBlend.value as THREE.Vector4;
     this.slots.forEach((slot, i) => {
       if (slot) { slot.fade = Math.min(1, slot.fade + delta * 2); blend.setComponent(i, enabled ? slot.fade : 0); }
     });
     if (now < this.checkAt) return;
     this.checkAt = now + 300;
-    if (!enabled || !surface) { this.clear(!!surface); return; }
     surface.updateWorldMatrix(true, false);
     surface.worldToLocal(this.eye.copy(camera.position));
     if (this.eye.length() > 3.0) { this.clear(); return; }

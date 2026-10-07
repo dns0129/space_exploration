@@ -141,6 +141,32 @@ try {
       await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", id);
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-map", `${id}-real${mobile ? "" : "-8k"}.jpg`);
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-resolution", mobile ? "4096x2048" : "8192x4096");
+      await page.locator('.primary-button[data-view="close"]').click();
+      const canvas = page.locator("canvas");
+      if (mobile) {
+        await expect(canvas).toHaveAttribute("data-surface-detail-status", "disabled");
+        await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "0");
+        assert.equal(await canvas.getAttribute("data-surface-detail-resolution"), null, "Phone must keep its complete base image without 16K composite tiles");
+      } else {
+        await page.locator("#quality").selectOption("ultra");
+        await expect(canvas).toHaveAttribute("data-surface-detail-status", "ready", { timeout: 60000 });
+        await expect(canvas).toHaveAttribute("data-surface-detail-body", id);
+        await expect(canvas).toHaveAttribute("data-surface-detail-kind", "enhanced");
+        await expect(canvas).toHaveAttribute("data-surface-detail-resolution", "16384x8192");
+        await expect(canvas).toHaveAttribute("data-surface-detail-tile-resolution", "2064x2064");
+        await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "4");
+      }
+    }
+    if (!mobile) {
+      await page.locator('button[data-body="earth"]').click();
+      await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", "earth");
+      await page.locator('.primary-button[data-view="close"]').click();
+      const canvas = page.locator("canvas");
+      await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "4", { timeout: 60000 });
+      await expect(canvas).toHaveAttribute("data-surface-detail-kind", "native");
+      await expect(canvas).toHaveAttribute("data-surface-detail-body", "earth");
+      await expect(canvas).toHaveAttribute("data-surface-detail-resolution", "16384x8192");
+      await expect(canvas).toHaveAttribute("data-surface-detail-tile-resolution", "2064x2064");
     }
     await page.getByRole("link", { name: "星际探索首页", exact: true }).click();
     await page.getByRole("link", { name: "立即启航", exact: true }).click();

@@ -891,5 +891,16 @@
     "height": 4096,
     "sourceSha256": "d1875bcec83588ca25e4802e576f6bb9f88b39e1e403cb41ff55867419c54796",
     "sha256": "e765ef951f97f6731fcdbb9bce588fc4c6a69dcb2dadc68bf855db383acecdbc"
+  },
+  "surface-material-atlas.jpg": {
+    "source": "Original planetary microdetail atlas generated for this project with OpenAI image generation on 2026-10-07",
+    "credit": "Project artwork generated with OpenAI image generation",
+    "license": "No separate third-party asset license stated; generated for this project",
+    "kind": "generated",
+    "changes": "1254x1254 source with four 627x627 rock/ice/gas/star quadrants; encoded as JPEG quality 85 without resizing. Artistic material reference for GPU-generated enhanced 16384x8192 surface tiles, not measured height or astronomical imagery.",
+    "width": 1254,
+    "height": 1254,
+    "sourceSha256": "7c6a63713cec01cb634879ae88afa14438b3846c9c381d89760ea1a7c751fe9b",
+    "sha256": "cc727d6c8ef25fe92642fcc7fd832f626981b68faf75f64e6c9d0fdc62f9dc67"
   }
 }

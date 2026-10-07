@@ -83,6 +83,10 @@ try {
       await expect(page.locator("canvas")).toHaveAttribute("data-earth-maps", "8k", { timeout: 60_000 });
       await page.locator('.primary-button[data-view="close"]').click();
       await expect(page.locator("canvas")).toHaveAttribute("data-earth-detail-tiles", "4", { timeout: 60_000 });
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-kind", "native");
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-body", "earth");
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-resolution", "16384x8192");
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-tile-resolution", "2064x2064");
       const detail = PNG.sync.read(await page.locator("canvas").screenshot());
       assert(detail.data.some((value, index) => index % 4 !== 3 && value > 120), "Offline ultra Earth must render actual pixels");
       await page.locator("#quality").selectOption("standard");
@@ -95,6 +99,21 @@ try {
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-resolution", "8192x4096");
       console.log(`Offline ${id}: native 8K imagery loaded without network requests`);
     }
+    if (id !== "earth" && id !== "earth-station") {
+      await page.locator("#quality").selectOption("ultra");
+      await page.locator('.primary-button[data-view="close"]').click();
+      const canvas = page.locator("canvas");
+      await expect(canvas).toHaveAttribute("data-surface-detail-status", "ready", { timeout: 60_000 });
+      await expect(canvas).toHaveAttribute("data-surface-detail-body", id);
+      await expect(canvas).toHaveAttribute("data-surface-detail-kind", "enhanced");
+      await expect(canvas).toHaveAttribute("data-surface-detail-resolution", "16384x8192");
+      await expect(canvas).toHaveAttribute("data-surface-detail-tile-resolution", "2064x2064");
+      await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "4");
+      console.log(`Offline ${id}: enhanced 16K composite with four physical 2064x2064 tiles`);
+    } else if (id === "earth-station") {
+      for (const attribute of ["kind", "body", "family", "resolution", "tile-resolution", "tiles", "status"])
+        assert.equal(await page.locator("canvas").getAttribute(`data-surface-detail-${attribute}`), null, "Station must not retain the previous body's 16K diagnostics");
+    }
     const shot = PNG.sync.read(await page.locator("canvas").screenshot());
     let surface = 0;
     for (let i = 0; i < shot.data.length; i += 4) {
@@ -102,6 +121,11 @@ try {
     }
     assert(surface > 6000, `${id}: rendered surface is missing`);
     console.log(`Offline ${id}: ${surface} rendered surface pixels`);
+    if (id !== "earth" && id !== "earth-station") {
+      await page.locator("#quality").selectOption("standard");
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-tiles", "0");
+      assert.equal(await page.locator("canvas").getAttribute("data-surface-detail-resolution"), null, "Disabling enhanced detail must release its resident tiles");
+    }
   }
   await page.locator(".brand").click();
   await page.waitForFunction(
