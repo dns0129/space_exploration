@@ -73,7 +73,9 @@ const localSurfaceSampling = /* glsl */ `
         ? sampleEnhancedSurface(base, detailUv, dx, dy).rgb
         : base * sampleEnhancedSurface(vec3(1.0), detailUv, dx, dy).rgb;
     }
-    return base * groundMapTint;
+    // Map tint belongs to photography. The canonical procedural fallback has
+    // already been coloured identically to the orbital material.
+    return groundMapReady > 0.0 ? base * groundMapTint : base;
   }
 `;
 
@@ -99,6 +101,7 @@ export class SurfaceScene {
   private canonicalUniforms: Record<string, THREE.IUniform> = createCanonicalTerrainUniforms(getBody("earth"));
   private compiledHorizonUniforms?: Record<string, THREE.IUniform>;
   private compiledGroundUniforms?: Record<string, THREE.IUniform>;
+  private compiledRockUniforms?: Record<string, THREE.IUniform>;
   private readonly terrainUniforms = {
     groundCamera: { value: new THREE.Vector3() },
     groundFog: { value: new THREE.Color() },
@@ -122,8 +125,10 @@ export class SurfaceScene {
     groundCloudMapBlend: { value: 0 },
   };
   private readonly groundDetail: THREE.DataTexture;
-  private readonly light = new THREE.DirectionalLight(0xffead1, 2.2);
-  private readonly ambient = new THREE.HemisphereLight(0xcbdce8, 0x3a3028, 0.8);
+  private readonly light = new THREE.DirectionalLight(0xffffff, 2.2);
+  // Orbital albedo is illuminated without a colour multiplier. Keep the local
+  // ground's fill light neutral too, so grey regolith stays grey on descent.
+  private readonly ambient = new THREE.HemisphereLight(0xd9d9d9, 0x323232, 0.8);
   private readonly skyMaterial = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, depthTest: false,
     uniforms: { rotation: { value: new THREE.Matrix3() }, up: { value: new THREE.Vector3() },
@@ -217,6 +222,7 @@ export class SurfaceScene {
     Object.assign(this.detailUniforms, createLocalDetailUniforms(), snapshot.detailUniforms ?? {});
     if (this.compiledHorizonUniforms) Object.assign(this.compiledHorizonUniforms, this.terrainUniforms, this.detailUniforms, this.canonicalUniforms);
     if (this.compiledGroundUniforms) Object.assign(this.compiledGroundUniforms, this.terrainUniforms, this.detailUniforms, this.canonicalUniforms);
+    if (this.compiledRockUniforms) Object.assign(this.compiledRockUniforms, this.terrainUniforms, this.detailUniforms, this.canonicalUniforms);
   }
   /** Compatibility wrapper for callers that have only a resident base map. */
   setHorizonMap(bodyId: string, texture: THREE.Texture | null, worldToSurfaceRotation: THREE.Matrix3,
@@ -289,7 +295,9 @@ export class SurfaceScene {
     this.terrainUniforms.groundCloudMapReady.value = Number(this.horizonMapBodyId === env.body.id && !!this.terrainUniforms.groundHorizonCloudMap.value);
     this.terrainUniforms.groundCloudMapBlend.value = THREE.MathUtils.smoothstep(env.altitudeKm, 18, 36);
     this.light.position.copy(sun).multiplyScalar(10);
-    this.light.color.copy(sunlight.color);
+    // Sky and sun retain their stellar colours; terrain uses neutral irradiance
+    // like the orbital material, preserving the source map's local hue.
+    this.light.color.set(0xffffff);
     this.light.intensity = 2.2 * day;
     this.ambient.intensity = 0.12 + day * 0.55;
     this.ambient.position.copy(env.outward);
@@ -379,6 +387,7 @@ export class SurfaceScene {
     const env = ship.environment;
     this.bodyId = env.body.id;
     this.compiledGroundUniforms = undefined;
+    this.compiledRockUniforms = undefined;
     this.terrainUnitsKm = ship.config.unitsKm;
     this.terrainBodyRadius = env.body.radius;
     this.terrainBodyCenter.fromArray(env.body.position);
@@ -462,8 +471,23 @@ export class SurfaceScene {
     // The planetary cloud shell must composite over the fading local ground tile.
     this.terrain.renderOrder = -10;
     this.group.add(this.terrain);
-    this.rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0),
-      new THREE.MeshStandardMaterial({ color: ground.clone().multiplyScalar(0.7), roughness: 1, transparent: true }), 140);
+    const rockMaterial = new THREE.MeshStandardMaterial({ roughness: 1, transparent: true });
+    rockMaterial.onBeforeCompile = shader => {
+      this.compiledRockUniforms = shader.uniforms;
+      Object.assign(shader.uniforms, this.terrainUniforms, this.detailUniforms, this.canonicalUniforms);
+      shader.vertexShader = shader.vertexShader.replace("#include <common>",
+        `#include <common>
+        varying vec3 groundPosition, groundRadial; uniform vec3 groundHorizonOffset;`)
+        .replace("#include <begin_vertex>", `#include <begin_vertex>
+          // Instance translations are local to the same terrain anchor.
+          groundPosition = (instanceMatrix * vec4(position, 1.0)).xyz * ${Number(ship.config.unitsKm * 1000).toFixed(1)};
+          groundRadial = normalize(groundPosition - groundHorizonOffset);`);
+      shader.fragmentShader = shader.fragmentShader.replace("#include <common>", `#include <common>
+        ${localSurfaceSampling}`)
+        .replace("#include <color_fragment>", `#include <color_fragment>
+          diffuseColor.rgb = groundAlbedo(groundRadial, diffuseColor.rgb) * 0.7;`);
+    };
+    this.rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMaterial, 140);
     const pose = new THREE.Object3D();
     for (let i = 0; i < 140; i++) {
       const angle = i * 2.399963;
