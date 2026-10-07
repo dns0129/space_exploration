@@ -7,8 +7,7 @@ import { tmpdir } from "node:os";
 import { createVoyagerServer } from "./server.mjs";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import { bodySystem } from "../shared/world-navigation.mjs";
-import { terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
-import { mappedMountainNormal } from "./terrain-fixtures.mjs";
+import { terrainHeightKm, terrainMapNormal, surfaceProfile, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
 import * as THREE from "three";
 import { RenderBudget } from "../src/render-budget.ts";
@@ -137,7 +136,7 @@ test("malformed, oversized and cross-origin saves are rejected without replacing
   for (const body of [
     "{bad",
     JSON.stringify({ ...saved, orientation: [0, 0, 0, 0] }),
-    JSON.stringify({ ...saved, position: [1e99, 0, 0] }),
+    JSON.stringify({ ...saved, position: [null, 0, 0] }),
     JSON.stringify({ ...saved, target: "pluto" }),
   ])
     assert.equal(
@@ -145,6 +144,7 @@ test("malformed, oversized and cross-origin saves are rejected without replacing
         .status,
       400,
     );
+  assert.equal(validateFlightState({ ...saved, position: [Infinity, 0, 0] }), null);
   assert.equal(
     (
       await fetch(url + "/api/flight/save", {
@@ -202,7 +202,7 @@ test("thrust, six-axis orientation, inertia and braking change the actual ship s
   };
   for (let i = 0; i < 30; i++) ship.step(0.05, input);
   assert(ship.position.distanceTo(start) > 0.001);
-  assert(ship.velocity.length() > 0.003);
+  assert(Math.abs(speedKm(ship) - ship.cruiseSpeedKm) < 1e-8);
   assert(ship.orientation.angleTo(new ShipDynamics().orientation) > 0.2);
   const speed = ship.velocity.length();
   for (let i = 0; i < 15; i++)
@@ -210,20 +210,16 @@ test("thrust, six-axis orientation, inertia and braking change the actual ship s
   assert(ship.velocity.length() < speed * 0.01);
   assert(validateFlightState(ship.snapshot()));
 });
-test("swept safety protection slows a fast ship outside Earth's shell before collision", () => {
+test("continuous entity collision stops a fast ship at terrain rather than an altitude protection bubble", () => {
   const ship = new ShipDynamics();
-  const earth = placeAtAltitude(ship, "earth", 12742, new THREE.Vector3(0, 0, -1));
-  ship.setEngineMode("interstellar");
-  ship.velocity.set(0, 0, 100000 / world.unitsKm);
+  placeAtAltitude(ship, "earth", 12742, new THREE.Vector3(0, 0, -1));
+  ship.setCruiseSpeed(600000);
+  ship.velocity.set(0, 0, 600000 / world.unitsKm);
   ship.assist = false;
-  const previous = ship.position.clone();
-  ship.step(0.25, emptyInput());
-  assert.equal(ship.collision, null, "the speed shell must intercept the path before a surface collision");
-  assert(speedKm(ship) <= 100 + 1e-8);
-  assert(ship.environment.altitudeKm > 1000);
-  assert(ship.position.distanceTo(previous) * world.unitsKm < 12742 - 1000, "the swept frame must stop outside the safety shell");
-  assert(ship.deceleration > 0.5);
-  assert(ship.position.distanceTo(new THREE.Vector3().fromArray(earth.position)) > earth.radius);
+  ship.step(0.05, emptyInput());
+  assert.equal(ship.collision, "earth");
+  assert.equal(ship.velocity.length(), 0, "entity collision remains the exception to powered cruising");
+  assert(ship.environment.groundAltitudeKm < 0.01, "collision must happen at actual terrain, not the old 1000 km or radius-based shell");
   const saved = ship.snapshot();
   const restored = new ShipDynamics();
   assert(restored.restore(saved));
@@ -231,106 +227,253 @@ test("swept safety protection slows a fast ship outside Earth's shell before col
   assert.equal(restored.restore({ ...saved, position: [Infinity, 0, 0] }), false);
 });
 
-test("standard space propulsion stops at planetary speed; interstellar propulsion requires a persisted manual choice", () => {
+function mountainTraverse(heightKm) {
+  // A mapped Antarctic ridge replaces the former arbitrary noise ridge. The
+  // ten-kilometre route retains >200 m clearance at both valley endpoints and
+  // a >200 m obstruction between them at this compact DEM's physical scale.
+  const normal = new THREE.Vector3(...terrainMapNormal("earth", [0.96728515625, 0.0341796875]));
+  const east = new THREE.Vector3(0, 1, 0).cross(normal).normalize();
+  const north = normal.clone().cross(east).normalize();
+  const direction = east.multiplyScalar(Math.cos(7 * Math.PI / 16)).addScaledVector(north, Math.sin(7 * Math.PI / 16));
+  heightKm ??= terrainHeightKm("earth", normal.toArray()) - 0.25 + LANDING_CLEARANCE_KM;
+  const fromKm = normal.multiplyScalar(6371 + heightKm).addScaledVector(direction, -5);
+  const terrain = [], clearance = [];
+  for (let i = 0; i <= 1000; i++) {
+    const point = fromKm.clone().addScaledVector(direction, i / 100);
+    const height = terrainHeightKm("earth", point.clone().normalize().toArray());
+    terrain.push(height);
+    clearance.push(point.length() - 6371 - height - LANDING_CLEARANCE_KM);
+  }
+  return { fromKm, direction, terrain, clearance };
+}
+function placeOnTraverse(ship, fixture) {
+  const earth = world.bodies.find(body => body.id === "earth");
+  ship.position.fromArray(earth.position).addScaledVector(fixture.fromKm, 1 / world.unitsKm);
+  ship.orientation.setFromUnitVectors(new THREE.Vector3(0, 0, -1), fixture.direction);
+  ship.setCruiseSpeed(200);
+  ship.velocity.copy(fixture.direction).multiplyScalar(200 / world.unitsKm);
+}
+
+test("a mapped ten-kilometre valley-to-valley flight stops at the first real ridge contact even when both endpoints are clear", () => {
+  const fixture = mountainTraverse();
+  assert(fixture.clearance[0] > 0.2 && fixture.clearance.at(-1) > 0.2);
+  assert(Math.max(...fixture.terrain) - Math.max(fixture.terrain[0], fixture.terrain.at(-1)) > 0.2,
+    "the interior ridge must be significantly higher than either valley endpoint");
+  assert(Math.min(...fixture.clearance) < -0.2, "the planned straight flight must really intersect the ridge");
   const ship = new ShipDynamics();
-  ship.position.set(1e6, 0, 0);
-  assert.equal(ship.engineMode, "standard");
-  assert.deepEqual(world.engines.map(engine => [engine.id, engine.minSpeedKm, engine.maxSpeedKm]), [
-    ["atmospheric", 0.001, 1], ["orbital", 1, 100],
-    ["planetary", 100, 10000], ["interstellar", 10000, 100000],
-  ]);
-  for (const [speed, engine] of [[0, "orbital"], [1, "orbital"], [99.9, "orbital"],
-    [100, "planetary"], [9999.9, "planetary"], [10000, "planetary"]]) {
-    ship.velocity.set(speed / world.unitsKm, 0, 0);
-    assert.equal(ship.engine.id, engine, `${speed} km/s in standard mode`);
-    const restored = new ShipDynamics();
-    assert(restored.restore(ship.snapshot()));
-    assert.equal(restored.engine.id, engine);
-    assert(Math.abs(speedKm(restored) - speed) < 1e-8);
-  }
-  assert(ship.restore({ ...ship.snapshot(), velocity: [50000 / world.unitsKm, 0, 0] }));
-  assert(Math.abs(speedKm(ship) - 10000) < 1e-8, "a speed-only save cannot enable interstellar propulsion");
-  ship.setEngineMode("interstellar");
-  for (const speed of [0, 99, 10000, 100000]) {
-    ship.velocity.set(speed / world.unitsKm, 0, 0);
-    assert.equal(ship.engine.id, "interstellar", "the manually selected gear stays selected during braking");
-    const restored = new ShipDynamics();
-    assert(restored.restore(ship.snapshot()));
-    assert.equal(restored.engineMode, "interstellar");
-    assert.equal(restored.engine.id, "interstellar");
-    assert(Math.abs(speedKm(restored) - speed) < 1e-8);
-  }
-  assert(ship.restore({ ...ship.snapshot(), velocity: [120000 / world.unitsKm, 0, 0] }));
-  assert(Math.abs(speedKm(ship) - 100000) < 1e-8);
-  ship.setEngineMode("standard");
-  ship.step(0.05, emptyInput());
-  assert(speedKm(ship) <= 10000 + 1e-8);
-  assert.equal(ship.engine.id, "planetary");
+  placeOnTraverse(ship, fixture);
+  const start = ship.position.clone();
+  ship.step(0.05, { ...emptyInput(), throttle: 1 });
+  assert.equal(ship.collision, "earth");
+  assert.equal(ship.velocity.length(), 0);
+  const travelledKm = ship.position.distanceTo(start) * world.unitsKm;
+  assert(travelledKm > 2 && travelledKm < 3, "the ship must stop at the first intermediate ridge, not at a valley endpoint");
+  const earth = world.bodies.find(body => body.id === "earth");
+  const radial = ship.position.clone().sub(new THREE.Vector3().fromArray(earth.position));
+  const clearance = radial.length() * world.unitsKm - 6371
+    - terrainHeightKm("earth", radial.clone().normalize().toArray()) - LANDING_CLEARANCE_KM;
+  assert(clearance >= -0.00001 && clearance < 0.005, "collision must stop on the sampled terrain without penetrating it");
 });
 
-test("six-axis thrust obeys both manual speed ceilings, braking preserves the selected gear, and space inertia survives", () => {
-  for (const [mode, maximum, expectedEngines] of [
-    ["standard", 10000, ["orbital", "planetary"]],
-    ["interstellar", 100000, ["interstellar"]],
-  ]) for (const boost of [false, true]) {
+test("the same mapped route above the highest ridge remains at user speed and does not collide with a terrain envelope", () => {
+  const low = mountainTraverse();
+  const fixture = mountainTraverse(Math.max(...low.terrain) + 0.1 + LANDING_CLEARANCE_KM);
+  assert(Math.min(...fixture.clearance) > 0.099, "the control path must stay about 100 m above the entire ridge");
+  const ship = new ShipDynamics();
+  placeOnTraverse(ship, fixture);
+  const start = ship.position.clone();
+  ship.step(0.05, { ...emptyInput(), throttle: 1 });
+  assert.equal(ship.collision, null);
+  assert(Math.abs(speedKm(ship) - 200) < 1e-8);
+  assert(Math.abs(ship.position.distanceTo(start) * world.unitsKm - 10) < 1e-6,
+    "the conservative terrain envelope must not shorten a physically clear path");
+});
+
+test("maximum finite cruise speed produces finite consecutive powered frames and valid far-space saves", () => {
+  const ship = new ShipDynamics();
+  ship.setEngineMode("atmospheric");
+  ship.position.set(1e6, 0, 0);
+  ship.orientation.identity();
+  ship.setCruiseSpeed(Number.MAX_VALUE);
+  const internalLimit = Number.MAX_VALUE / world.unitsKm;
+  for (let i = 0; i < 3; i++) {
+    ship.step(0.01, { ...emptyInput(), throttle: 1 });
+    assert(ship.position.toArray().every(Number.isFinite), "real powered displacement must remain finite");
+    assert(ship.velocity.toArray().every(Number.isFinite), "normalizing to MAX_VALUE must not create Infinity or NaN");
+    const speed = Math.hypot(...ship.velocity.toArray());
+    assert(Number.isFinite(speed));
+    assert(Math.abs(speed / internalLimit - 1) < 1e-12);
+    assert(validateFlightState(ship.snapshot()), "maximum-speed displacement must remain a restorable flight state");
+  }
+});
+
+test("extreme finite swept velocities still stop at the Sun and an intermediate physical mountain ridge", () => {
+  const sunShip = new ShipDynamics();
+  const sun = placeAtAltitude(sunShip, "sun", 100000, new THREE.Vector3(0, 0, -1));
+  sunShip.assist = false;
+  sunShip.setCruiseSpeed(1e160);
+  sunShip.velocity.set(0, 0, 1e160 / world.unitsKm);
+  sunShip.step(0.05, emptyInput());
+  assert.equal(sunShip.collision, "sun");
+  assert.equal(sunShip.velocity.length(), 0);
+  const sunClearanceKm = (sunShip.position.distanceTo(new THREE.Vector3().fromArray(sun.position)) - sun.radius) * world.unitsKm;
+  assert(sunClearanceKm >= -0.00001 && sunClearanceKm < 0.005,
+    "overflowing squared velocities must not skip the Sun's physical surface");
+  const ridgeShip = new ShipDynamics();
+  placeOnTraverse(ridgeShip, mountainTraverse());
+  ridgeShip.assist = false;
+  ridgeShip.setCruiseSpeed(1e160);
+  ridgeShip.velocity.multiplyScalar(1e158);
+  const start = ridgeShip.position.clone();
+  ridgeShip.step(0.05, emptyInput());
+  assert.equal(ridgeShip.collision, "earth");
+  assert.equal(ridgeShip.velocity.length(), 0);
+  assert(ridgeShip.position.toArray().every(Number.isFinite));
+  const travelledKm = ridgeShip.position.distanceTo(start) * world.unitsKm;
+  assert(travelledKm > 2 && travelledKm < 3,
+    "a stable extreme-speed sweep must stop at the first ridge rather than tunnelling through the entire terrain envelope");
+  assert(validateFlightState(ridgeShip.snapshot()));
+});
+
+test("all four engines stay manually selected independently of speed, atmosphere and ground clearance", () => {
+  const ship = new ShipDynamics();
+  assert.equal(ship.engineMode, "planetary");
+  assert.equal(ship.cruiseSpeedKm, 100);
+  assert.equal(ship.engine.id, "planetary");
+  assert(world.engines.every(engine => !("minSpeedKm" in engine) && !("maxSpeedKm" in engine)),
+    "manual engine metadata must not retain obsolete speed gates");
+  for (const mode of ["atmospheric", "orbital", "planetary", "interstellar"]) {
+    ship.position.set(1e6, 0, 0);
+    ship.setCruiseSpeed(600000);
+    assert.equal(ship.setEngineMode(mode), null);
+    for (const speed of [0, 0.001, 100, 10000, 500000]) {
+      ship.velocity.set(speed / world.unitsKm, 0, 0);
+      assert.equal(ship.engine.id, mode, `${mode} at ${speed} km/s`);
+      const restored = new ShipDynamics();
+      assert(restored.restore(ship.snapshot()));
+      assert.equal(restored.engineMode, mode);
+      assert.equal(restored.engine.id, mode);
+      assert(Math.abs(speedKm(restored) - speed) < 1e-7);
+    }
+    for (const [id, groundAltitude] of [["earth", 1], ["earth", 50], ["moon", 1], ["jupiter", 1500]]) {
+      placeAboveGround(ship, id, groundAltitude);
+      assert.equal(ship.setEngineMode(mode), null, "engine selection must be available in air and near the surface");
+      assert.equal(ship.engine.id, mode);
+      assert(Math.abs(ship.speedLimit * world.unitsKm - 600000) < 1e-7);
+    }
+  }
+});
+
+test("powered six-axis flight reaches the user cruise speed immediately in every gear and preserves space inertia", () => {
+  for (const mode of ["atmospheric", "orbital", "planetary", "interstellar"]) {
+    for (const cruise of [100, 250, 1000000]) for (const boost of [false, true]) {
+      const ship = new ShipDynamics();
+      ship.position.set(1e6, 0, 0);
+      ship.setEngineMode(mode);
+      ship.setCruiseSpeed(cruise);
+      ship.step(0.01, { ...emptyInput(), throttle: 1, strafe: 1, lift: 1, boost });
+      assert(Math.abs(speedKm(ship) - cruise) < 1e-7, "the first powered frame must already use the selected total-vector speed");
+      assert(ship.velocity.x && ship.velocity.y && ship.velocity.z, "test a genuinely diagonal velocity");
+      assert.equal(ship.engine.id, mode);
+      assert(validateFlightState(ship.snapshot()));
+      ship.assist = false;
+      const velocity = ship.velocity.clone(), position = ship.position.clone();
+      ship.step(0.05, emptyInput());
+      assert(ship.velocity.distanceTo(velocity) < 1e-12);
+      assert(ship.position.distanceTo(position.addScaledVector(velocity, 0.05)) < 1e-8);
+    }
+  }
+});
+
+test("Space brakes continuously and S brakes before reversing; idle may remain below the cruise minimum", () => {
+  for (const brake of [true, false]) {
     const ship = new ShipDynamics();
     ship.position.set(1e6, 0, 0);
-    ship.setEngineMode(mode);
-    const engines = new Set();
-    for (let i = 0; i < 600; i++) {
-      engines.add(ship.engine.id);
-      ship.step(0.05, { ...emptyInput(), throttle: 1, strafe: 1, lift: 1, boost });
-      assert(speedKm(ship) <= maximum + 1e-8, `${mode}: diagonal thrust must cap vector magnitude`);
+    ship.setCruiseSpeed(400);
+    ship.step(0.05, { ...emptyInput(), throttle: 1 });
+    assert(Math.abs(speedKm(ship) - 400) < 1e-8);
+    const slowing = { ...emptyInput(), throttle: brake ? 1 : -1, strafe: 1, lift: 1, boost: true, brake };
+    let previous = speedKm(ship);
+    for (let i = 0; i < 200; i++) {
+      ship.step(0.05, slowing);
+      assert(speedKm(ship) <= previous + 1e-8, "combined controls must not reset braking to the cruise value");
+      previous = speedKm(ship);
+      // S becomes reverse thrust after stopping; release it as soon as the ship reaches rest.
+      if (!brake && ship.velocity.length() === 0) break;
     }
-    assert.deepEqual([...engines], expectedEngines);
-    assert(Math.abs(speedKm(ship) - maximum) < 1e-8);
-    assert(validateFlightState(ship.snapshot()));
-    ship.assist = false;
-    const velocity = ship.velocity.clone(), position = ship.position.clone();
-    ship.step(0.05, emptyInput());
-    assert(ship.velocity.distanceTo(velocity) < 1e-12);
-    assert(ship.position.distanceTo(position.addScaledVector(velocity, 0.05)) < 1e-8);
-    const brakingEngines = new Set();
-    for (let i = 0; i < 80; i++) {
-      brakingEngines.add(ship.engine.id);
-      ship.step(0.05, { ...emptyInput(), brake: true });
-    }
-    assert.deepEqual([...brakingEngines], mode === "standard" ? ["planetary", "orbital"] : ["interstellar"]);
     assert.equal(ship.velocity.length(), 0);
-    ship.setEngineMode("standard");
-    assert.equal(ship.engine.id, "orbital");
+    assert.equal(ship.engine.id, "planetary");
+    ship.step(0.05, emptyInput());
+    assert.equal(ship.velocity.length(), 0, "idle flight must not force a stationary ship to the 100 km/s minimum");
+    if (!brake) {
+      ship.step(0.05, { ...emptyInput(), throttle: -1 });
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.orientation);
+      assert(ship.velocity.dot(forward) < 0, "S remains reverse thrust when used from rest");
+      assert(Math.abs(speedKm(ship) - 400) < 1e-8);
+    }
   }
 });
 
-test("backend persists the manually selected maximum speed and low-speed control, rejecting malformed engine settings", async (t) => {
+test("backend persists arbitrary finite cruise speeds and all engine choices while normalizing obsolete settings", async (t) => {
   const { url } = await fixture(t);
   const cookie = (await fetch(url + "/api/flight/save")).headers.get("set-cookie").split(";")[0];
   const ship = new ShipDynamics();
   ship.position.set(1e6, 0, 0);
-  ship.setEngineMode("interstellar");
-  ship.setAtmosphericSpeed(245);
-  ship.velocity.set(100000 / world.unitsKm, 0, 0);
+  ship.setEngineMode("atmospheric");
+  ship.setCruiseSpeed(900000);
+  ship.velocity.set(900000 / world.unitsKm, 0, 0);
   const saved = ship.snapshot();
+  assert.equal(saved.cruiseSpeedKm, 900000);
+  assert(!("atmosphericSpeedMps" in saved));
+  assert(!("escapeBody" in saved));
   const headers = { cookie, "content-type": "application/json" };
   const post = value => fetch(url + "/api/flight/save", { method: "POST", headers, body: JSON.stringify(value) });
   assert.equal((await post(saved)).status, 200);
-  for (const patch of [{ engineMode: "automatic" }, { atmosphericSpeedMps: 0 },
-    { atmosphericSpeedMps: 1001 }, { atmosphericSpeedMps: "100" }, { escapeBody: "unknown" }])
+  for (const patch of [{ engineMode: "automatic" }, { cruiseSpeedKm: 99 },
+    { cruiseSpeedKm: 0 }, { cruiseSpeedKm: "100" }, { cruiseSpeedKm: null }])
     assert.equal((await post({ ...saved, ...patch })).status, 400);
+  for (const cruiseSpeedKm of [NaN, Infinity, -Infinity])
+    assert.equal(validateFlightState({ ...saved, cruiseSpeedKm }), null);
+  assert.equal(validateFlightState({ ...saved, velocity: [Number.MAX_VALUE, Number.MAX_VALUE, 0] }), null,
+    "finite components must still have a finite total speed");
   const stored = (await (await fetch(url + "/api/flight/save", { headers: { cookie } })).json()).state;
   assert.deepEqual(stored, saved);
   const restored = new ShipDynamics();
   assert(restored.restore(stored));
-  assert.equal(restored.engineMode, "interstellar");
-  assert.equal(restored.atmosphericSpeedMps, 245);
-  assert(Math.abs(speedKm(restored) - 100000) < 1e-8);
-  const old = { ...saved }; delete old.engineMode; delete old.atmosphericSpeedMps; delete old.escapeBody;
-  assert.equal((await post(old)).status, 200);
+  assert.equal(restored.engineMode, "atmospheric");
+  assert.equal(restored.cruiseSpeedKm, 900000);
+  assert(Math.abs(speedKm(restored) - 900000) < 1e-7, "restoring an obsolete low engine must not apply its nominal cap");
+  const legacy = { ...saved, engineMode: "standard", atmosphericSpeedMps: 0, escapeBody: "unknown" };
+  delete legacy.cruiseSpeedKm;
+  assert.equal((await post(legacy)).status, 200);
   const migrated = (await (await fetch(url + "/api/flight/save", { headers: { cookie } })).json()).state;
-  assert.equal(migrated.engineMode, "standard");
-  assert.equal(migrated.atmosphericSpeedMps, 1000);
+  assert.equal(migrated.engineMode, "planetary");
+  assert.equal(migrated.cruiseSpeedKm, 100);
+  assert(!("atmosphericSpeedMps" in migrated));
+  assert(!("escapeBody" in migrated));
+  const unselected = { ...legacy }; delete unselected.engineMode;
+  assert.equal(validateFlightState(unselected).engineMode, "planetary");
   assert(restored.restore(migrated));
-  assert(speedKm(restored) <= 10000 + 1e-8);
+  assert(Math.abs(speedKm(restored) - 100) < 1e-8);
+});
+
+test("finite far-space coordinates and 1e18 km/s cruise speeds survive API persistence and restoration", async (t) => {
+  const { url } = await fixture(t);
+  const cookie = (await fetch(url + "/api/flight/save")).headers.get("set-cookie").split(";")[0];
+  const ship = new ShipDynamics();
+  ship.position.set(1e18, -2e18, 3e18);
+  ship.setCruiseSpeed(1e18);
+  ship.velocity.set(1e18 / world.unitsKm, 0, 0);
+  const saved = ship.snapshot();
+  assert(validateFlightState(saved), "finite coordinates must not retain the former 1e12 bound");
+  const headers = { cookie, "content-type": "application/json" };
+  const response = await fetch(url + "/api/flight/save", { method: "POST", headers, body: JSON.stringify(saved) });
+  assert.equal(response.status, 200);
+  const stored = (await (await fetch(url + "/api/flight/save", { headers: { cookie } })).json()).state;
+  assert.deepEqual(stored, saved);
+  const restored = new ShipDynamics();
+  assert(restored.restore(stored));
+  assert.deepEqual(restored.snapshot(), saved);
 });
 
 test("world uses real solar radii and astronomical distances; compressed saves migrate safely", () => {
@@ -369,7 +512,7 @@ test("warp charges, moves continuously, arrives safely and cools down at all nin
       if (ship.warpPhase === "arrival") sawArrival = true;
       for (const body of ship.activeBodies) {
         const distance = Math.hypot(...ship.position.toArray().map((n, axis) => n - body.position[axis]));
-        assert(distance > body.radius * (body.kind === "star" ? 1.24 : 1.002), `route intersects ${body.id}`);
+        assert(distance > body.radius, `route intersects ${body.id}`);
       }
       assert(validateFlightState(ship.snapshot()));
     }
@@ -388,7 +531,7 @@ test("warp routes around the Sun and can be interrupted without losing the actua
   assert.equal(ship.startWarp(), null);
   for (let i = 0; i < 100; i++) {
     ship.step(0.05, emptyInput());
-    assert(ship.position.length() > world.bodies[0].radius * 1.24);
+    assert(ship.position.length() > world.bodies[0].radius);
   }
   assert.equal(ship.warpPhase, "transit");
   const midway = ship.position.clone();
@@ -400,230 +543,138 @@ test("warp routes around the Sun and can be interrupted without losing the actua
   assert(restored.position.equals(midway));
 });
 
-test("warp detours clear every atmospheric shell, including a tangent through a non-target giant's upper atmosphere", () => {
-  for (const source of world.bodies.filter(body => body.atmosphereKm > world.flightSafety.nearSurfaceMinKm)) {
+test("warp may pass through a non-target atmosphere while its continuous route avoids physical bodies", () => {
+  for (const source of world.bodies.filter(body => body.atmosphereKm > 1000)) {
     const giant = { ...source, systemId: "solar", position: [0, 0, 0] };
-    const impactRadius = giant.radius + (world.flightSafety.nearSurfaceMinKm + giant.atmosphereKm) / 2 / world.unitsKm;
+    const impactRadius = giant.radius + (1000 + giant.atmosphereKm) / 2 / world.unitsKm;
     const earth = { ...world.bodies.find(body => body.id === "earth"), position: [100, 0, impactRadius] };
     const ship = new ShipDynamics({ ...world, bodies: [giant, earth] });
     ship.position.set(-100, 0, impactRadius);
     ship.target = "earth";
     assert.equal(ship.startWarp(), null, source.id);
-    let previous = ship.position.clone();
+    let previous = ship.position.clone(), crossedAtmosphere = false;
     for (let i = 0; i < 300 && ship.warpPhase !== "ready"; i++) {
       ship.step(0.05, emptyInput());
       const segment = ship.position.clone().sub(previous);
-      for (const body of ship.activeBodies.filter(body => body.atmosphereKm)) {
-        const center = new THREE.Vector3().fromArray(body.position);
-        const t = segment.lengthSq() ? THREE.MathUtils.clamp(center.clone().sub(previous).dot(segment) / segment.lengthSq(), 0, 1) : 0;
-        const nearest = previous.clone().addScaledVector(segment, t).distanceTo(center);
-        assert(nearest >= body.radius + body.atmosphereKm / world.unitsKm,
-          `${source.id} route crosses ${body.id}'s atmosphere during ${ship.warpPhase}`);
-      }
+      const center = new THREE.Vector3().fromArray(giant.position);
+      const t = segment.lengthSq() ? THREE.MathUtils.clamp(center.clone().sub(previous).dot(segment) / segment.lengthSq(), 0, 1) : 0;
+      const nearest = previous.clone().addScaledVector(segment, t).distanceTo(center);
+      assert(nearest > giant.radius, `${source.id}: a warp route must avoid the physical giant`);
+      if (nearest < giant.radius + giant.atmosphereKm / world.unitsKm) crossedAtmosphere = true;
       previous.copy(ship.position);
     }
     assert.equal(ship.warpPhase, "ready", source.id);
+    assert(crossedAtmosphere, "a safe straight route through atmosphere must not detour around an obsolete safety bubble");
   }
 });
 
-test("planet proximity blocks warp without changing position or cooldown; changing target cannot bypass atmosphere", () => {
-  const ship = new ShipDynamics();
-  const earth = world.bodies.find((body) => body.id === "earth");
-  const place = (altitudeKm) => ship.position.fromArray(earth.position).add(new THREE.Vector3(0, 0, earth.radius + altitudeKm / world.unitsKm));
-  ship.target = "earth";
-  for (const altitude of [100, 500, 1000]) {
-    place(altitude);
-    const previous = ship.snapshot();
-    assert(ship.startWarp());
+test("warp can depart near terrain, inside atmospheres and beside its selected target while state gates still reject re-entry", () => {
+  for (const [id, groundAltitude, target] of [["earth", 0.1, "mars"], ["earth", 50, "earth"],
+    ["earth", 500, "earth"], ["moon", 1, "earth"], ["jupiter", 1500, "mars"]]) {
+    const ship = new ShipDynamics();
+    const body = world.bodies.find(candidate => candidate.id === id);
+    const destination = world.bodies.find(candidate => candidate.id === target);
+    const normal = id === "earth" && target === "mars"
+      ? new THREE.Vector3().fromArray(body.position).sub(new THREE.Vector3().fromArray(destination.position)).normalize()
+      : new THREE.Vector3(0, 0, 1);
+    placeAboveGround(ship, id, groundAltitude, normal);
+    ship.target = target;
+    const before = ship.snapshot();
+    assert.equal(ship.warpBlockReason, null);
+    assert.equal(ship.startWarp(), null, `${id} ${groundAltitude} km toward ${target}`);
+    assert.equal(ship.warpPhase, "charging");
+    assert(ship.startWarp(), "charging remains mutually exclusive");
+    ship.step(0.05, emptyInput());
+    assert.deepEqual(ship.position.toArray(), before.position, "charging must not teleport the near-ground departure");
+    for (let i = 0; i < 400 && ship.warpPhase !== "ready"; i++) {
+      ship.step(0.05, emptyInput());
+      for (const obstacle of ship.activeBodies) assertOutsideEntity(ship.position, obstacle);
+      assert(validateFlightState(ship.snapshot()));
+    }
     assert.equal(ship.warpPhase, "ready");
-    assert.deepEqual(ship.snapshot(), previous);
   }
-  place(1001);
-  assert.equal(ship.startWarp(), null);
-  ship.cancelWarp();
-  for (let i = 0; i < 50; i++) ship.step(0.05, emptyInput());
-  place(50);
-  ship.target = "mars";
-  assert.match(ship.startWarp(), /禁止跃迁/);
-  assert.equal(ship.warpPhase, "ready");
+  const cancelled = new ShipDynamics();
+  assert.equal(cancelled.startWarp(), null);
+  cancelled.cancelWarp();
+  const checkpoint = cancelled.snapshot();
+  assert(cancelled.startWarp(), "cooldown still blocks immediate reuse");
+  assert.deepEqual(cancelled.snapshot(), checkpoint);
 });
 
-test("unarmed vacuum flight keeps its orbital safety cap while atmosphere above 10 km ignores the low-speed dial", () => {
-  for (const [id, altitude, atmosphere] of [["earth", 50, true], ["earth", 500, false], ["jupiter", 1500, true]]) {
-    const ship = new ShipDynamics();
-    placeAtAltitude(ship, id, altitude, new THREE.Vector3(1, 0, 0));
-    ship.setAtmosphericSpeed(250);
-    ship.assist = false;
-    ship.velocity.set(10000 / world.unitsKm, 20000 / world.unitsKm, -50000 / world.unitsKm);
-    assert.equal(ship.environment.atmospheric, atmosphere);
-    assert.equal(ship.engine.id, "orbital");
-    const restored = new ShipDynamics();
-    assert(restored.restore(ship.snapshot()));
-    assert(speedKm(restored) <= (atmosphere ? 1 : 100) + 1e-8);
-    for (let i = 0; i < 20; i++) {
-      ship.step(0.05, { ...emptyInput(), throttle: 1, strafe: 1, lift: 1, boost: true });
-      assert.equal(ship.engine.id, "orbital");
-      assert(speedKm(ship) <= (atmosphere ? 1 : 100) + 1e-8, "three controls cannot each receive the full speed allowance");
+test("user cruise speed applies in atmosphere and near the ground regardless of gear or the old protection zones", () => {
+  for (const mode of ["atmospheric", "orbital", "planetary", "interstellar"]) {
+    for (const [id, groundAltitude] of [["earth", 1], ["earth", 50], ["earth", 500], ["moon", 1], ["jupiter", 1500]]) for (const assist of [true, false]) for (const cruise of [100, 321]) {
+      const ship = new ShipDynamics();
+      placeAboveGround(ship, id, groundAltitude);
+      faceOutward(ship);
+      ship.assist = assist;
+      assert.equal(ship.setEngineMode(mode), null);
+      ship.setCruiseSpeed(cruise);
+      ship.step(0.01, { ...emptyInput(), throttle: 1 });
+      assert(Math.abs(speedKm(ship) - cruise) < 1e-8);
+      assert.equal(ship.engine.id, mode);
+      assert(Math.abs(ship.speedLimit * world.unitsKm - cruise) < 1e-8);
+      assert.equal(ship.collision, null);
     }
+  }
+});
+
+test("the cruise control accepts every finite value from 100 km/s without a nominal maximum and rejects invalid changes", () => {
+  const ship = new ShipDynamics();
+  assert.equal(ship.cruiseSpeedKm, 100);
+  for (const value of [100, 133, 500000, 1e12, Number.MAX_VALUE]) {
+    ship.setCruiseSpeed(value);
+    assert.equal(ship.cruiseSpeedKm, value);
+    assert.equal(ship.engineMode, "planetary");
+  }
+  for (const value of [99, 1, 0, -100, NaN, Infinity, -Infinity, "100"]) {
+    ship.setCruiseSpeed(value);
+    assert.equal(ship.cruiseSpeedKm, Number.MAX_VALUE, "invalid input must not invent a different cruise speed");
+  }
+  ship.setCruiseSpeed(500);
+  placeAboveGround(ship, "earth", 1);
+  ship.velocity.set(1000 / world.unitsKm, 0, 0);
+  ship.setCruiseSpeed(200);
+  assert(speedKm(ship) <= 200 + 1e-8, "reducing the user speed must constrain the actual current velocity");
+});
+
+
+
+
+
+test("crossing the former 10 km and atmospheric boundaries does not change manual propulsion", () => {
+  for (const [groundAltitude, outward] of [[9.9, true], [10.1, false], [155.65, true], [155.85, false]]) {
+    const ship = new ShipDynamics();
+    placeAboveGround(ship, "earth", groundAltitude);
+    if (outward) faceOutward(ship);
+    else ship.orientation.identity();
     ship.setEngineMode("interstellar");
-    assert.equal(ship.engineMode, "standard", "the high gear cannot bypass a low-speed environment");
+    ship.setCruiseSpeed(100);
+    ship.step(0.01, { ...emptyInput(), throttle: 1 });
+    assert(Math.abs(speedKm(ship) - 100) < 1e-8);
+    assert.equal(ship.engine.id, "interstellar");
+    assert.equal(ship.collision, null);
+    assert(ship.environment.groundAltitudeKm > 0);
   }
+});
+
+
+
+test("a swept atmosphere crossing preserves the user speed and slow frame integration retains elapsed time", () => {
   const ship = new ShipDynamics();
-  placeAtAltitude(ship, "earth", 1001);
-  ship.velocity.set(0, 0, -10000 / world.unitsKm);
-  assert.equal(ship.engine.id, "planetary");
-  ship.step(0.05, { ...emptyInput(), throttle: 1, boost: true });
-  assert(speedKm(ship) <= 10000 + 1e-8);
-});
-
-test("the low-speed dial covers 1 to 1000 m/s, clamps finite input and ignores non-finite input", () => {
-  const ship = new ShipDynamics();
-  placeAboveGround(ship, "earth", 5);
-  assert.equal(ship.atmosphericSpeedMps, 1000);
-  for (const [requested, expected] of [[1, 1], [135, 135], [1000, 1000], [0, 1], [1500, 1000]]) {
-    ship.setAtmosphericSpeed(requested);
-    assert.equal(ship.atmosphericSpeedMps, expected);
-    ship.velocity.set(1, 1, 1);
-    ship.step(0.05, { ...emptyInput(), throttle: 1, strafe: 1, lift: 1, boost: true });
-    assert(speedKm(ship) <= expected / 1000 + 1e-8);
-    const restored = new ShipDynamics();
-    assert(restored.restore(ship.snapshot()));
-    assert.equal(restored.atmosphericSpeedMps, expected);
-  }
-  for (const value of [NaN, Infinity, -Infinity]) {
-    ship.setAtmosphericSpeed(value);
-    assert.equal(ship.atmosphericSpeedMps, 1000);
-  }
-});
-
-test("1 and 133 m/s low flight reach their total-vector caps above real terrain; release and braking allow zero", () => {
-  for (const id of ["earth", "moon"]) for (const selectedMps of [1, 133]) {
-    const ship = new ShipDynamics();
-    placeAboveGround(ship, id, 1, new THREE.Vector3(1, 0, 0));
-    ship.setAtmosphericSpeed(selectedMps);
-    assert.equal(ship.engine.id, "atmospheric");
-    const thrust = { ...emptyInput(), throttle: 1, strafe: 1, lift: 1, boost: true };
-    for (let i = 0; i < 80; i++) {
-      ship.step(0.05, thrust);
-      assert(speedKm(ship) <= selectedMps / 1000 + 1e-8, "diagonal thrust receives one shared speed allowance");
-    }
-    assert(Math.abs(speedKm(ship) - selectedMps / 1000) < 1e-8);
-    assert(ship.velocity.x && ship.velocity.y && ship.velocity.z, "the cap must apply to a genuinely diagonal velocity");
-    const speed = speedKm(ship);
-    ship.step(0.25, emptyInput());
-    assert(speedKm(ship) > 0 && speedKm(ship) < speed, "release with assistance gently reduces speed");
-    for (let i = 0; i < 80; i++) ship.step(0.05, { ...emptyInput(), brake: true });
-    assert.equal(ship.velocity.length(), 0, "the minimum selectable speed must allow braking to zero");
-    assert(validateFlightState(ship.snapshot()));
-  }
-});
-
-test("orbital thrust above 10 km permits a short slow start but sustained power reaches at least 1 km/s", () => {
-  for (const [id, groundAltitude, atmospheric] of [["earth", 50, true], ["moon", 50, false], ["jupiter", 1500, true]]) {
-    const ship = new ShipDynamics();
-    placeAboveGround(ship, id, groundAltitude);
-    faceOutward(ship);
-    ship.setAtmosphericSpeed(1);
-    assert.equal(ship.environment.atmospheric, atmospheric);
-    assert(!ship.environment.lowFlight, "atmosphere alone must not select the near-ground engine");
-    assert.equal(ship.engine.id, "orbital");
-    ship.step(0.005, { ...emptyInput(), throttle: 1 });
-    assert(speedKm(ship) > 0 && speedKm(ship) < 1, "speed must rise naturally rather than jumping to the engine range minimum");
-    for (let i = 0; i < 20; i++) ship.step(0.05, { ...emptyInput(), throttle: 1 });
-    assert(speedKm(ship) >= 1 - 1e-8, `${id}: continuous orbital thrust must pass the old low-speed ceiling`);
-    if (atmospheric) assert(Math.abs(speedKm(ship) - 1) < 1e-8);
-    for (let i = 0; i < 80; i++) ship.step(0.05, { ...emptyInput(), brake: true });
-    assert.equal(ship.velocity.length(), 0);
-  }
-});
-
-test("the manual engine and preset switch on both sides of the actual 10 km terrain boundary", () => {
-  const normal = mappedMountainNormal();
-  assert(terrainHeightKm("earth", normal.toArray()) > 3, "the boundary fixture must lie above a kilometre-scale mountain");
-  for (const id of ["earth", "moon"]) {
-    const ship = new ShipDynamics();
-    ship.setAtmosphericSpeed(133);
-    for (const groundAltitude of [10.1, 10, 9.9, 10.1]) {
-      placeAboveGround(ship, id, groundAltitude, normal);
-      ship.orientation.identity();
-      const low = groundAltitude <= 10;
-      assert(Math.abs(ship.environment.groundAltitudeKm - groundAltitude) < 1e-6);
-      assert.equal(ship.environment.lowFlight, low);
-      assert.equal(ship.engine.id, low ? "atmospheric" : "orbital");
-      assert(Math.abs(ship.speedLimit * world.unitsKm - (low ? 0.133 : id === "earth" ? 1 : 100)) < 1e-8);
-      ship.velocity.set(0.6 / world.unitsKm, 0.8 / world.unitsKm, 0);
-      const restored = new ShipDynamics();
-      assert(restored.restore(ship.snapshot()));
-      assert(Math.abs(speedKm(restored) - (low ? 0.133 : 1)) < 1e-8, "restoration must use ground clearance rather than radial altitude");
-    }
-    placeAboveGround(ship, id, 10.5, normal);
-    faceOutward(ship);
-    ship.velocity.copy(normal).multiplyScalar(0.8 / world.unitsKm);
-    ship.setAtmosphericSpeed(1);
-    assert(Math.abs(speedKm(ship) - 0.8) < 1e-8, "changing the stored preset above 10 km must not slow orbital flight");
-    ship.step(0.05, { ...emptyInput(), throttle: 1 });
-    assert(speedKm(ship) >= 1 - 1e-8);
-  }
-  for (const selectedMps of [1, 133]) {
-    const climbing = new ShipDynamics();
-    placeAboveGround(climbing, "earth", 9.9999, normal);
-    faceOutward(climbing);
-    climbing.setAtmosphericSpeed(selectedMps);
-    assert.equal(climbing.engine.id, "atmospheric");
-    for (let i = 0; i < 12; i++) climbing.step(0.05, { ...emptyInput(), throttle: 1 });
-    assert(climbing.environment.groundAltitudeKm > 10.00001, "manual thrust must genuinely climb across the terrain boundary");
-    assert.equal(climbing.engine.id, "orbital");
-    assert.equal(climbing.atmosphericSpeedMps, selectedMps);
-    assert(Math.abs(speedKm(climbing) - 1) < 1e-8, "orbital thrust above the crossed boundary must ignore the stored low-speed preset");
-  }
-});
-
-test("swept descent into the 10 km layer follows a mountain's actual height without braking clear high-altitude flight", () => {
-  const normal = mappedMountainNormal();
-  const mountain = terrainHeightKm("earth", normal.toArray());
-  assert(mountain > 3);
-  for (const selectedMps of [1, 133]) {
-    const clear = new ShipDynamics();
-    placeAboveGround(clear, "earth", 10.5, normal);
-    faceOutward(clear);
-    clear.setAtmosphericSpeed(selectedMps);
-    clear.step(0.05, { ...emptyInput(), throttle: 1 });
-    assert(Math.abs(speedKm(clear) - 1) < 1e-8, "a conservative global mountain sphere must not apply the low preset above actual ground");
-    const ship = new ShipDynamics();
-    placeAboveGround(ship, "earth", 10.0001, normal);
-    assert(ship.environment.altitudeKm > 13, "the low layer must be far above the old 10.125 km radial shell");
-    ship.assist = false;
-    ship.orientation.identity();
-    ship.setAtmosphericSpeed(selectedMps);
-    ship.velocity.copy(normal).multiplyScalar(-1 / world.unitsKm);
-    let crossed = false;
-    for (let i = 0; i < 12; i++) {
-      const previous = ship.environment.groundAltitudeKm;
-      ship.step(0.05, { ...emptyInput(), throttle: 1 });
-      const current = ship.environment.groundAltitudeKm;
-      if (current <= 10 + 1e-5) {
-        crossed = true;
-        assert.equal(ship.engine.id, "atmospheric");
-        assert(speedKm(ship) <= selectedMps / 1000 + 1e-8);
-        assert(Math.min(previous, 10) - current <= selectedMps / 1000 * 0.05 + 2e-5,
-          "the part of a swept frame inside the low layer must use the chosen preset");
-      }
-    }
-    assert(crossed, `descent with a ${selectedMps} m/s preset must cross the actual boundary`);
-  }
-});
-
-test("a long frame cannot skip a planet safety zone and slow frame integration retains elapsed time", () => {
-  const ship = new ShipDynamics();
-  placeAtAltitude(ship, "earth", 4000, new THREE.Vector3(1, 0, 0));
-  faceOutward(ship);
-  ship.setEngineMode("interstellar");
-  ship.velocity.set(-100000 / world.unitsKm, 0, 0);
+  placeAboveGround(ship, "earth", 200);
   ship.assist = false;
-  ship.step(0.25, emptyInput());
+  ship.orientation.identity();
+  ship.setEngineMode("atmospheric");
+  ship.setCruiseSpeed(500);
+  const previous = ship.position.clone();
+  ship.step(0.25, { ...emptyInput(), throttle: 1 });
   assert.equal(ship.elapsed, 0.25);
-  assert(ship.environment.altitudeKm > 1000, "the frame must brake before it reaches the shell");
-  assert(speedKm(ship) <= 100 + 1e-8);
+  assert(ship.environment.atmospheric);
+  assert(ship.environment.groundAltitudeKm > 50);
+  assert(Math.abs(speedKm(ship) - 500) < 1e-8);
+  assert(Math.abs(ship.position.distanceTo(previous) * world.unitsKm - 125) < 1e-6,
+    "crossing the old safety or atmospheric shell must not shorten the actual path");
   const a = new ShipDynamics(), b = new ShipDynamics();
   a.position.set(1e6, 0, 0); b.position.copy(a.position);
   const input = { ...emptyInput(), throttle: 1, yaw: 0.7 };
@@ -637,6 +688,7 @@ test("assisted flight follows the heading, turns ease out, and S brakes before r
   const assisted = new ShipDynamics(), inertial = new ShipDynamics();
   for (const ship of [assisted, inertial]) {
     ship.position.set(1e6, 0, 0);
+    ship.setCruiseSpeed(1000);
     ship.orientation.identity();
     ship.velocity.set(0, 0, -1000 / world.unitsKm);
   }
@@ -680,83 +732,43 @@ test("target projection uses the current camera turn and places off-screen and b
 });
 
 
-test("orbital departure needs an explicit outward launch above 10 km, stays slow in air and relocks after turning inward", () => {
-  const ship = new ShipDynamics();
-  placeAtAltitude(ship, "earth", 99);
-  faceOutward(ship);
-  assert.equal(ship.engine.id, "orbital");
-  assert(!ship.environment.escaping, "looking outward alone cannot activate an outward departure");
-  assert.equal(ship.startOrbitalEngine(), null);
-  assert.equal(ship.engine.id, "orbital");
-  assert.match(ship.startWarp(), /禁止跃迁/);
-  for (let i = 0; i < 100; i++) {
-    ship.step(0.25, { ...emptyInput(), throttle: 1, boost: true });
-    assert(ship.environment.atmospheric);
-    assert(speedKm(ship) <= 1 + 1e-8);
+test("O directly chooses the orbital engine at every height and heading without arming a launch permission", () => {
+  for (const [id, groundAltitude, inward] of [["earth", 1, false], ["earth", 10, true],
+    ["earth", 50, true], ["moon", 1, true], ["jupiter", 1500, true]]) {
+    const ship = new ShipDynamics();
+    placeAboveGround(ship, id, groundAltitude);
+    if (inward) ship.orientation.identity(); else faceOutward(ship);
+    ship.velocity.copy(ship.environment.outward).multiplyScalar(-10 / world.unitsKm);
+    ship.setEngineMode("interstellar");
+    ship.setCruiseSpeed(200);
+    const position = ship.position.clone(), orientation = ship.orientation.clone();
+    assert.equal(ship.orbitalBlockReason, null);
+    assert.equal(ship.startOrbitalEngine(), null);
+    assert.equal(ship.engine.id, "orbital");
+    assert.equal(ship.engineMode, "orbital");
+    assert.equal(ship.cruiseSpeedKm, 200);
+    assert(ship.position.equals(position));
+    assert(ship.orientation.equals(orientation));
+    assert(!("escapeBody" in ship.snapshot()));
   }
-  assert(ship.environment.altitudeKm > 110 && ship.environment.altitudeKm < 160);
-  const restored = new ShipDynamics();
-  assert(restored.restore(ship.snapshot()));
-  assert(restored.environment.escaping);
-  assert.equal(restored.engine.id, "orbital");
-  assert(restored.velocity.equals(ship.velocity));
-  ship.orientation.identity();
-  ship.step(0.05, emptyInput());
-  assert.equal(ship.engine.id, "orbital");
-  assert(!ship.environment.escaping);
-  assert(speedKm(ship) <= 1 + 1e-8);
-  faceOutward(ship);
-  assert(!ship.environment.escaping, "turning back out must require another manual launch");
-  for (let i = 0; i < 1200 && restored.environment.altitudeKm <= 1000; i++)
-    restored.step(0.25, { ...emptyInput(), throttle: 1, boost: true });
-  assert(restored.environment.altitudeKm > 1000);
-  assert.equal(restored.warpBlockReason, null);
-  assert(speedKm(restored) <= 10000 + 1e-8);
 });
 
-test("orbital launch checks actual terrain height, heading, drift and manual flight rather than the selected target", () => {
-  const normal = new THREE.Vector3(0, 0, 1);
-  const terrain = terrainHeightKm("moon", normal.toArray()) + LANDING_CLEARANCE_KM;
-  for (const groundAltitude of [1, 9.9, 10, 10.1]) {
-    const ship = new ShipDynamics();
-    placeAtAltitude(ship, "moon", terrain + groundAltitude, normal);
-    faceOutward(ship);
-    assert(Math.abs(ship.environment.groundAltitudeKm - groundAltitude) < 1e-6);
-    if (groundAltitude <= 10) {
-      const before = ship.snapshot();
-      assert(ship.startOrbitalEngine());
-      assert.deepEqual(ship.snapshot(), before);
-      assert.equal(ship.engine.id, "atmospheric");
-    } else {
-      ship.target = "earth";
-      assert.equal(ship.startOrbitalEngine(), null);
-      assert.equal(ship.engine.id, "orbital");
-    }
-  }
-  for (const [headingDot, radialSpeed] of [[0.2499, 0], [0, 0], [-1, 0], [1, -0.01]]) {
-    const ship = new ShipDynamics();
-    placeAtAltitude(ship, "moon", 50);
-    ship.orientation.setFromUnitVectors(new THREE.Vector3(0, 0, -1), new THREE.Vector3(Math.sqrt(1 - headingDot ** 2), 0, headingDot));
-    ship.velocity.copy(normal).multiplyScalar(radialSpeed / world.unitsKm);
-    assert(ship.startOrbitalEngine(), `heading ${headingDot}, radial speed ${radialSpeed}`);
-    assert.equal(ship.engine.id, "orbital");
-    assert(!ship.environment.escaping);
-  }
-  const angled = new ShipDynamics();
-  placeAtAltitude(angled, "moon", 50);
-  const validHeading = new THREE.Vector3(Math.sqrt(1 - 0.2501 ** 2), 0, 0.2501);
-  angled.orientation.setFromUnitVectors(new THREE.Vector3(0, 0, -1), validHeading);
-  assert.equal(angled.startOrbitalEngine(), null, "a heading just beyond the outward threshold is permitted");
-  const landing = new ShipDynamics();
-  placeAtAltitude(landing, "earth", 50);
-  assert.equal(landing.startLanding(), null);
-  faceOutward(landing);
-  assert(landing.startOrbitalEngine());
+test("orbital selection is always available while warp and landing state gates remain separate", () => {
+  const descending = new ShipDynamics();
+  placeAboveGround(descending, "earth", 1);
+  assert.equal(descending.startLanding(), null);
+  assert.equal(descending.orbitalBlockReason, null);
+  assert.equal(descending.startOrbitalEngine(), null);
+  assert.equal(descending.engineMode, "orbital");
+  assert.equal(descending.landingPhase, "descending");
+  assert(descending.startWarp(), "automatic landing and warp must remain mutually exclusive");
   const warping = new ShipDynamics();
   assert.equal(warping.startWarp(), null);
-  assert(warping.startOrbitalEngine());
-  warping.setEngineMode("interstellar");
-  assert.equal(warping.engineMode, "standard");
+  assert.equal(warping.orbitalBlockReason, null);
+  assert.equal(warping.startOrbitalEngine(), null);
+  assert.equal(warping.engineMode, "orbital");
+  assert.equal(warping.warpPhase, "charging");
+  assert(warping.startLanding(), "charging still blocks automatic landing");
 });
 
 test("all 26 moons have real parent-relative distances, valid saves and safe warp destinations", () => {
@@ -776,7 +788,7 @@ test("all 26 moons have real parent-relative distances, valid saves and safe war
     for (let i = 0; i < 300 && ship.warpPhase !== "ready"; i++) {
       ship.step(0.05, emptyInput());
       for (const obstacle of ship.activeBodies) {
-        assert(ship.position.distanceTo(new THREE.Vector3().fromArray(obstacle.position)) > obstacle.radius * (obstacle.kind === "star" ? 1.24 : 1.002), `moon route intersects ${obstacle.id}`);
+        assert(ship.position.distanceTo(new THREE.Vector3().fromArray(obstacle.position)) > obstacle.radius, `moon route intersects ${obstacle.id}`);
       }
     }
     assert.equal(ship.warpPhase, "ready");
@@ -791,6 +803,7 @@ test("all 26 moons have real parent-relative distances, valid saves and safe war
 test("braking generates a decaying visual pulse; ordinary assisted drift does not", () => {
   const ship = new ShipDynamics();
   ship.position.set(1e6, 0, 0);
+  ship.setCruiseSpeed(world.unitsKm);
   ship.velocity.set(0, 0, -1);
   ship.step(0.05, emptyInput());
   assert.equal(ship.deceleration, 0);
@@ -802,34 +815,19 @@ test("braking generates a decaying visual pulse; ordinary assisted drift does no
 });
 
 
-test("the 1000 km safety shell and atmospheric boundary are independent, including giant planets", () => {
-  const ship = new ShipDynamics();
-  ship.orientation.identity();
-  for (const body of world.bodies.filter(body => body.kind !== "station")) {
-    placeAtAltitude(ship, body.id, 1000);
-    assert(ship.environment.restricted, `${body.id}: exactly 1000 km is restricted`);
-    assert.equal(ship.engine.id, ship.environment.lowFlight ? "atmospheric" : "orbital");
-    assert(ship.warpBlockReason);
-    ship.position.z += 0.1 / world.unitsKm;
-    assert.equal(ship.environment.orbitalRequired, false, `${body.id}: above 1000 km leaves the safety shell`);
-    assert.equal(ship.environment.restricted, ship.environment.atmospheric);
-    ship.velocity.set(0, 0, -10000 / world.unitsKm);
-    assert.equal(ship.engine.id, ship.environment.atmospheric ? "orbital" : "planetary");
-    assert.equal(!!ship.warpBlockReason, ship.environment.atmospheric);
+test("former 1000 km and giant-atmosphere restrictions do not block user cruise, engine selection or warp", () => {
+  for (const [id, groundAltitude] of [["earth", 1000], ["earth", 1000.1], ["jupiter", 1500]]) {
+    const ship = new ShipDynamics();
+    placeAboveGround(ship, id, groundAltitude);
+    faceOutward(ship);
+    ship.setEngineMode("interstellar");
+    ship.setCruiseSpeed(700);
+    ship.step(0.05, { ...emptyInput(), throttle: 1 });
+    assert.equal(ship.engine.id, "interstellar");
+    assert(Math.abs(speedKm(ship) - 700) < 1e-8);
+    assert.equal(ship.warpBlockReason, null);
+    assert.equal(ship.startWarp(), null);
   }
-  placeAtAltitude(ship, "jupiter", 1500);
-  ship.target = "mars";
-  assert(ship.environment.atmospheric);
-  assert(!ship.environment.orbitalRequired);
-  assert(ship.environment.restricted);
-  assert.equal(ship.engine.id, "orbital");
-  assert(ship.warpBlockReason, "a giant planet's atmosphere remains restricted outside the 1000 km shell");
-  faceOutward(ship);
-  assert.equal(ship.startOrbitalEngine(), null);
-  assert.equal(ship.engine.id, "orbital");
-  ship.velocity.set(1, 1, 1);
-  ship.step(0.05, { ...emptyInput(), throttle: 1, boost: true });
-  assert(speedKm(ship) <= 1 + 1e-8);
 });
 
 test("three Centauri stars and their planets use local coordinates and light-year navigation", () => {
@@ -861,7 +859,7 @@ test("warps reach all Centauri bodies and return to Earth; transit snapshots rem
       assert(validateFlightState(ship.snapshot()), `invalid transit save: ${target}`);
       if (ship.systemId !== "solar") sawNewSystem = true;
       for (const obstacle of ship.activeBodies) {
-        assert(ship.position.distanceTo(new THREE.Vector3().fromArray(obstacle.position)) > obstacle.radius * (obstacle.kind === "star" ? 1.24 : 1.002), `route intersects ${obstacle.id}`);
+        assert(ship.position.distanceTo(new THREE.Vector3().fromArray(obstacle.position)) > obstacle.radius, `route intersects ${obstacle.id}`);
       }
     }
     assert.equal(ship.warpPhase, "ready");
@@ -898,7 +896,8 @@ test("Betelgeuse is a star-only red-supergiant system with real scale and restor
   assert(restored.position.equals(ship.position));
   restored.position.set(0, 0, 0);
   restored.step(0.05, emptyInput());
-  assert(restored.position.length() >= star.radius * 1.24, "stellar shield keeps the ship out of the photosphere");
+  assert(restored.position.length() >= star.radius, "entity collision keeps the ship out of the photosphere");
+  assert(restored.position.length() < star.radius * 1.0001, "the removed stellar protection bubble must not displace the ship far from the physical surface");
 });
 
 test("cancelling an interstellar warp preserves its coordinate frame and old saves default to the solar frame", () => {
@@ -923,22 +922,27 @@ test("cancelling an interstellar warp preserves its coordinate frame and old sav
   assert.equal(validateFlightState({ ...saved, version: 1 }), null);
 });
 
-test("a near Proxima planet blocks an interstellar target until a manually launched orbital departure leaves its atmosphere", () => {
+test("an atmospheric Proxima departure may immediately warp to an interstellar target", () => {
   const ship = new ShipDynamics();
-  placeAtAltitude(ship, "proxima-b", 50);
-  faceOutward(ship);
+  placeAboveGround(ship, "proxima-b", 1);
   ship.target = "earth";
-  assert.equal(ship.engine.id, "orbital");
-  assert.equal(ship.startOrbitalEngine(), null);
-  assert.match(ship.startWarp(), /禁止跃迁/);
-  for (let i = 0; i < 1600 && ship.environment.altitudeKm <= 1000; i++) {
-    const atmospheric = ship.environment.atmospheric;
-    ship.step(0.25, { ...emptyInput(), throttle: 1, boost: true });
-    if (atmospheric && ship.environment.atmospheric) assert(speedKm(ship) <= 1 + 1e-8);
-  }
-  assert(ship.environment.altitudeKm > 1000);
+  assert(ship.environment.atmospheric);
+  assert.equal(ship.warpBlockReason, null);
   assert.equal(ship.startWarp(), null);
+  for (let i = 0; i < 400 && ship.warpPhase !== "ready"; i++) ship.step(0.05, emptyInput());
+  assert.equal(ship.warpPhase, "ready");
+  assert.equal(ship.systemId, "solar");
+  assert.equal(ship.environment.body.id, "earth");
 });
+
+function assertOutsideEntity(position, body) {
+  const offset = position.clone().sub(new THREE.Vector3().fromArray(body.position));
+  const distance = offset.length();
+  const surface = surfaceProfile(body.id).solid
+    ? terrainHeightKm(body.id, offset.clone().normalize().toArray()) + LANDING_CLEARANCE_KM : 0;
+  const clearance = (distance - body.radius) * world.unitsKm - surface;
+  assert(clearance >= -0.0001, `warp intersects physical ${body.id}`);
+}
 
 function assertNearbyArrival(ship, departureSide) {
   const target = world.bodies.find(body => body.id === ship.target);

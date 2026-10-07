@@ -44,7 +44,7 @@ export interface FlightStats {
   systemId: SystemId;
   renderMode: FlightRenderMode;
   engine: ShipDynamics["engine"];
-  atmosphericSpeedMps: number;
+  cruiseSpeedKm: number;
   engineMode: ShipDynamics["engineMode"];
   orbitalEngineActive: boolean;
   orbitalBlockReason: string | null;
@@ -141,29 +141,15 @@ const surfaceFragment = /* glsl */ `
     vec3 p = normalize(vLocalPosition);
     vec2 gx, gy;
     bool seam = seamGradients(vUv, gx, gy);
-    float texels = max(length(gx * mapSize), length(gy * mapSize));
-    float footprint = max(length(dFdx(p)), length(dFdy(p)));
-    float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
     vec3 terrainNormal = normal;
     float terrain = sampleMap(terrainMap, vUv, terrainSize, gx, gy, seam).r;
-    float water = 1.0 - smoothstep(0.015, 40.0 / 255.0, terrain), landGrain = 0.0;
-    float ring = length(p.xz);
-    vec3 eastward = vec3(p.z, 0.0, -p.x) / max(ring, 0.0001);
-    vec3 northward = cross(p, eastward);
+    float water = 1.0 - smoothstep(0.015, 40.0 / 255.0, terrain);
     vec3 worldRadial = normalize(mat3(vAxisX, vAxisY, vAxisZ) * p);
     terrainNormal = canonicalTerrainWorldNormal(worldRadial);
-    if (terrainDetail > 0.5) {
-      vec4 grain = surfaceGrain(p, 2600.0, footprint, magnify, vec3(1.0), 3.7);
-      landGrain = grain.x * (1.0 - water);
-    }
     float daylight = dot(normal, sunDirection);
     float diffuse = max(dot(terrainNormal, sunDirection), 0.0) * smoothstep(-0.12, 0.04, daylight);
-    // The deep-blue day map stays the colour layer at every distance; land grain only adds texture.
+    // Native 16K tiles own the colour detail in both orbital and local draws.
     vec3 day = earthDay(vUv, gx, gy, seam);
-    // Open ocean holds faint 8x8 JPEG blocks; when magnified, read it from the block-averaged mip.
-    float smoothOcean = water * (1.0 - smoothstep(0.25, 0.6, texels));
-    if(smoothOcean > 0.0) day = mix(day, sampleMapLod(dayMap, vUv, mapSize, 3.0).rgb, smoothOcean);
-    day *= 1.0 + landGrain * 0.12;
     // Satellite mosaics have nearly black open water; retain its natural deep-blue scattering.
     day += vec3(0.002, 0.012, 0.035) * water;
     float cityLight = daylight<0.12 ? sampleMap(nightMap, vUv, nightSize, gx, gy, seam).r : 0.0;
@@ -910,10 +896,13 @@ export class SolarScene {
 
   private updateEarthDetail(delta: number, time: number) {
     const model = this.flying ? this.flightModels.find(model => model.body.id === "earth") : this.models.get("earth");
-    const active = !!model && (this.flying ? model.group.visible && this.dynamics?.systemId === "solar" : this.currentModel === model);
+    const active = !!model && (this.flying ? model.group.visible && this.dynamics?.environment.body.id === "earth" : this.currentModel === model);
     const capable = !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 2064
       && (this.renderer.domElement.dataset.softwareRenderer !== "true" || this.quality === "ultra");
     for (const [earth, detail] of this.earthDetails) if (earth !== model) detail.update(undefined, this.camera, false, delta, time);
+    if (active && capable && this.quality === "ultra")
+      for (const [body, detail] of this.enhancedDetails)
+        detail.update(undefined, this.camera, false, delta, time, undefined, enhancedSurfaceProfile(body.body));
     if (model) this.earthDetails.get(model)?.update(active ? model.surface : undefined,
       this.camera, active && capable && this.quality === "ultra", delta, time);
     // Native 16K tiles need only their own 2064px upload limit. The optional 8K
@@ -1414,7 +1403,10 @@ export class SolarScene {
     if (this.dynamics?.warping) this.flightFrameDirty = true;
     this.dynamics?.cancelWarp();
   }
-  setAtmosphericFlightSpeed(mps: number) { if (!this.walking) this.dynamics?.setAtmosphericSpeed(mps); }
+  setFlightCruiseSpeed(kmps: number): string | null {
+    if (this.walking) return "请先返回飞船，再设置航速";
+    return this.dynamics?.setCruiseSpeed(kmps) ?? (this.dynamics ? null : "飞船尚未就绪");
+  }
   setFlightEngineMode(mode: ShipDynamics["engineMode"]): string | null {
     if (this.walking) return "请先返回飞船，再切换引擎";
     return this.dynamics?.setEngineMode(mode) ?? (this.dynamics ? null : "飞船尚未就绪");
@@ -1422,9 +1414,7 @@ export class SolarScene {
   startOrbitalFlight(): string | null {
     if (!this.dynamics) return "飞船尚未就绪";
     if (this.walking) return "请先返回飞船，再启动轨道引擎";
-    const error = this.dynamics.startOrbitalEngine();
-    this.flightControls?.clear();
-    return error;
+    return this.dynamics.startOrbitalEngine();
   }
   landFlight(): string | null {
     if (this.walking) return "请先返回飞船，再起飞";
@@ -1481,9 +1471,6 @@ export class SolarScene {
         const uniforms = (model.surface.material as THREE.ShaderMaterial).uniforms;
         uniforms.flatClouds.value = Number(pixelRadius < 280);
         uniforms.terrainDetail.value = Number(pixelRadius >= 280);
-        // Let the collision-matched local terrain take over before the camera reaches it.
-        uniforms.elevationStrength.value = environment.body.id === "earth"
-          ? THREE.MathUtils.smoothstep(environment.groundAltitudeKm, 50, 80) : 1;
         model.layers.clouds!.visible = pixelRadius >= 280;
         this.updateCloudShadow(model);
       }
@@ -1501,6 +1488,15 @@ export class SolarScene {
       clouds: rock ? model.surface.quaternion : model.layers.clouds?.quaternion };
     const rotation = surfaceMapRotation(bodyId, axialTilt, pose, rock ? 0 : map?.offset);
     const detailRotation = surfaceMapRotation(bodyId, axialTilt, pose);
+    // Gas giants retain their oblate orbital mesh. Use its inverse scale for
+    // local sampling too, so the same cloud bands keep the same latitude.
+    const surface = rock ? model.surface : model.enhancedSurface ?? model.surface;
+    if (!surfaceProfile(bodyId).solid && surface.scale.y !== 1) {
+      const inverseScale = new THREE.Matrix3().set(1 / surface.scale.x, 0, 0,
+        0, 1 / surface.scale.y, 0, 0, 0, 1 / surface.scale.z);
+      rotation.premultiply(inverseScale);
+      detailRotation.premultiply(inverseScale);
+    }
     const cloudRotation = bodyId === "earth" ? surfaceMapRotation(bodyId, axialTilt,
       { group: pose.group, surface: pose.clouds }) : rotation;
     const earth = this.earthHighMaps ?? this.earthMaps;
@@ -1520,6 +1516,9 @@ export class SolarScene {
   private updateLocalSurfaceDetail(delta: number, time: number) {
     const ship = this.dynamics!, body = ship.environment.body;
     const model = this.flightModelById.get(body.id) ?? this.createFlightModel(body);
+    // Draw the final fade step too when a paused view reaches full detail.
+    const resident = body.id === "earth" ? this.earthDetails.get(model) : this.enhancedDetails.get(model);
+    if (resident && !resident.isSettled) this.flightFrameDirty = true;
     this.touchSurfaceMap(body.id);
     if (this.pendingSurfaceMaps.size) this.applyPendingSurfaceMaps();
     this.snapshotSurfaceMaps(body.id);
@@ -1703,7 +1702,7 @@ export class SolarScene {
       systemId: ship.systemId,
       renderMode: this.renderPolicy.mode,
       engine: ship.engine,
-      atmosphericSpeedMps: ship.atmosphericSpeedMps,
+      cruiseSpeedKm: ship.cruiseSpeedKm,
       engineMode: ship.engineMode,
       orbitalEngineActive: ship.orbitalEngineActive,
       orbitalBlockReason: ship.orbitalBlockReason,
@@ -1711,7 +1710,7 @@ export class SolarScene {
       warpBlockReason: ship.warpBlockReason,
       warpPhase: ship.warpPhase,
       warpProgress: ship.warpProgress,
-      speedKm: ship.warping ? ship.warpSpeedKm : ship.velocity.length() * ship.config.unitsKm,
+      speedKm: ship.warping ? ship.warpSpeedKm : Math.hypot(ship.velocity.x, ship.velocity.y, ship.velocity.z) * ship.config.unitsKm,
       speedLimitKm: ship.speedLimit * ship.config.unitsKm,
       altitudeKm: environment.altitudeKm,
       nearest: environment.body.id,

@@ -159,7 +159,8 @@ try {
     }
     if (!mobile) {
       await page.locator('button[data-body="earth"]').click();
-      await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", "earth");
+      await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", "earth", { timeout: 45000 });
+      await expect(page.locator("#loading-overlay")).toBeHidden();
       await page.locator('.primary-button[data-view="close"]').click();
       const canvas = page.locator("canvas");
       await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "4", { timeout: 60000 });

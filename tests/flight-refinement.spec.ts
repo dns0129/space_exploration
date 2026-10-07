@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 
 async function launch(page: any) {
   await page.goto("/");
@@ -74,102 +75,91 @@ test("锁定标识居中对齐天体，转向逐帧跟随，鼠标不转向、�
   expect(errors).toEqual([]);
 });
 
-test("十公里以上大气恢复高速存档使用轨道档，低速预设和切换目标不能绕过限速与跃迁限制", async ({ page }, info) => {
+test("大气内手动引擎与超过二十万千米每秒的航速保存恢复，不按高度自动换档限速", async ({ page }, info) => {
   test.setTimeout(120000);
   const world = await (await page.request.get("/api/world")).json();
   const earth = world.bodies.find((body: any) => body.id === "earth");
+  const cruiseSpeedKm = 300001.5;
   await page.request.get("/api/flight/save");
   const response = await page.request.post("/api/flight/save", { data: {
-    version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 50 / world.unitsKm],
-    velocity: [50000 / world.unitsKm, 0, 0], orientation: [0, 0, 0, 1],
+    version: 2, worldLayoutVersion: world.layoutVersion,
+    position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 50 / world.unitsKm],
+    velocity: [cruiseSpeedKm / world.unitsKm, 0, 0], orientation: [0, 0, 0, 1],
     target: "earth", camera: "cockpit", assist: false, elapsed: 0,
+    engineMode: "atmospheric", cruiseSpeedKm,
   } });
   expect(response.ok()).toBe(true);
   await launch(page);
-  await page.getByRole("button", { name: "暂停航行", exact: true }).click();
+  await page.locator("#flight-pause").click();
   await page.locator("#flight-resume").click();
   await expect(page.locator("#flight-ui")).toHaveAttribute("data-environment", "atmosphere");
-  await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 大气层");
+  await expect(page.locator("#flight-engine")).toHaveText("极低大气引擎 · 手动选择");
   await expect(page.locator("#flight-speed-unit")).toHaveText("km/s");
-  await expect(page.locator("#flight-speed")).toHaveText("1");
-  await expect(page.locator("#flight-jump")).toBeDisabled();
-  await expect(page.locator("#flight-orbital")).toBeDisabled();
-  await page.keyboard.press("o");
-  await expect(page.locator("#flight-engine")).toHaveAttribute("data-engine", "orbital");
+  await expect(page.locator("#flight-speed")).toHaveText("300,001.5");
   await page.locator("#flight-propulsion summary").click();
   await page.locator("#flight-engine-mode").selectOption("interstellar");
-  await expect(page.locator("#flight-engine-mode")).toHaveValue("standard");
-  await page.locator("#flight-low-speed-number").fill("250");
-  await page.locator("#flight-low-speed-number").press("Tab");
-  await expect(page.locator("#flight-low-speed")).toHaveValue("250");
-  await expect(page.locator("#flight-engine-range")).toHaveText("1 km/s · 大气层内上限");
-  await expect(page.locator("#flight-low-speed-hint")).toContainText("当前暂存低速预设");
-  await expect(page.locator("#flight-speed")).toHaveText("1");
-  await expect(page.locator("#warp-hint")).toContainText("大气层内禁止跃迁");
-  await page.locator('button[data-body="mars"]').click();
-  await page.keyboard.press("j");
-  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready");
-  await expect(page.locator("#flight-jump")).toBeDisabled();
+  await expect(page.locator("#flight-engine-mode")).toHaveValue("interstellar");
+  await expect(page.locator("#flight-engine-range")).toHaveText("设定航速 300,001.5 km/s · 最低 100 km/s");
+  await expect(page.locator("#flight-speed")).toHaveText("300,001.5");
   await page.locator("#flight-save").click();
   await expect(page.locator("#flight-storage")).toHaveText("已保存 · 服务端");
-  const saved = await (await page.request.get("/api/flight/save")).json();
-  expect(Math.hypot(...saved.state.velocity) * world.unitsKm).toBeGreaterThanOrEqual(0.99999);
-  expect(Math.hypot(...saved.state.velocity) * world.unitsKm).toBeLessThanOrEqual(1.00001);
-  expect(saved.state.engineMode).toBe("standard");
-  expect(saved.state.atmosphericSpeedMps).toBe(250);
-  expect(saved.state.target).toBe("mars");
-  await page.screenshot({ path: info.outputPath("atmosphere-restriction.png") });
+  const saved = (await (await page.request.get("/api/flight/save")).json()).state;
+  expect(saved.engineMode).toBe("interstellar");
+  expect(saved.cruiseSpeedKm).toBe(cruiseSpeedKm);
+  expect(Math.hypot(...saved.velocity) * world.unitsKm).toBeCloseTo(cruiseSpeedKm, 5);
+  await page.locator('[data-cruise-speed="100"]').click();
+  await page.locator("#flight-engine-mode").selectOption("orbital");
+  await page.locator("#flight-resume").click();
+  await expect(page.locator("#flight-engine-mode")).toHaveValue("interstellar");
+  await expect(page.locator("#flight-cruise-speed")).toHaveValue(String(cruiseSpeedKm));
+  await expect(page.locator("#flight-speed")).toHaveText("300,001.5");
+  await page.screenshot({ path: info.outputPath("atmosphere-manual-speed.png") });
 });
 
-test("朝太空且高于十公里时按 O 启动轨道引擎，大气以一公里每秒推进并保存低空预设", async ({ page }, info) => {
+test("低于十公里且朝向地表时O直接选择轨道引擎，可向其他天体跃迁并预设手动航速", async ({ page }, info) => {
   test.setTimeout(120000);
   const world = await (await page.request.get("/api/world")).json();
   const earth = world.bodies.find((body: any) => body.id === "earth");
+  const altitudeKm = terrainHeightKm("earth", [0, 0, 1]) + LANDING_CLEARANCE_KM + 5;
   await page.request.get("/api/flight/save");
   const response = await page.request.post("/api/flight/save", { data: {
-    version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 40 / world.unitsKm],
-    velocity: [0, 0, 0], orientation: [0, 1, 0, 0], target: "earth", camera: "cockpit", assist: true, elapsed: 0,
-    engineMode: "standard", atmosphericSpeedMps: 600,
+    version: 2, worldLayoutVersion: world.layoutVersion,
+    position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + altitudeKm / world.unitsKm],
+    velocity: [0, 0, 0], orientation: [0, 0, 0, 1], target: "earth", camera: "cockpit", assist: true, elapsed: 0,
+    engineMode: "planetary", cruiseSpeedKm: 100,
   } });
   expect(response.ok()).toBe(true);
   await launch(page);
+  await page.locator("#flight-pause").click();
   await page.locator("#flight-resume").click();
-  await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 大气层");
-  await expect(page.locator("#flight-speed-unit")).toHaveText("km/s");
+  await expect(page.locator("#flight-ui")).toHaveAttribute("data-environment", "atmosphere");
   await expect(page.locator("#flight-orbital")).toBeEnabled();
   if (info.project.name === "mobile") await page.locator("#flight-orbital").click();
   else await page.keyboard.press("o");
-  await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 大气层");
-  await expect(page.locator("#flight-orbital")).toBeDisabled();
-  await expect(page.locator("#flight-engine-range")).toHaveText("1 km/s · 大气层内上限");
-  if (info.project.name === "mobile") {
-    const button = page.locator('[data-flight-input="KeyW"]');
-    const box = (await button.boundingBox())!;
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 0 }] });
-    try {
-      await expect(page.locator("#flight-speed")).toHaveText("1");
-      await page.getByRole("button", { name: "暂停航行", exact: true }).click();
-    } finally {
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-      await cdp.detach();
-    }
-  } else {
-    await page.keyboard.down("KeyW");
-    try {
-      await expect(page.locator("#flight-speed")).toHaveText("1");
-      await page.getByRole("button", { name: "暂停航行", exact: true }).click();
-    } finally {
-      await page.keyboard.up("KeyW");
-    }
-  }
+  await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 手动选择");
+  await expect(page.locator("#flight-orbital")).toBeEnabled();
+  await expect(page.locator("#flight-pause")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#flight-speed-unit")).toHaveText("km/s");
+  await expect(page.locator("#flight-engine-range")).toHaveText("设定航速 100 km/s · 最低 100 km/s");
+  await page.locator('button[data-body="mars"]').click();
+  await page.locator("#flight-align").click();
+  await expect(page.locator("#flight-jump")).toBeEnabled();
+  await page.locator("#flight-jump").click();
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "charging");
+  await page.locator("#flight-propulsion summary").click();
+  await expect(page.locator("#flight-engine-mode")).toBeEnabled();
+  await expect(page.locator("#flight-cruise-speed")).toBeEnabled();
+  await page.locator("#flight-engine-mode").selectOption("atmospheric");
+  await page.locator('[data-cruise-speed="1000"]').click();
+  await expect(page.locator("#flight-cruise-speed")).toHaveValue("1000");
+  await page.locator("#warp-cancel").click();
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready");
+  await page.locator("#flight-pause").click();
+  await expect(page.locator("#flight-engine")).toHaveAttribute("data-engine", "atmospheric");
   await page.locator("#flight-save").click();
   await expect(page.locator("#flight-storage")).toHaveText("已保存 · 服务端");
-  const saved = await (await page.request.get("/api/flight/save")).json();
-  expect(saved.state.escapeBody).toBe("earth");
-  expect(saved.state.atmosphericSpeedMps).toBe(600);
-  expect(Math.hypot(...saved.state.velocity) * world.unitsKm).toBeGreaterThanOrEqual(0.999);
-  expect(Math.hypot(...saved.state.velocity) * world.unitsKm).toBeLessThanOrEqual(1.00001);
-  await page.locator("#flight-resume").click();
-  await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 大气层");
+  const saved = (await (await page.request.get("/api/flight/save")).json()).state;
+  expect(saved.engineMode).toBe("atmospheric");
+  expect(saved.cruiseSpeedKm).toBe(1000);
+  expect(saved.target).toBe("mars");
 });

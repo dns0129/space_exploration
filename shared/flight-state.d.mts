@@ -9,6 +9,7 @@ export interface WalkingState {
   grounded: boolean;
   camera?: "first" | "third";
 }
+export type EngineMode = "atmospheric" | "orbital" | "planetary" | "interstellar";
 export interface FlightState {
   version: 2;
   worldLayoutVersion?: number;
@@ -21,9 +22,8 @@ export interface FlightState {
   camera: "cockpit" | "chase";
   assist: boolean;
   elapsed: number;
-  escapeBody?: BodyId;
-  engineMode?: "standard" | "interstellar";
-  atmosphericSpeedMps?: number;
+  engineMode?: EngineMode;
+  cruiseSpeedKm?: number;
   landedBody?: BodyId;
   walking?: WalkingState;
   systemId: SystemId;
@@ -46,8 +46,6 @@ export interface WorldConfig {
   engines: {
     id: "atmospheric" | "orbital" | "planetary" | "interstellar";
     name: string;
-    minSpeedKm: number;
-    maxSpeedKm: number;
     accelerationKm: number;
     boostAccelerationKm: number;
   }[];

@@ -118,7 +118,7 @@ test("unmarked saves already at the current floor normalize without moving the s
   assert.equal(ship.snapshot().terrainVersion, TERRAIN_VERSION);
 });
 
-test("the swept low-speed boundary follows a mapped mountain above the old 125-metre envelope", () => {
+test("swept physical contact follows a mapped mountain above the old 125-metre envelope", () => {
   const body = world.bodies.find(body => body.id === "moon");
   let normal, peak = -Infinity;
   for (let latitude = -75; latitude <= 75; latitude += 15) for (let longitude = 0; longitude < 360; longitude += 15) {
@@ -131,12 +131,12 @@ test("the swept low-speed boundary follows a mapped mountain above the old 125-m
   const ship = new ShipDynamics();
   ship.jump(body.id);
   ship.assist = false;
-  ship.setAtmosphericSpeed(13);
+  ship.setCruiseSpeed(100);
   ship.position.fromArray(body.position).addScaledVector(normal,
-    body.radius + (peak + LANDING_CLEARANCE_KM + 10.01) / world.unitsKm);
-  ship.velocity.copy(normal).multiplyScalar(-2 / world.unitsKm);
+    body.radius + (peak + LANDING_CLEARANCE_KM + 1) / world.unitsKm);
+  ship.velocity.copy(normal).multiplyScalar(-100 / world.unitsKm);
   ship.step(0.05, emptyInput());
-  assert(ship.environment.groundAltitudeKm < 10.001, "the path crosses the actual low-speed boundary");
-  assert(ship.environment.groundAltitudeKm > 9.995, "the selected metre-speed cap applies within the crossing frame");
-  assert(ship.velocity.length() * world.unitsKm <= 0.013001, "the low-speed preset follows map-derived ground height");
+  assert.equal(ship.collision, body.id, "physical contact must include terrain above the obsolete envelope");
+  assert(ship.environment.groundAltitudeKm < 0.001, "contact stops at the mapped mountain surface");
+  assert.equal(ship.velocity.length(), 0);
 });

@@ -79,6 +79,19 @@ function macroCorrelation(before: PNG, after: PNG) {
   return a.reduce((sum, value, i) => sum + value * b[i], 0) / Math.sqrt(squared(a) * squared(b));
 }
 
+function neighbourVariation(image: PNG) {
+  const light = (i: number) => image.data[i] * .2126 + image.data[i + 1] * .7152 + image.data[i + 2] * .0722;
+  let squared = 0, samples = 0;
+  for (let y = 30; y < image.height - 30; y++) for (let x = 30; x < image.width * .65; x++) {
+    const i = (y * image.width + x) * 4;
+    if (light(i) < 20) continue;
+    squared += (light(i) - light(i + 4)) ** 2;
+    samples++;
+  }
+  expect(samples, "抗锯齿检查需要真实可见的地表像素").toBeGreaterThan(1000);
+  return Math.sqrt(squared / samples);
+}
+
 test("Herschel 陨石坑从太空进入地表仍使用同一材质、同一分块和真实凹地形", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop");
   test.setTimeout(180_000);
@@ -134,6 +147,9 @@ test("Herschel 陨石坑从太空进入地表仍使用同一材质、同一分�
   await expect(canvas).toHaveAttribute("data-render-scale", "1.00");
   const after = PNG.sync.read(await canvas.screenshot({ path: info.outputPath("mimas-shared-surface-entry.png"), style: pictureStyle }));
   expect(macroCorrelation(before, after), "越过渲染边界后仍须看见同一个大坑，允许透视比例轻微变化").toBeGreaterThan(.78);
+  // At 70 km each pixel covers about 85 m. Unresolved metre-scale relief must
+  // not produce a bright/dark checker pattern across the photographed crater.
+  for (const image of [before, after]) expect(neighbourVariation(image), "远处细节应平滑过滤，不能出现像素级摩尔纹").toBeLessThan(16);
   expect(errors).toEqual([]);
 });
 
@@ -157,8 +173,11 @@ test("陨石坑底与坑缘落地都有一致的几何高度，手机降低采�
       const sample = await actualTerrainSample(page);
       expect(new THREE.Vector3().fromArray(sample.normal).distanceTo(new THREE.Vector3().fromArray(normal))).toBeLessThan(1e-5);
       heights.push(sample.height);
+      await page.locator("#flight-pause").click();
+      await expect(page.locator("#flight-exit")).toBeEnabled();
       await page.locator("#flight-exit").click();
       await expect(page.locator("#walking-panel")).toHaveAttribute("data-grounded", "true");
+      await page.locator("#flight-pause").click();
       await expect(canvas).toHaveAttribute("data-surface-content-id", sourceId);
       await actualTerrainSample(page);
       await page.screenshot({ path: info.outputPath(`mimas-${heights.length === 1 ? "crater-floor" : "crater-rim"}-${mobile ? "mobile" : "desktop"}.png`) });

@@ -6,6 +6,7 @@ import { PNG } from "pngjs";
 import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
+import { terrainHeightField, TERRAIN_VERSION } from "../shared/surface.mjs";
 import { createServer } from "node:http";
 
 const html = await readFile(
@@ -78,6 +79,10 @@ try {
       id,
       { timeout: 30_000 },
     );
+    if (id !== "earth-station") {
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-content-id", `${id}:surface-v${TERRAIN_VERSION}:16k`);
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-height-source", terrainHeightField(id)?.sourceId ?? "none");
+    }
     if (id === "earth") {
       await page.locator("#quality").selectOption("ultra");
       await expect(page.locator("canvas")).toHaveAttribute("data-earth-maps", "8k", { timeout: 60_000 });
@@ -87,6 +92,7 @@ try {
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-body", "earth");
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-resolution", "16384x8192");
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-tile-resolution", "2064x2064");
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-total-tiles", "4");
       const detail = PNG.sync.read(await page.locator("canvas").screenshot());
       assert(detail.data.some((value, index) => index % 4 !== 3 && value > 120), "Offline ultra Earth must render actual pixels");
       await page.locator("#quality").selectOption("standard");
@@ -109,10 +115,15 @@ try {
       await expect(canvas).toHaveAttribute("data-surface-detail-resolution", "16384x8192");
       await expect(canvas).toHaveAttribute("data-surface-detail-tile-resolution", "2064x2064");
       await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "4");
+      await expect(canvas).toHaveAttribute("data-surface-detail-total-tiles", "4");
+      assert.equal(new Set(JSON.parse(await canvas.getAttribute("data-surface-detail-tile-ids"))).size, 4,
+        "All enhanced bodies must have four distinct physical textures");
       console.log(`Offline ${id}: enhanced 16K composite with four physical 2064x2064 tiles`);
     } else if (id === "earth-station") {
-      for (const attribute of ["kind", "body", "family", "resolution", "tile-resolution", "tiles", "status"])
+      for (const attribute of ["kind", "body", "family", "resolution", "tile-resolution", "tile-ids", "tiles", "status"])
         assert.equal(await page.locator("canvas").getAttribute(`data-surface-detail-${attribute}`), null, "Station must not retain the previous body's 16K diagnostics");
+      for (const attribute of ["content-id", "content-source", "height-source", "normal", "height-km"])
+        assert.equal(await page.locator("canvas").getAttribute(`data-surface-${attribute}`), null, "Station must not retain a planetary surface");
     }
     const shot = PNG.sync.read(await page.locator("canvas").screenshot());
     let surface = 0;
@@ -124,6 +135,8 @@ try {
     if (id !== "earth" && id !== "earth-station") {
       await page.locator("#quality").selectOption("standard");
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-tiles", "0");
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-detail-total-tiles", "0");
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-content-id", `${id}:surface-v${TERRAIN_VERSION}:16k`);
       assert.equal(await page.locator("canvas").getAttribute("data-surface-detail-resolution"), null, "Disabling enhanced detail must release its resident tiles");
     }
   }

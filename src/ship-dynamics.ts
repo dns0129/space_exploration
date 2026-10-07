@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
-import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
+import type { EngineMode, FlightState, WorldConfig } from "../shared/flight-state.mjs";
 import { surfaceProfile, terrainHeightKm, terrainMaxHeightKm, TERRAIN_VERSION, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { bodySystem, systemBodies, systemDisplacement } from "../shared/world-navigation.mjs";
 import type { BodyId, SystemId } from "./solar-system";
@@ -44,9 +44,8 @@ export class ShipDynamics {
   readonly angularVelocity = new THREE.Vector3();
   bank = 0;
   deceleration = 0;
-  private escapeBody: BodyId | null = null;
-  atmosphericSpeedMps = 1000;
-  engineMode: "standard" | "interstellar" = "standard";
+  cruiseSpeedKm = 100;
+  engineMode: EngineMode = "planetary";
   target: BodyId = "earth";
   systemId: SystemId = "solar";
   camera: "cockpit" | "chase" = "cockpit";
@@ -77,7 +76,6 @@ export class ShipDynamics {
     this.landedBody = null;
     this.landingBody = null;
     this.landingPhase = "manual";
-    this.escapeBody = null;
     this.deceleration = 0;
     const body = this.config.bodies.find((b) => b.id === id)!;
     this.systemId = bodySystem(body);
@@ -122,9 +120,8 @@ export class ShipDynamics {
       terrainVersion: TERRAIN_VERSION,
       ...(this.landedBody ? { landedBody: this.landedBody } : {}),
       systemId: this.systemId,
-      ...(this.escapeBody ? { escapeBody: this.escapeBody } : {}),
       engineMode: this.engineMode,
-      atmosphericSpeedMps: this.atmosphericSpeedMps,
+      cruiseSpeedKm: this.cruiseSpeedKm,
       position: this.position.toArray(),
       velocity: this.velocity.toArray(),
       orientation: this.orientation.toArray(),
@@ -138,18 +135,16 @@ export class ShipDynamics {
     const saved = validateFlightState(value);
     if (!saved) return false;
     this.resetWarp();
-    this.escapeBody = null;
     this.deceleration = 0;
     this.systemId = saved.systemId;
     this.position.fromArray(saved.position);
-    this.velocity.fromArray(saved.velocity).clampLength(0, this.config.boostSpeed);
+    this.velocity.fromArray(saved.velocity);
     this.orientation.fromArray(saved.orientation);
     this.angularVelocity.set(0, 0, 0);
     this.bank = 0;
     this.target = saved.target;
-    this.escapeBody = saved.escapeBody ?? null;
-    this.engineMode = saved.engineMode ?? "standard";
-    this.atmosphericSpeedMps = saved.atmosphericSpeedMps ?? 1000;
+    this.engineMode = saved.engineMode ?? "planetary";
+    this.cruiseSpeedKm = saved.cruiseSpeedKm ?? 100;
     this.camera = saved.camera;
     this.assist = saved.assist;
     this.elapsed = saved.elapsed;
@@ -157,7 +152,7 @@ export class ShipDynamics {
     this.landingBody = this.landedBody;
     this.landingPhase = this.landedBody ? "landed" : "manual";
     this.resolveCollision(this.position.clone());
-    this.velocity.clampLength(0, this.speedLimit);
+    this.clampCruiseSpeed();
     return true;
   }
   get environment() {
@@ -181,60 +176,35 @@ export class ShipDynamics {
     const headingOut = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation).dot(outward) > 0.25;
     const movingOut = this.velocity.dot(outward) >= -1e-9;
     const lowFlight = profile.solid && groundAltitudeKm <= 10 + SURFACE_EPSILON_KM;
-    const escaping = this.escapeBody === body.id && headingOut && movingOut
-      && groundAltitudeKm > 10 + SURFACE_EPSILON_KM;
-    const orbitalRequired = altitudeKm <= nearHeightKm + SURFACE_EPSILON_KM && !escaping;
-    const restricted = lowFlight || atmospheric || orbitalRequired;
+    const escaping = false, orbitalRequired = false, restricted = false;
     return { body, altitudeKm: Math.max(0, altitudeKm), atmospheric, restricted, nearHeightKm, escaping,
       profile, density, groundHeightKm, groundAltitudeKm, outward, headingOut, movingOut, lowFlight, orbitalRequired };
   }
   get speedLimit() {
-    const environment = this.environment;
-    return (environment.lowFlight ? this.atmosphericSpeedMps / 1000
-      : environment.atmospheric ? 1
-      : environment.orbitalRequired ? this.config.engines.find(engine => engine.id === "orbital")!.maxSpeedKm
-      : this.engineMode === "interstellar" ? this.config.boostSpeed * this.config.unitsKm
-      : this.config.cruiseSpeed * this.config.unitsKm) / this.config.unitsKm;
+    return this.cruiseSpeedKm / this.config.unitsKm;
   }
   get engine() {
-    const environment = this.environment;
-    if (environment.lowFlight) return this.config.engines.find(engine => engine.id === "atmospheric")!;
-    if (environment.atmospheric || environment.orbitalRequired) return this.config.engines.find(engine => engine.id === "orbital")!;
-    if (this.engineMode === "interstellar") return this.config.engines.find(engine => engine.id === "interstellar")!;
-    const speedKm = this.velocity.length() * this.config.unitsKm;
-    return this.config.engines.find((engine) => engine.id === "orbital" && speedKm < engine.maxSpeedKm)
-      ?? this.config.engines.find(engine => engine.id === "planetary")!;
+    return this.config.engines.find(engine => engine.id === this.engineMode)!;
   }
-  setAtmosphericSpeed(metresPerSecond: number) {
-    if (!Number.isFinite(metresPerSecond)) return;
-    this.atmosphericSpeedMps = THREE.MathUtils.clamp(metresPerSecond, 1, 1000);
-    if (this.environment.lowFlight) this.velocity.clampLength(0, this.speedLimit);
+  setCruiseSpeed(kilometresPerSecond: number): string | null {
+    if (!Number.isFinite(kilometresPerSecond) || kilometresPerSecond < 100) return "巡航速度必须是至少 100 km/s 的有限数值";
+    this.cruiseSpeedKm = kilometresPerSecond;
+    this.clampCruiseSpeed();
+    return null;
   }
-  setEngineMode(mode: "standard" | "interstellar"): string | null {
-    if (mode !== "standard" && mode !== "interstellar") return "未知引擎档位";
-    if (mode === "interstellar") {
-      if (this.warping || this.landingPhase !== "manual") return "请先结束自动航行，再切换星际引擎";
-      if (this.environment.restricted) return "请先启动近地轨道引擎并离开大气与低空区域，再切换星际引擎";
-    }
+  setEngineMode(mode: EngineMode): string | null {
+    if (!this.config.engines.some(engine => engine.id === mode)) return "未知引擎档位";
     this.engineMode = mode;
-    this.velocity.clampLength(0, this.speedLimit);
     return null;
   }
-  get orbitalEngineActive() { return this.environment.escaping; }
-  get orbitalBlockReason(): string | null {
-    if (this.warping || this.landingPhase !== "manual") return "请先结束跃迁、着陆或起飞辅助";
-    const environment = this.environment;
-    if (environment.groundAltitudeKm <= 10 + SURFACE_EPSILON_KM) return "离地超过 10,000 m 后才能启动近地轨道引擎";
-    if (!environment.headingOut) return "请将船头朝向太空，再启动近地轨道引擎";
-    if (!environment.movingOut) return "请先刹停向地表漂移，再启动近地轨道引擎";
-    if (environment.escaping) return "近地轨道引擎已启动";
-    return null;
-  }
+  get orbitalEngineActive() { return this.engineMode === "orbital"; }
+  get orbitalBlockReason(): string | null { return null; }
   startOrbitalEngine(): string | null {
-    const blocked = this.orbitalBlockReason;
-    if (blocked) return blocked;
-    this.escapeBody = this.environment.body.id;
-    return null;
+    return this.setEngineMode("orbital");
+  }
+  private clampCruiseSpeed() {
+    const speed = Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z);
+    if (speed > this.speedLimit) this.velocity.multiplyScalar(this.speedLimit / speed);
   }
   step(seconds: number, input: FlightInput) {
     const duration = Math.max(0, Math.min(seconds, 0.25));
@@ -281,16 +251,16 @@ export class ShipDynamics {
     if (this.assist && !input.strafe && !input.lift) {
       // Assisted flight carves a turn instead of sliding sideways indefinitely.
       const local = this.velocity.clone().applyQuaternion(this.orientation.clone().invert());
-      const forwardSpeed = Math.sqrt(Math.max(0, this.velocity.lengthSq()
-        - (local.x * local.x + local.y * local.y) * Math.exp(-dt * 7)));
+      const speed = Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z);
+      const retainedSide = Math.hypot(local.x, local.y) * Math.exp(-dt * 3.5);
+      const forwardSpeed = speed * Math.sqrt(Math.max(0, 1 - (speed ? retainedSide / speed : 0) ** 2));
       local.x *= Math.exp(-dt * 3.5);
       local.y *= Math.exp(-dt * 3.5);
       local.z = (local.z > 0 ? 1 : -1) * forwardSpeed;
       this.velocity.copy(local.applyQuaternion(this.orientation));
     }
     const environment = this.environment;
-    if (!environment.escaping) this.escapeBody = null;
-    const previousSpeedKm = this.velocity.length() * this.config.unitsKm;
+    const previousSpeedKm = Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z) * this.config.unitsKm;
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation);
     const slowing = input.throttle < 0 && this.velocity.dot(forward) * this.config.unitsKm > 0.000001;
     const acceleration = new THREE.Vector3(
@@ -299,17 +269,15 @@ export class ShipDynamics {
       slowing ? 0 : -input.throttle,
     );
     if (acceleration.lengthSq() > 1) acceleration.normalize();
-    // Only flight within 10 km of terrain retains metre-scale acceleration
-    // and the selected speed cap; higher atmospheric flight uses orbital thrust.
-    const engine = environment.lowFlight
-      ? this.config.engines.find(engine => engine.id === "atmospheric")! : this.engine;
+    const engine = this.engine;
     acceleration
       .applyQuaternion(this.orientation)
       .multiplyScalar(
         (input.boost ? engine.boostAccelerationKm : engine.accelerationKm)
           / this.config.unitsKm,
       );
-    this.velocity.addScaledVector(acceleration, dt);
+    const powered = !input.brake && !slowing && acceleration.lengthSq() > 0;
+    if (powered) this.velocity.addScaledVector(acceleration, dt);
     // Powered flight compensates drag; releasing thrust restores atmospheric
     // drag and assisted drift, so each selected cruise speed remains reachable.
     if (environment.atmospheric && !acceleration.lengthSq())
@@ -321,80 +289,21 @@ export class ShipDynamics {
     else if (this.assist && !acceleration.lengthSq()) {
       this.velocity.multiplyScalar(Math.exp(-0.1 * dt));
     }
-    this.velocity.clampLength(0, this.speedLimit);
-    if (this.velocity.length() < 0.000000001) this.velocity.set(0, 0, 0);
+    if (powered) {
+      // Every selected engine reaches the requested cruise speed immediately;
+      // braking and unpowered drift may remain below the 100 km/s input minimum.
+      const speed = Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z);
+      if (speed) this.velocity.divideScalar(speed).multiplyScalar(this.speedLimit);
+    } else this.clampCruiseSpeed();
+    if (Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z) < 0.000000001) this.velocity.set(0, 0, 0);
     const previous = this.position.clone();
-    // Check the swept path too: a fast frame cannot skip the low-speed zone.
-    const travel = this.velocity.clone().multiplyScalar(dt);
-    if (travel.lengthSq()) {
-      for (const body of this.activeBodies) {
-        if (body.kind === "station") continue;
-        const center = new THREE.Vector3().fromArray(body.position);
-        const ownDeparture = this.escapeBody === body.id && environment.escaping;
-        // Explicit departure only unlocks the vacuum safety shell. Every
-        // atmospheric and low-altitude layer still brakes the entire vector.
-        // The outer terrain envelope only brakes to the orbital minimum.
-        // Apply the selected metre-speed cap at the actual terrain boundary.
-        const hardShellKm = Math.max(body.atmosphereKm ?? 0,
-          surfaceProfile(body.id).solid ? 10 + terrainMaxHeightKm(body.id) + LANDING_CLEARANCE_KM + SURFACE_EPSILON_KM : 0);
-        const t = THREE.MathUtils.clamp(center.clone().sub(previous).dot(travel) / travel.lengthSq(), 0, 1);
-        const closestDistance = previous.clone().addScaledVector(travel, t).distanceTo(center);
-        if (hardShellKm > 0 && closestDistance <= body.radius + hardShellKm / this.config.unitsKm) {
-          this.velocity.clampLength(0, 1 / this.config.unitsKm);
-        } else if (!ownDeparture && closestDistance <= body.radius + this.config.flightSafety.nearSurfaceMinKm / this.config.unitsKm) {
-          this.velocity.clampLength(0, this.config.engines.find(engine => engine.id === "orbital")!.maxSpeedKm / this.config.unitsKm);
-        }
-      }
-    }
-    const constrainedTravel = this.velocity.clone().multiplyScalar(dt);
-    let lowFlightEntry: number | null = null;
-    for (const body of this.activeBodies) {
-      if (body.kind === "station" || !surfaceProfile(body.id).solid) continue;
-      const entry = this.lowFlightPathEntry(body, previous, constrainedTravel);
-      if (entry !== null) lowFlightEntry = lowFlightEntry === null ? entry : Math.min(lowFlightEntry, entry);
-    }
-    if (lowFlightEntry === null) this.position.add(constrainedTravel);
-    else {
-      // Finish the orbital part of a crossing before using the selected
-      // low-altitude speed; a preset never slows flight above the boundary.
-      this.position.addScaledVector(constrainedTravel, lowFlightEntry);
-      this.velocity.clampLength(0, this.atmosphericSpeedMps / 1000 / this.config.unitsKm);
-      this.position.addScaledVector(this.velocity, dt * (1 - lowFlightEntry));
-    }
+    this.position.addScaledVector(this.velocity, dt);
     this.resolveCollision(previous);
-    this.velocity.clampLength(0, this.speedLimit);
-    const lostSpeedKm = previousSpeedKm - this.velocity.length() * this.config.unitsKm;
+    this.clampCruiseSpeed();
+    const lostSpeedKm = previousSpeedKm - Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z) * this.config.unitsKm;
     if (lostSpeedKm > 0.05 && (input.brake || slowing || lostSpeedKm > Math.max(2, previousSpeedKm * 0.015)))
       this.deceleration = Math.max(this.deceleration, Math.min(1, lostSpeedKm / Math.max(10, previousSpeedKm * 0.15)));
     this.elapsed += dt;
-  }
-  private lowFlightPathEntry(body: WorldConfig["bodies"][number], from: THREE.Vector3, travel: THREE.Vector3): number | null {
-    const center = new THREE.Vector3().fromArray(body.position);
-    const envelopeKm = 10 + terrainMaxHeightKm(body.id) + LANDING_CLEARANCE_KM + SURFACE_EPSILON_KM;
-    const closestT = travel.lengthSq() ? THREE.MathUtils.clamp(center.clone().sub(from).dot(travel) / travel.lengthSq(), 0, 1) : 0;
-    if (from.clone().addScaledVector(travel, closestT).distanceTo(center) > body.radius + envelopeKm / this.config.unitsKm)
-      return null;
-    const clearance = (t: number) => {
-      const radial = from.clone().addScaledVector(travel, t).sub(center);
-      const distance = radial.length();
-      return (distance - body.radius) * this.config.unitsKm
-        - terrainHeightKm(body.id, radial.multiplyScalar(1 / Math.max(distance, 1e-12)).toArray()) - LANDING_CLEARANCE_KM;
-    };
-    if (clearance(0) <= 10 + SURFACE_EPSILON_KM) return 0;
-    // The envelope has already reduced this path to at most 50 m. Sampling
-    // and bisection use the same continuous terrain as collision and landing.
-    for (let sample = 1; sample <= 8; sample++) {
-      let high = sample / 8;
-      if (clearance(high) > 10 + SURFACE_EPSILON_KM) continue;
-      let low = (sample - 1) / 8;
-      for (let i = 0; i < 24; i++) {
-        const middle = (low + high) / 2;
-        if (clearance(middle) <= 10 + SURFACE_EPSILON_KM) high = middle;
-        else low = middle;
-      }
-      return high;
-    }
-    return null;
   }
   get warping() {
     return this.warpPhase === "charging" || this.warpPhase === "transit" || this.warpPhase === "arrival";
@@ -410,14 +319,6 @@ export class ShipDynamics {
   get warpBlockReason(): string | null {
     if (this.landingPhase !== "manual") return "请先起飞或中止着陆，再启动跃迁";
     if (this.warpPhase !== "ready") return "跃迁引擎正在工作或冷却";
-    const environment = this.environment;
-    if (environment.atmospheric) return "大气层内禁止跃迁，请先启动近地轨道引擎并飞向太空";
-    if (environment.altitudeKm <= this.config.flightSafety.nearSurfaceMinKm + SURFACE_EPSILON_KM) return "距天体表面 1000 km 内禁止跃迁，请先向太空离开";
-    const target = this.config.bodies.find((body) => body.id === this.target)!;
-    const altitudeKm = (this.targetRelative.length() - target.radius) * this.config.unitsKm;
-    const minimumKm = Math.max(this.config.flightSafety.warpTargetMinKm,
-      target.radius * this.config.unitsKm * this.config.flightSafety.warpTargetRadiusFactor);
-    if (altitudeKm <= minimumKm + SURFACE_EPSILON_KM) return "距离目标太近，无法启动跃迁，请直接驾驶接近";
     return null;
   }
   startWarp(): string | null {
@@ -517,11 +418,27 @@ export class ShipDynamics {
           const center = new THREE.Vector3().fromArray(body.position);
           const t = THREE.MathUtils.clamp(center.clone().sub(a).dot(line) / lengthSq, 0, 1);
           const closest = a.clone().addScaledVector(line, t);
-          const clearanceKm = Math.max(body.kind === "station" ? 10 : this.config.flightSafety.nearSurfaceMinKm,
-            body.atmosphereKm ? body.atmosphereKm + 50 : 0);
-          const radius = Math.max(body.radius * (body.kind === "star" ? 1.3 : 1.005),
-            body.radius + clearanceKm / this.config.unitsKm);
+          // Avoid physical terrain and body geometry, without atmosphere or
+          // proximity shells. Surface departures first clear terrain radially.
+          const terrainKm = surfaceProfile(body.id).solid ? terrainMaxHeightKm(body.id) + LANDING_CLEARANCE_KM : 0;
+          const radius = body.radius + (terrainKm + SURFACE_EPSILON_KM) / this.config.unitsKm;
           if (closest.distanceTo(center) >= radius) continue;
+          const aRadial = a.clone().sub(center), bRadial = b.clone().sub(center);
+          const aDistance = aRadial.length(), bDistance = bRadial.length();
+          if (aDistance < radius) {
+            if (aDistance < this.physicalRadius(body, a) - SURFACE_EPSILON_KM / this.config.unitsKm) return null;
+            if (bDistance >= radius && line.clone().normalize().dot(aRadial.clone().normalize()) > 1 - 1e-8) continue;
+            points.splice(i + 1, 0, center.clone().addScaledVector(aRadial.normalize(), radius + SURFACE_EPSILON_KM / this.config.unitsKm));
+            obstacle = true;
+            break;
+          }
+          if (bDistance < radius) {
+            if (bDistance < this.physicalRadius(body, b) - SURFACE_EPSILON_KM / this.config.unitsKm) return null;
+            if (line.clone().normalize().dot(bRadial.clone().normalize()) < -1 + 1e-8) continue;
+            points.splice(i + 1, 0, center.clone().addScaledVector(bRadial.normalize(), radius + SURFACE_EPSILON_KM / this.config.unitsKm));
+            obstacle = true;
+            break;
+          }
           if (t <= 0 || t >= 1) return null;
           const outward = closest.sub(center);
           if (outward.lengthSq() < 1e-12) outward.crossVectors(line, new THREE.Vector3(0, 1, 0));
@@ -618,51 +535,114 @@ export class ShipDynamics {
     this.collision = null;
     if (this.landedBody) return;
     const travel = this.position.clone().sub(previous);
-    let earliest = 1,
-      hit: { id: BodyId; center: THREE.Vector3; radius: number; gentle: boolean } | undefined;
+    const length = Math.hypot(travel.x, travel.y, travel.z);
+    const direction = length ? travel.clone().divideScalar(length) : new THREE.Vector3();
+    let earliest = length,
+      hit: { id: BodyId; center: THREE.Vector3; position: THREE.Vector3; gentle: boolean } | undefined;
     for (const body of this.activeBodies) {
       const center = new THREE.Vector3().fromArray(body.position);
       const solid = surfaceProfile(body.id).solid;
-      const gentle = solid && this.velocity.length() * this.config.unitsKm <= 0.3;
-      const normal = this.position.clone().sub(center).normalize();
-      const shieldRadius = body.radius * (body.kind === "star" ? 1.24 : 1.002) + 0.000002;
-      // Once inside the outer shield, never push a departing ship back out to orbit.
-      const radius = solid && (gentle || previous.distanceTo(center) < shieldRadius)
-        ? body.radius + (terrainHeightKm(body.id, normal.toArray()) + LANDING_CLEARANCE_KM) / this.config.unitsKm
-        : shieldRadius;
+      const gentle = solid && Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z) * this.config.unitsKm <= 0.3;
+      const radius = this.physicalRadius(body, previous);
       const offset = previous.clone().sub(center);
-      const c = offset.lengthSq() - radius * radius;
-      if (c < 0) {
+      if (Math.hypot(offset.x, offset.y, offset.z) < radius) {
         const normal = this.position.clone().sub(center);
-        if (!normal.lengthSq()) normal.set(0, 1, 0);
+        const normalLength = Math.hypot(normal.x, normal.y, normal.z);
+        if (normalLength) normal.divideScalar(normalLength);
+        else normal.set(0, 1, 0);
+        const contact = center.clone().add(normal);
+        const correctionRadius = this.physicalRadius(body, contact);
         this.position
           .copy(center)
-          .addScaledVector(normal.normalize(), radius + 0.0000002);
+          .addScaledVector(normal, correctionRadius + SURFACE_EPSILON_KM / this.config.unitsKm);
         this.velocity.set(0, 0, 0);
         this.collision = body.id;
         if (gentle) this.touchDown(body.id);
         return;
       }
-      const a = travel.lengthSq(),
-        b = 2 * offset.dot(travel),
-        disc = b * b - 4 * a * c;
-      if (a > 1e-24 && disc >= 0) {
-        const t = (-b - Math.sqrt(disc)) / (2 * a);
-        if (t >= 0 && t <= earliest) {
-          earliest = t;
-          hit = { id: body.id, center, radius, gentle };
+      if (!length) continue;
+      if (solid) {
+        const contact = this.terrainCollision(body, previous, direction, length);
+        if (contact && contact.distance <= earliest) {
+          earliest = contact.distance;
+          hit = { id: body.id, center, position: contact.position, gentle };
         }
+        continue;
+      }
+      const chord = this.sphereRayChord(center, previous, direction, length, radius);
+      if (!chord) continue;
+      const distance = chord.projection - chord.half;
+      if (distance >= 0 && distance <= earliest) {
+        earliest = distance;
+        hit = { id: body.id, center,
+          position: center.clone().add(chord.perpendicular).addScaledVector(direction, -chord.half), gentle };
       }
     }
     if (hit) {
-      this.position.copy(previous).addScaledVector(travel, earliest);
+      // Compute contact in the body's local chord, rather than subtracting
+      // enormous travelled distances to recover a metre-scale surface point.
+      this.position.copy(hit.position);
       const normal = this.position.clone().sub(hit.center).normalize();
-      this.position.addScaledVector(normal, 0.0000002);
+      this.position.addScaledVector(normal, SURFACE_EPSILON_KM / this.config.unitsKm);
       this.velocity.set(0, 0, 0);
       this.collision = hit.id;
       if (hit.gentle)
         this.touchDown(hit.id);
     }
+  }
+  private physicalRadius(body: WorldConfig["bodies"][number], position: THREE.Vector3) {
+    if (!surfaceProfile(body.id).solid) return body.radius;
+    const normal = position.clone().sub(new THREE.Vector3().fromArray(body.position));
+    const length = Math.hypot(normal.x, normal.y, normal.z);
+    if (length) normal.divideScalar(length);
+    return body.radius + (terrainHeightKm(body.id, normal.toArray()) + LANDING_CLEARANCE_KM) / this.config.unitsKm;
+  }
+  private sphereRayChord(center: THREE.Vector3, from: THREE.Vector3, direction: THREE.Vector3, length: number, radius: number) {
+    const offset = from.clone().sub(center);
+    if (Math.hypot(offset.x, offset.y, offset.z) > length + radius) return null;
+    const projection = -offset.dot(direction);
+    if (projection + radius < 0 || projection - radius > length) return null;
+    const perpendicular = offset.addScaledVector(direction, projection);
+    const distance = Math.hypot(perpendicular.x, perpendicular.y, perpendicular.z);
+    if (distance > radius) return null;
+    // A unit ray keeps every squared quantity at body scale even when the
+    // selected cruise speed and segment length are close to Number.MAX_VALUE.
+    return { projection, perpendicular, half: Math.sqrt((radius - distance) * (radius + distance)) };
+  }
+  private terrainCollision(body: WorldConfig["bodies"][number], from: THREE.Vector3, direction: THREE.Vector3, length: number) {
+    const center = new THREE.Vector3().fromArray(body.position);
+    // This envelope only culls impossible physical contacts; it never changes
+    // velocity or reports a collision until the actual terrain is touched.
+    const maximumTerrainKm = terrainMaxHeightKm(body.id) + LANDING_CLEARANCE_KM;
+    const outer = this.sphereRayChord(center, from, direction, length, body.radius + maximumTerrainKm / this.config.unitsKm);
+    if (!outer) return null;
+    const start = Math.max(-outer.half, -outer.projection);
+    let end = Math.min(outer.half, length - outer.projection);
+    if (end < start) return null;
+    // Reaching the reference sphere guarantees contact with positive terrain.
+    // Stop sampling there rather than searching through the body's interior.
+    const inner = this.sphereRayChord(center, from, direction, length, body.radius + LANDING_CLEARANCE_KM / this.config.unitsKm);
+    if (inner && -inner.half >= start) end = Math.min(end, -inner.half);
+    const positionAt = (distance: number) => center.clone().add(outer.perpendicular).addScaledVector(direction, distance);
+    const clearance = (distance: number) => {
+      const position = positionAt(distance), radial = position.clone().sub(center);
+      return Math.hypot(radial.x, radial.y, radial.z) - this.physicalRadius(body, position);
+    };
+    const sampleKm = body.id === "earth" ? 0.25 : Math.max(0.005, body.radius * this.config.unitsKm / 57600);
+    const samples = Math.max(1, Math.min(4096, Math.ceil((end - start) * this.config.unitsKm / sampleKm)));
+    let low = start;
+    if (clearance(start) <= 0) return { distance: outer.projection + start, position: positionAt(start) };
+    for (let sample = 1; sample <= samples; sample++) {
+      let high = start + (end - start) * sample / samples;
+      if (clearance(high) > 0) { low = high; continue; }
+      for (let i = 0; i < 36; i++) {
+        const middle = (low + high) / 2;
+        if (clearance(middle) <= 0) high = middle;
+        else low = middle;
+      }
+      return { distance: outer.projection + high, position: positionAt(high) };
+    }
+    return null;
   }
 
   get landingBlockReason(): string | null {
@@ -681,7 +661,6 @@ export class ShipDynamics {
     this.landingBody = this.environment.body.id;
     this.landingPhase = "descending";
     this.landedBody = null;
-    this.escapeBody = null;
     this.collision = null;
     this.velocity.set(0, 0, 0);
     this.angularVelocity.set(0, 0, 0);
@@ -735,27 +714,11 @@ export class ShipDynamics {
     const altitude = (this.position.distanceTo(center) - body.radius) * this.config.unitsKm - ground;
     const ascending = this.landingPhase === "ascending";
     this.surfaceAttitude(normal, ascending);
-    const proposedSpeedKm = ascending ? Math.min(0.5, Math.max(0.015, altitude * 0.8))
-      : Math.min(2500, Math.max(0.005, altitude * 0.65));
-    const lowFlightSpeedKm = this.atmosphericSpeedMps / 1000;
-    let nextAltitude = altitude, finalSpeedKm = proposedSpeedKm, remaining = dt;
-    while (remaining > 1e-9) {
-      const lowFlight = nextAltitude <= 10 + SURFACE_EPSILON_KM;
-      const atmospheric = !!body.atmosphereKm && ground + nextAltitude <= body.atmosphereKm + SURFACE_EPSILON_KM;
-      const speedKm = Math.min(proposedSpeedKm, lowFlight ? lowFlightSpeedKm : atmospheric ? 1 : Infinity);
-      finalSpeedKm = speedKm;
-      if (ascending) { nextAltitude += speedKm * remaining; break; }
-      const boundary = lowFlight ? 0 : atmospheric ? 10 : Math.max(10, (body.atmosphereKm ?? 0) - ground);
-      const toBoundary = Math.max(0, nextAltitude - boundary) / speedKm;
-      if (toBoundary >= remaining) { nextAltitude = Math.max(0, nextAltitude - speedKm * remaining); break; }
-      nextAltitude = boundary;
-      remaining -= toBoundary;
-      if (boundary === 0) { finalSpeedKm = 0; break; }
-    }
+    const proposedSpeedKm = ascending ? Math.max(0.015, altitude * 0.8) : Math.max(0.005, altitude * 0.65);
+    const speedKm = Math.min(this.cruiseSpeedKm, proposedSpeedKm);
+    const nextAltitude = ascending ? altitude + speedKm * dt : Math.max(0, altitude - speedKm * dt);
     this.position.copy(center).addScaledVector(normal, body.radius + (ground + nextAltitude) / this.config.unitsKm);
-    if (nextAltitude <= 10 + SURFACE_EPSILON_KM) finalSpeedKm = Math.min(lowFlightSpeedKm, finalSpeedKm);
-    else if (body.atmosphereKm && ground + nextAltitude <= body.atmosphereKm + SURFACE_EPSILON_KM) finalSpeedKm = Math.min(1, finalSpeedKm);
-    this.velocity.copy(normal).multiplyScalar((ascending ? 1 : -1) * finalSpeedKm / this.config.unitsKm);
+    this.velocity.copy(normal).multiplyScalar((ascending ? 1 : -1) * speedKm / this.config.unitsKm);
     this.elapsed += dt;
     if (!ascending && nextAltitude <= 0.00001) this.touchDown(body.id);
     else if (ascending && nextAltitude >= 2) { this.landingPhase = "manual"; this.landingBody = null; }

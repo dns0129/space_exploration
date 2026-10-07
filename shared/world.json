@@ -8,32 +8,24 @@
     {
       "id": "atmospheric",
       "name": "\u6781\u4f4e\u5927\u6c14\u5f15\u64ce",
-      "minSpeedKm": 0.001,
-      "maxSpeedKm": 1,
       "accelerationKm": 0.3,
       "boostAccelerationKm": 0.8
     },
     {
       "id": "orbital",
       "name": "\u8fd1\u5730\u8f68\u9053\u5f15\u64ce",
-      "minSpeedKm": 1,
-      "maxSpeedKm": 100,
       "accelerationKm": 30,
       "boostAccelerationKm": 100
     },
     {
       "id": "planetary",
       "name": "\u884c\u661f\u5f15\u64ce",
-      "minSpeedKm": 100,
-      "maxSpeedKm": 10000,
       "accelerationKm": 2000,
       "boostAccelerationKm": 6000
     },
     {
       "id": "interstellar",
       "name": "\u661f\u9645\u5f15\u64ce",
-      "minSpeedKm": 10000,
-      "maxSpeedKm": 100000,
       "accelerationKm": 10000,
       "boostAccelerationKm": 30000
     }

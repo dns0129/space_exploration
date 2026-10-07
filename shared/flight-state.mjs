@@ -46,7 +46,7 @@ function validateWalkingTerrain(value, flight, config, heightAt) {
     || typeof value.pitch !== "number" || !Number.isFinite(value.pitch) || Math.abs(value.pitch) > 1.35
     || typeof value.grounded !== "boolean"
     || (value.camera !== undefined && !["first", "third"].includes(value.camera))
-    || !vector(flight.position, 3, 1e12) || !vector(flight.velocity, 3, 1e12)
+    || !vector(flight.position, 3, Infinity) || !vector(flight.velocity, 3, Infinity)
     || Math.hypot(...flight.velocity) > 1e-9) return null;
   const body = config.bodies.find(candidate => candidate.id === value.bodyId);
   if (!body || !surfaceProfile(body.id).solid || body.kind === "star" || body.kind === "station"
@@ -123,15 +123,14 @@ export function validateFlightState(value) {
     ![1, 2].includes(value.version) ||
     (value.worldLayoutVersion !== undefined && ![1, world.layoutVersion ?? 1].includes(value.worldLayoutVersion)) ||
     (value.terrainVersion !== undefined && ![1, TERRAIN_VERSION].includes(value.terrainVersion)) ||
-    !vector(value.position, 3, value.version === 1 ? 1e6 : 1e12) ||
-    !vector(value.velocity, 3, value.version === 1 ? 120 : world.boostSpeed * 2) ||
+    !vector(value.position, 3, value.version === 1 ? 1e6 : Infinity) ||
+    !vector(value.velocity, 3, value.version === 1 ? 120 : Infinity) ||
     !vector(value.orientation, 4, 1.01) ||
     !ids.has(value.target) ||
     (value.systemId !== undefined && !systemIds.has(value.systemId)) ||
-    (value.escapeBody !== undefined && !ids.has(value.escapeBody)) ||
-    (value.engineMode !== undefined && !["standard", "interstellar"].includes(value.engineMode)) ||
-    (value.atmosphericSpeedMps !== undefined && (typeof value.atmosphericSpeedMps !== "number"
-      || !Number.isFinite(value.atmosphericSpeedMps) || value.atmosphericSpeedMps < 1 || value.atmosphericSpeedMps > 1000)) ||
+    (value.engineMode !== undefined && !["standard", "atmospheric", "orbital", "planetary", "interstellar"].includes(value.engineMode)) ||
+    (value.cruiseSpeedKm !== undefined && (typeof value.cruiseSpeedKm !== "number"
+      || !Number.isFinite(value.cruiseSpeedKm) || value.cruiseSpeedKm < 100)) ||
     !["cockpit", "chase"].includes(value.camera) ||
     typeof value.assist !== "boolean" ||
     typeof value.elapsed !== "number" ||
@@ -144,7 +143,7 @@ export function validateFlightState(value) {
   if (
     norm < 0.95 ||
     norm > 1.05 ||
-    Math.hypot(...value.velocity) > (value.version === 1 ? 120 : world.boostSpeed * 2)
+    !Number.isFinite(Math.hypot(...value.velocity)) || (value.version === 1 && Math.hypot(...value.velocity) > 120)
   )
     return null;
   const body = world.bodies.find((b) => b.id === value.target);
@@ -153,7 +152,7 @@ export function validateFlightState(value) {
   let position = value.version === 1
     ? value.position.map((n, i) => body.position[i] + (n - old[1][i]) / old[0] * body.radius)
     : migrateLayoutPosition(value, [...value.position]);
-  if (!vector(position, 3, 1e12)) return null;
+  if (!vector(position, 3, Infinity)) return null;
   let walkingValue = value.walking;
   if (value.landedBody !== undefined) {
     const ground = world.bodies.find((b) => b.id === value.landedBody);
@@ -175,9 +174,8 @@ export function validateFlightState(value) {
     ...(value.landedBody ? { landedBody: value.landedBody } : {}),
     ...(walking ? { walking } : {}),
     systemId: value.version === 1 ? "solar" : value.systemId ?? "solar",
-    ...(value.version === 2 && ids.has(value.escapeBody) ? { escapeBody: value.escapeBody } : {}),
-    engineMode: value.version === 2 ? value.engineMode ?? "standard" : "standard",
-    atmosphericSpeedMps: value.version === 2 ? value.atmosphericSpeedMps ?? 1000 : 1000,
+    engineMode: value.version === 2 && value.engineMode && value.engineMode !== "standard" ? value.engineMode : "planetary",
+    cruiseSpeedKm: value.version === 2 ? value.cruiseSpeedKm ?? 100 : 100,
     position,
     velocity: value.version === 1 ? [0, 0, 0] : [...value.velocity],
     orientation: normalizedQuaternion(value.orientation, norm),
