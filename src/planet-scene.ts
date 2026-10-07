@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createAsteroidBelt } from "./orbital-structures";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { EARTH, getBody, STAR_SYSTEMS } from "./solar-system";
 import type { BodyId, Layer, SystemId } from "./solar-system";
@@ -248,6 +249,7 @@ export class SolarScene {
   private readonly galaxyFile: GalaxyTextureFile;
   private currentModel?: PlanetModel;
   private readonly flightRoot = new THREE.Group();
+  private asteroidBelt?: THREE.Group;
   private readonly flightSun = new THREE.PointLight(0xfff3e5, 2.5, 0, 0);
   private readonly observeSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
   private readonly ship = createShip();
@@ -1010,6 +1012,10 @@ export class SolarScene {
     await this.loadSpaceTextures();
     await this.loadEarthTextures(onProgress);
     if (this.destroyed || version !== this.selectionVersion) return false;
+    if (!this.asteroidBelt) {
+      this.asteroidBelt = createAsteroidBelt(config.unitsKm, config.auKm, config.bodies.find(body => body.id === "ceres")!.position);
+      this.flightRoot.add(this.asteroidBelt);
+    }
     this.dynamics = new ShipDynamics(config);
     this.shipScale = SHIP_LENGTH_KM / (config.unitsKm * this.ship.hullLength);
     this.renderer.domElement.dataset.shipLengthKm = String(SHIP_LENGTH_KM);
@@ -1195,6 +1201,11 @@ export class SolarScene {
     this.renderer.domElement.dataset.spaceUpdates = String(++this.spaceUpdates);
     const pixelsPerRadian = this.flightHeight * this.renderer.getPixelRatio()
       / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)));
+    if (this.asteroidBelt) {
+      this.asteroidBelt.visible = ship.systemId === "solar";
+      this.asteroidBelt.position.copy(ship.position).negate();
+      this.container.dataset.asteroidBelt = String(this.asteroidBelt.visible);
+    }
     // CPU positions remain in double precision. GPU objects are relative to the ship.
     for (const model of this.flightModels) model.group.visible = false;
     for (const body of ship.activeBodies) {

@@ -1,0 +1,38 @@
+import { test, expect } from "@playwright/test";
+
+test("小行星带与空间站可观测、导航、跃迁和恢复", async ({ page }, info) => {
+  test.setTimeout(180000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/#planet=earth-station");
+  await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
+  await expect(page.locator("h1")).toContainText("近地轨道空间站");
+  await expect(page.locator(".facts")).toContainText("400");
+  await expect(page.locator(".description")).toContainText("暂不支持对接");
+  await page.screenshot({ path: info.outputPath("station-observation.png") });
+  await page.locator('#mode-flight').click();
+  await expect(page.locator("#loading-overlay")).toBeHidden();
+  await expect(page.locator("#flight-target")).toHaveText("近地轨道空间站");
+  await expect(page.locator("#flight-land")).toBeDisabled();
+  await expect(page.locator("#flight-nearest")).toHaveText("地球");
+  await page.screenshot({ path: info.outputPath("station-flight.png") });
+  await page.locator('button[data-body="ceres"]').click();
+  await expect(page.locator("#flight-target")).toHaveText("小行星带 · 谷神星");
+  await page.locator("#flight-jump").click();
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 60000 });
+  await expect(page.locator("#flight-nearest")).toHaveText("小行星带 · 谷神星");
+  await expect(page.locator("#canvas-host")).toHaveAttribute("data-asteroid-belt", "true");
+  await page.locator("#flight-save").click();
+  await expect(page.locator("#flight-storage")).toHaveText(/已保存/);
+  await page.screenshot({ path: info.outputPath("asteroid-belt-flight.png") });
+  await page.locator('button[data-body="earth-station"]').click();
+  await page.locator("#flight-jump").click();
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 60000 });
+  await expect(page.locator("#flight-nearest")).toHaveText("地球");
+  await page.locator("#flight-save").click();
+  await expect(page.locator("#flight-storage")).toHaveText(/已保存/);
+  await page.locator('button[data-body="ceres"]').click();
+  await page.locator("#flight-resume").click();
+  await expect(page.locator("#flight-target")).toHaveText("近地轨道空间站");
+  expect(errors).toEqual([]);
+});

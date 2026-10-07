@@ -2,12 +2,12 @@
   "version": 2,
   "unitsKm": 6371,
   "auKm": 149597870.7,
-  "cruiseSpeed": 1.5696123057604771,
-  "boostSpeed": 15.696123057604771,
+  "cruiseSpeed": 1.5696123057604772,
+  "boostSpeed": 15.69612305760477,
   "engines": [
     {
       "id": "atmospheric",
-      "name": "极低大气引擎",
+      "name": "\u6781\u4f4e\u5927\u6c14\u5f15\u64ce",
       "minSpeedKm": 0.001,
       "maxSpeedKm": 1,
       "accelerationKm": 0.3,
@@ -15,7 +15,7 @@
     },
     {
       "id": "orbital",
-      "name": "近地轨道引擎",
+      "name": "\u8fd1\u5730\u8f68\u9053\u5f15\u64ce",
       "minSpeedKm": 1,
       "maxSpeedKm": 100,
       "accelerationKm": 30,
@@ -23,7 +23,7 @@
     },
     {
       "id": "planetary",
-      "name": "行星引擎",
+      "name": "\u884c\u661f\u5f15\u64ce",
       "minSpeedKm": 100,
       "maxSpeedKm": 10000,
       "accelerationKm": 2000,
@@ -31,7 +31,7 @@
     },
     {
       "id": "interstellar",
-      "name": "星际引擎",
+      "name": "\u661f\u9645\u5f15\u64ce",
       "minSpeedKm": 10000,
       "maxSpeedKm": 100000,
       "accelerationKm": 10000,
@@ -517,6 +517,28 @@
         0,
         0
       ]
+    },
+    {
+      "id": "ceres",
+      "kind": "planet",
+      "systemId": "solar",
+      "radius": 0.07424266206247057,
+      "position": [
+        40431.09898225476,
+        0,
+        50949.5816270795
+      ]
+    },
+    {
+      "id": "earth-station",
+      "kind": "station",
+      "systemId": "solar",
+      "radius": 0.009417673834562863,
+      "position": [
+        0.8502275937857732,
+        0,
+        23481.70354732381
+      ]
     }
   ],
   "lightYearKm": 9460730472580.8,
@@ -524,7 +546,7 @@
     {
       "id": "solar",
       "groupId": "solar",
-      "name": "太阳系",
+      "name": "\u592a\u9633\u7cfb",
       "positionLy": [
         0,
         0,
@@ -542,7 +564,7 @@
     {
       "id": "alpha-centauri",
       "groupId": "alpha-centauri",
-      "name": "半人马座 α · 南门二",
+      "name": "\u534a\u4eba\u9a6c\u5ea7 \u03b1 \u00b7 \u5357\u95e8\u4e8c",
       "positionLy": [
         4.37,
         0,
@@ -560,7 +582,7 @@
     {
       "id": "proxima-centauri",
       "groupId": "alpha-centauri",
-      "name": "半人马座 α · 比邻星",
+      "name": "\u534a\u4eba\u9a6c\u5ea7 \u03b1 \u00b7 \u6bd4\u90bb\u661f",
       "positionLy": [
         4.242831601654726,
         0.164,
@@ -578,7 +600,7 @@
     {
       "id": "betelgeuse",
       "groupId": "betelgeuse",
-      "name": "参宿四 · 红超巨星",
+      "name": "\u53c2\u5bbf\u56db \u00b7 \u7ea2\u8d85\u5de8\u661f",
       "positionLy": [
         11.447634246276102,
         70.64698661903708,

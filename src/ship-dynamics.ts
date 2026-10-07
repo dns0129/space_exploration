@@ -91,6 +91,10 @@ export class ShipDynamics {
             .normalize()
             .add(new THREE.Vector3(0, 0.18, 0))
             .normalize();
+    if (body.kind === "station") {
+      const earth = this.config.bodies.find(candidate => candidate.id === "earth")!;
+      side.copy(center).sub(new THREE.Vector3().fromArray(earth.position)).normalize();
+    }
     const distance = Math.max(body.radius * (id === "saturn" ? 5 : 3.8), body.radius + 1100 / this.config.unitsKm);
     this.position.copy(center).addScaledVector(side, distance);
     this.velocity.set(0, 0, 0);
@@ -157,6 +161,7 @@ export class ShipDynamics {
   get environment() {
     let body = this.activeBodies[0], altitudeKm = Infinity;
     for (const candidate of this.activeBodies) {
+      if (candidate.kind === "station") continue;
       const altitude = (Math.hypot(
         this.position.x - candidate.position[0],
         this.position.y - candidate.position[1],
@@ -321,6 +326,7 @@ export class ShipDynamics {
     const travel = this.velocity.clone().multiplyScalar(dt);
     if (travel.lengthSq()) {
       for (const body of this.activeBodies) {
+        if (body.kind === "station") continue;
         const center = new THREE.Vector3().fromArray(body.position);
         const ownDeparture = this.escapeBody === body.id && environment.escaping;
         // Explicit departure only unlocks the vacuum safety shell. Every
@@ -376,6 +382,10 @@ export class ShipDynamics {
     const center = new THREE.Vector3().fromArray(target.position);
     // Preserve the departure side, including transfers between systems.
     const radial = this.targetRelative.negate().normalize();
+    if (target.kind === "station") {
+      const earth = this.config.bodies.find(candidate => candidate.id === "earth")!;
+      radial.copy(center).sub(new THREE.Vector3().fromArray(earth.position)).normalize();
+    }
     const radius = Math.max(target.radius + Math.max(1100, (target.atmosphereKm ?? 0) + 300) / this.config.unitsKm,
       target.radius * (target.kind === "star" ? 1.35 : target.id === "saturn" ? 2.45 : 1.015));
     const end = center.clone().addScaledVector(radial, radius);
@@ -461,7 +471,7 @@ export class ShipDynamics {
           const center = new THREE.Vector3().fromArray(body.position);
           const t = THREE.MathUtils.clamp(center.clone().sub(a).dot(line) / lengthSq, 0, 1);
           const closest = a.clone().addScaledVector(line, t);
-          const clearanceKm = Math.max(this.config.flightSafety.nearSurfaceMinKm,
+          const clearanceKm = Math.max(body.kind === "station" ? 10 : this.config.flightSafety.nearSurfaceMinKm,
             body.atmosphereKm ? body.atmosphereKm + 50 : 0);
           const radius = Math.max(body.radius * (body.kind === "star" ? 1.3 : 1.005),
             body.radius + clearanceKm / this.config.unitsKm);
@@ -612,6 +622,7 @@ export class ShipDynamics {
   get landingBlockReason(): string | null {
     if (this.warping) return "跃迁期间无法着陆";
     const environment = this.environment;
+    if (this.target === "earth-station") return "空间站暂不支持自动对接，请手动近距离观测";
     if (!environment.profile.solid) return environment.body.kind === "star" ? "恒星无法着陆" : "气态或冰巨行星没有可降落的固体地表，请选择卫星";
     if (environment.body.id !== this.target) return "请先接近并选择要着陆的天体";
     if (environment.altitudeKm > Math.max(environment.body.radius * this.config.unitsKm * 5, 2000))

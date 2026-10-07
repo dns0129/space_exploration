@@ -2172,3 +2172,7 @@ dialog h2 {
   .flight-system { font-size: 8px; margin: 2px 0 4px; }
   .planet-info[data-system-group="betelgeuse"] ~ .space-stage .earth-caption { bottom: 76px; }
 }
+
+/* Keep long exploration destination titles above the facts and controls. */
+.planet-info[data-body="earth-station"] h1,
+.planet-info[data-body="ceres"] h1 { font-size: clamp(30px, 3vw, 44px); line-height: 1.25; }

@@ -44,7 +44,9 @@ export type BodyId =
   | "proxima-b"
   | "proxima-c"
   | "proxima-d"
-  | "betelgeuse";
+  | "betelgeuse"
+  | "ceres"
+  | "earth-station";
 export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri" | "betelgeuse";
 export type SystemGroupId = "solar" | "alpha-centauri" | "betelgeuse";
 export type Layer = "clouds" | "atmosphere" | "stars" | "rings";
@@ -71,7 +73,7 @@ export interface CelestialBody {
   surfaceStyle?: number;
   surfaceSeed?: number;
   systemId?: SystemId;
-  kind?: "star" | "planet";
+  kind?: "star" | "planet" | "station";
   hostStarId?: BodyId;
   temperatureK?: number;
   spectralType?: string;
@@ -271,7 +273,27 @@ export const BETELGEUSE_BODIES: readonly CelestialBody[] = betelgeuseData.map(bo
   rotationSpeed: 0.002, surfaceSeed: 91.4, caption: "BETELGEUSE / RED SUPERGIANT",
   layers: ["atmosphere", "stars"], atmosphereColor: body.color,
 }));
-export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES].map(body => ({
+export const EXPLORATION_BODIES: readonly CelestialBody[] = [
+  {
+    id: "ceres", name: "小行星带 · 谷神星", english: "ASTEROID BELT / CERES",
+    kind: "planet", color: "#b5a18a", radiusKm: 473, axialTiltDeg: 4,
+    flattening: 0.93, distanceFromSunMillionKm: 414.386, orbitalPeriodDays: 1682,
+    rotationSpeed: 0.02, surfaceStyle: 0, surfaceSeed: 127, hostStarId: "sun",
+    orbitRadiusKm: 414386101.839, tags: ["主小行星带", "谷神星航标"],
+    description: "火星与木星之间的岩石航区。<br>以谷神星为导航入口，探索不规则岩块。<br>带区粒子与近景岩群为可视化示意，非真实密度。",
+    caption: "MAIN BELT / 2.1–3.3 AU · ILLUSTRATIVE DENSITY", layers: ["stars"],
+  },
+  {
+    id: "earth-station", name: "近地轨道空间站", english: "TERRA ORBITAL STATION",
+    kind: "station", color: "#8edcfa", radiusKm: 60, axialTiltDeg: 0,
+    flattening: 1, distanceFromSunMillionKm: 149.6, orbitalPeriodDays: 0.064,
+    rotationSpeed: 0, parentId: "earth", orbitRadiusKm: 6771,
+    tags: ["400 km 近地轨道", "科幻大型设施"],
+    description: "蓝色地球上空的轨道前哨。<br>居住舱、通信天线与成排太阳能翼。<br>跨度 120 km，适配游戏巨型飞船；固定轨道示意，暂不支持对接。",
+    caption: "TERRA ORBITAL / ALTITUDE 400 KM · FICTIONAL SCALE", layers: ["stars"],
+  },
+];
+export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...EXPLORATION_BODIES].map(body => ({
   ...body, atmosphereKm: worldData.bodies.find(config => config.id === body.id)?.atmosphereKm,
 }));
 export const STAR_SYSTEMS = worldData.systems;

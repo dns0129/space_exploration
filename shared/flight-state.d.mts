@@ -37,7 +37,7 @@ export interface WorldConfig {
     boostAccelerationKm: number;
   }[];
   warp: { chargeSeconds: number; travelSeconds: number; arrivalSeconds: number; cooldownSeconds: number };
-  bodies: { id: BodyId; radius: number; position: number[]; systemId: SystemId; kind?: "star" | "planet"; hostStarId?: BodyId; atmosphereKm?: number }[];
+  bodies: { id: BodyId; radius: number; position: number[]; systemId: SystemId; kind?: "star" | "planet" | "station"; hostStarId?: BodyId; atmosphereKm?: number }[];
 }
 export const world: WorldConfig;
 export function validateFlightState(value: unknown): FlightState | null;

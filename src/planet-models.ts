@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createStationModel } from "./orbital-structures";
 import { atmosphereScattering, atmosphereStrength } from "./atmosphere";
 import { surfaceProfile } from "../shared/surface.mjs";
 import type { CelestialBody, Layer } from "./solar-system";
@@ -519,8 +520,10 @@ export function createPlanetModel(
   placement = { center: new THREE.Vector3(), radius: 1 },
   map?: THREE.Texture,
 ): PlanetModel {
+  if (body.kind === "station") return createStationModel(body);
   const kinds = {
     mercury: 0,
+    ceres: 8,
     venus: 1,
     mars: 2,
     jupiter: 3,

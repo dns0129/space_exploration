@@ -5,7 +5,7 @@ import { FlightInterface } from "./flight-ui";
 import { SolarScene } from "./planet-scene";
 import { surfaceMapLabel } from "./body-textures";
 import type { View } from "./planet-scene";
-import { SOLAR_SYSTEM, PRIMARY_BODIES, MOONS, CENTAURI_BODIES, BETELGEUSE_BODIES, STAR_SYSTEMS, getBodySystem, getSystemGroup, getBody, isBodyId } from "./solar-system";
+import { SOLAR_SYSTEM, PRIMARY_BODIES, EXPLORATION_BODIES, MOONS, CENTAURI_BODIES, BETELGEUSE_BODIES, STAR_SYSTEMS, getBodySystem, getSystemGroup, getBody, isBodyId } from "./solar-system";
 import type { BodyId, Layer } from "./solar-system";
 
 const icons: Record<string, string> = {
@@ -42,7 +42,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
     <nav class="planet-rail" aria-label="太阳系天体">
       <span class="rail-label">SOLAR<br>SYSTEM</span>
-      ${[...PRIMARY_BODIES, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES].map((planet, index) => `<button data-body="${planet.id}" class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" aria-label="${planet.name}，${planet.id === "earth" ? "当前观测天体" : "切换观测"}" ${planet.id === "earth" ? 'aria-current="page"' : ""} title="${planet.name} · ${planet.english}"><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
+      ${[...PRIMARY_BODIES, ...EXPLORATION_BODIES, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES].map((planet, index) => `<button data-body="${planet.id}" class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" aria-label="${planet.name}，${planet.id === "earth" ? "当前观测天体" : "切换观测"}" ${planet.id === "earth" ? 'aria-current="page"' : ""} title="${planet.name} · ${planet.english}"><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.id === "ceres" ? "小行星带" : planet.id === "earth-station" ? "空间站" : planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
       <span class="rail-progress"><b>${SOLAR_SYSTEM.length}</b> / ${SOLAR_SYSTEM.length}</span>
     </nav>
 
@@ -165,6 +165,7 @@ function updateBodyInfo(id: BodyId) {
   const system = getBodySystem(body), group = getSystemGroup(id);
   const isStar = id === "sun" || body.kind === "star";
   $(".planet-info").dataset.systemGroup = group;
+  $(".planet-info").dataset.body = id;
   $<HTMLSelectElement>("#star-system").value = group;
   $(".satellite-navigation").hidden = group !== "solar";
   $(".planet-rail").setAttribute("aria-label", `${system.name}天体`);
@@ -172,13 +173,13 @@ function updateBodyInfo(id: BodyId) {
   const destinations = SOLAR_SYSTEM.filter(item => getSystemGroup(item.id) === group).length;
   $(".rail-progress").innerHTML = `<b>${destinations}</b> / ${destinations}`;
   const number = SOLAR_SYSTEM.findIndex((item) => item.id === id);
-  $<HTMLSelectElement>("#satellite-target").value = body.parentId ? id : "";
+  $<HTMLSelectElement>("#satellite-target").value = MOONS.some(moon => moon.id === id) ? id : "";
   const format = (value: number, decimals = 2) =>
     value.toLocaleString("zh-CN", { maximumFractionDigits: decimals });
   $(".planet-info").setAttribute("aria-label", `${body.name}信息`);
   $(".planet-info .eyebrow").innerHTML =
     `<span class="tiny-line"></span>${id === "earth" ? "我们的蓝色家园" : body.tags[1]}`;
-  $("h1").innerHTML = `${body.name}<span>${body.english}</span>`;
+  $("h1").innerHTML = `${id === "ceres" ? "小行星带" : body.name}<span>${body.english}</span>`;
   $(".planet-tags").innerHTML = body.tags
     .map((tag) => `<span>${tag}</span>`)
     .join("");
@@ -207,6 +208,7 @@ function updateBodyInfo(id: BodyId) {
       ? isStar ? ["距太阳", format(Math.hypot(...system.positionLy), 3), "光年"] : ["地表模型", "探索示意", ""]
       : ["地轴倾角", format(body.axialTiltDeg), "°"],
   ];
+  if (body.kind === "station") facts.splice(0, 4, ["设施跨度", "120", "km"], ["轨道高度", "400", "km"], ["设施类型", "科幻空间站", ""], ["对接功能", "暂未开放", ""]);
   $(".facts").innerHTML = facts
     .map(
       ([label, value, unit]) =>

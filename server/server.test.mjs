@@ -656,7 +656,7 @@ test("orbital launch checks actual terrain height, heading, drift and manual fli
 test("all 26 moons have real parent-relative distances, valid saves and safe warp destinations", () => {
   const moons = JSON.parse(readFileSync(new URL("../shared/moons.json", import.meta.url), "utf8"));
   assert.equal(moons.length, 26);
-  assert.equal(new Set(world.bodies.filter(body => bodySystem(body) === "solar").map(body => body.id)).size, 35);
+  assert.equal(new Set(world.bodies.filter(body => bodySystem(body) === "solar").map(body => body.id)).size, 37);
   const ship = new ShipDynamics();
   for (const moon of moons) {
     const body = world.bodies.find(body => body.id === moon.id);
@@ -699,7 +699,7 @@ test("braking generates a decaying visual pulse; ordinary assisted drift does no
 test("the 1000 km safety shell and atmospheric boundary are independent, including giant planets", () => {
   const ship = new ShipDynamics();
   ship.orientation.identity();
-  for (const body of world.bodies) {
+  for (const body of world.bodies.filter(body => body.kind !== "station")) {
     placeAtAltitude(ship, body.id, 1000);
     assert(ship.environment.restricted, `${body.id}: exactly 1000 km is restricted`);
     assert.equal(ship.engine.id, ship.environment.lowFlight ? "atmospheric" : "orbital");
@@ -728,7 +728,7 @@ test("the 1000 km safety shell and atmospheric boundary are independent, includi
 
 test("three Centauri stars and their planets use local coordinates and light-year navigation", () => {
   assert.equal(world.systems.length, 4);
-  assert.equal(world.bodies.length, 42);
+  assert.equal(world.bodies.length, 44);
   const ship = new ShipDynamics();
   ship.target = "alpha-centauri-a";
   assert(Math.abs(ship.targetRelative.length() * world.unitsKm / world.lightYearKm - 4.37) < 0.001);

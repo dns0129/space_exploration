@@ -1,5 +1,7 @@
 // Gameplay profiles: density and terrain are illustrative, not weather or elevation data.
 const profiles = {
+  "earth-station": { solid: false, gravity: 0 },
+  ceres: { ground: "#82776a", gravity: 0.27 },
   sun: { solid: false, sky: "#ff9b42", gravity: 274 },
   "alpha-centauri-a": { solid: false, sky: "#fff1cf", gravity: 200 },
   "alpha-centauri-b": { solid: false, sky: "#ffcb92", gravity: 300 },

@@ -60,7 +60,7 @@ try {
     "saturn",
     "uranus",
     "neptune",
-    "sun",
+    "sun", "ceres", "earth-station",
     "moon", "io", "europa", "ganymede", "callisto",
     "mimas", "enceladus", "tethys", "dione", "rhea", "titan", "hyperion", "iapetus",
     "miranda", "ariel", "umbriel", "titania", "oberon",
@@ -165,7 +165,7 @@ try {
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(
-    "PASS: all 42 models, two sky panoramas, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
+    "PASS: all 44 destinations, two sky panoramas, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
   );
 } finally {
   await browser.close();
