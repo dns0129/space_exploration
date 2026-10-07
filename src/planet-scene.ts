@@ -176,10 +176,16 @@ const surfaceFragment = /* glsl */ `
     float specular = pow(max(dot(terrainNormal, halfwayDirection), 0.0), 72.0);
     float nightWeight = 1.0 - smoothstep(-0.15, 0.12, daylight);
     vec3 localSun = transpose(mat3(vAxisX, vAxisY, vAxisZ)) * sunDirection;
-    vec2 shadowShift = vec2(dot(localSun,eastward)/(6.2832*max(ring,0.15)), dot(localSun,northward)/3.1416)
-      * (0.0018 / max(daylight, 0.15));
+    // Intersect the light ray with the spherical 11 km cloud shell. The old
+    // tangent-plane shift stretched shadows into a smeared decal near dusk.
+    float localDay = dot(p, localSun);
+    float shellRadius = 1.0 + 11.0 / 6371.0;
+    float cloudDistance = -localDay + sqrt(localDay*localDay + shellRadius*shellRadius - 1.0);
+    vec3 shadowPoint = normalize(p + localSun * cloudDistance);
+    vec2 shadowUv = vec2(fract(atan(shadowPoint.z, -shadowPoint.x)/6.28318530718) + cloudOffset,
+      1.0-acos(clamp(shadowPoint.y,-1.0,1.0))/3.14159265359);
     vec2 cloudUv = vec2(vUv.x + cloudOffset, vUv.y);
-    float cloudCover = sampleMap(cloudMap, cloudUv + shadowShift, cloudSize, gx, gy, seam).r * cloudsEnabled;
+    float cloudCover = sampleMap(cloudMap, shadowUv, cloudSize, gx, gy, seam).r * cloudsEnabled;
     vec3 color = day * (0.015 + diffuse * 1.08 * (1.0-cloudCover*0.26));
     // Isolate the warm city lights from the blue-tinted night-map terrain.
     color += vec3(1.0, 0.65, 0.32) * pow(cityLight, 1.15) * nightWeight * 2.4 * (1.0-cloudCover*0.6);
@@ -367,6 +373,19 @@ export class SolarScene {
     this.galaxySky = new GalaxySky(this.compactTextures || software);
     this.surfaceGalaxySky = new GalaxySky(true);
     this.galaxyFile = selectGalaxyFile(this.renderer.capabilities.maxTextureSize, this.compactTextures, software);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.shipSun.castShadow = true;
+    this.shipSun.shadow.mapSize.set(1024, 1024);
+    Object.assign(this.shipSun.shadow.camera, { left: -1.6, right: 1.6, top: 1.6, bottom: -1.6, near: 7, far: 13 });
+    this.shipSun.shadow.bias = -0.00015;
+    this.shipSun.shadow.normalBias = 0.003;
+    this.ship.group.traverse(object => {
+      if (object instanceof THREE.Mesh && !object.material.transparent) {
+        object.castShadow = true;
+        object.receiveShadow = true;
+      }
+    });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
@@ -969,8 +988,11 @@ export class SolarScene {
         camera.quaternion.copy(this.camera.quaternion);
         this.shipSun.position.copy(this.flightSun.position).normalize().multiplyScalar(10);
         this.shipSun.intensity = 2.8 * this.flightLight.illumination;
-        this.shipRim.position.copy(camera.position).normalize().multiplyScalar(-10);
-        this.shipAmbient.intensity = 0.28 + this.flightLight.illumination * 0.57;
+        // Sky bounce only grows near an atmosphere; vacuum keeps directional contrast.
+        const atmosphereBounce = this.surfaceScene.usesAtmosphere(this.dynamics!) ? 1 : 0;
+        this.shipRim.position.copy(this.shipSun.position).multiplyScalar(-1);
+        this.shipRim.intensity = (0.06 + atmosphereBounce * 0.18) * this.flightLight.illumination;
+        this.shipAmbient.intensity = 0.055 + this.flightLight.illumination * (0.17 + atmosphereBounce * 0.35);
         this.renderer.autoClear = false;
         this.renderer.clearDepth();
         this.renderer.render(this.shipScene, camera);
@@ -1091,8 +1113,11 @@ export class SolarScene {
             center,
             radius: body.radius,
           }, this.planetMaps.get(body.id) ?? this.lazyMaps.get(SURFACE_MAPS[body.id]?.file ?? "")?.texture);
+    const solarAngularRadius = Math.asin(Math.min(1, host.radius / center.distanceTo(new THREE.Vector3().fromArray(host.position))));
     const spheres: THREE.Mesh[] = [];
     model.group.traverse((object) => {
+      if (object instanceof THREE.Mesh && object.material instanceof THREE.ShaderMaterial
+        && object.material.uniforms.solarAngularRadius) object.material.uniforms.solarAngularRadius.value = solarAngularRadius;
       if (object instanceof THREE.Mesh && object.geometry instanceof THREE.SphereGeometry) {
         const radius = object.geometry.parameters.radius;
         object.geometry.scale(1/radius,1/radius,1/radius);
@@ -1572,6 +1597,7 @@ export class SolarScene {
     this.galaxySky.dispose();
     this.surfaceGalaxySky.dispose();
     this.surfaceScene.dispose();
+    this.shipSun.shadow.dispose();
     this.earthDetails.forEach(detail => detail.dispose());
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();

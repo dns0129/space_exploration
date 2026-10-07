@@ -203,14 +203,15 @@ test("加载地球期间切换天体，旧请求不会覆盖新模型，返回�
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   try {
-    await expect.poll(() => requests).toBe(5);
+    // The resident Earth batch contains day, night, elevation and clouds.
+    await expect.poll(() => requests).toBe(4);
     await page.locator('button[data-body="saturn"]').click();
     await expect(page.locator("#canvas-host")).toHaveAttribute(
       "data-body",
       "saturn",
     );
     release();
-    await expect.poll(() => responses).toBe(5);
+    await expect.poll(() => responses).toBe(4);
     await expect(page.locator("#canvas-host")).toHaveAttribute(
       "data-body",
       "saturn",
@@ -227,7 +228,7 @@ test("加载地球期间切换天体，旧请求不会覆盖新模型，返回�
     );
     await expect(page.locator("canvas")).toHaveCount(1);
     await expect(page.getByRole("alert")).toBeHidden();
-    expect(requests).toBe(5);
+    expect(requests).toBe(4);
   } finally {
     release();
   }

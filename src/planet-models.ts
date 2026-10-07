@@ -204,6 +204,7 @@ const planetFragment = /* glsl */ `
   uniform vec3 planetAxis;
   uniform vec3 planetCenter;
   uniform float bodyRadius;
+  uniform float solarAngularRadius;
   uniform float uTime;
   uniform float ringsEnabled;
   uniform vec3 moonColor;
@@ -369,6 +370,8 @@ const planetFragment = /* glsl */ `
             + north * mapSize.y / (6.2832 * stepTexels) * northward);
         }
         slope -= p * dot(slope, p);
+        // Bound image-derived relief so dark photo features do not become deep grooves.
+        slope *= inversesqrt(1.0 + dot(slope, slope) / 0.36);
         vec3 photoNormal = normalize(geometric - mat3(vAxisX, vAxisY, vAxisZ) * slope);
         color = mix(color, photo * mapTint * (1.0 + grain.x * mapGrain * 2.2), mapReady);
         normal = normalize(mix(normal, photoNormal, mapReady));
@@ -382,11 +385,16 @@ const planetFragment = /* glsl */ `
         vec3 relative = (vWorldPosition-planetCenter)/bodyRadius;
         float t = -dot(relative,planetAxis)/planeAngle;
         float r = length(relative+sunDirection*t);
-        if(t>0.0 && r>1.12 && r<2.3) diffuse *= 1.0-ringDensity(r,0.0)*ringsEnabled*0.88;
+        float footprint = max(fwidth(r), solarAngularRadius * abs(t) / max(abs(planeAngle), 0.02));
+        // Optical thickness at grazing incidence gives long, continuous ring shadows.
+        if(t>0.0 && r>1.12 && r<2.3) {
+          float opticalDepth = ringDensity(r, footprint) * ringsEnabled * 1.65 / max(abs(planeAngle), 0.12);
+          diffuse *= exp(-opticalDepth);
+        }
       }
     #endif
     #include <logdepthbuf_fragment>
-    gl_FragColor = vec4(max(color*(0.018+diffuse*1.05),vec3(0.0)),1.0);
+    gl_FragColor = vec4(max(color*(0.009+diffuse*1.05),vec3(0.0)),1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #endif
@@ -465,6 +473,7 @@ const ringFragment = /* glsl */ `
   uniform vec3 planetAxis;
   uniform vec3 planetCenter;
   uniform float bodyRadius;
+  uniform float solarAngularRadius;
   varying vec3 vWorldPosition;
   varying vec3 vLocalPosition;
   ${noise}
@@ -473,16 +482,20 @@ const ringFragment = /* glsl */ `
     float density = ringDensity(radius,fwidth(radius));
     if(density<0.015) discard;
     vec3 color = mix(vec3(0.38,0.33,0.26),vec3(0.89,0.81,0.66),density);
-    float light = 0.35+abs(dot(sunDirection,planetAxis))*0.8;
-    // Analytic ellipsoid intersection casts Saturn's shadow onto the rings.
-    float scale = 1.0/(0.902*0.902)-1.0;
+    // Evaluate closest approach in the oblate planet's unit-sphere space.
+    // The finite solar disk and pixel footprint soften the far end of the shadow.
     vec3 relative = (vWorldPosition-planetCenter)/bodyRadius;
-    float py = dot(relative,planetAxis), dy = dot(sunDirection,planetAxis);
-    float a = 1.0+scale*dy*dy;
-    float b = 2.0*(dot(relative,sunDirection)+scale*py*dy);
-    float c = dot(relative,relative)+scale*py*py-1.0;
-    float discriminant = b*b-4.0*a*c;
-    if(discriminant>0.0 && (-b-sqrt(discriminant))/(2.0*a)>0.0) light *= 0.16;
+    vec3 q = relative + planetAxis * dot(relative,planetAxis) * (1.0/0.902-1.0);
+    vec3 ray = sunDirection + planetAxis * dot(sunDirection,planetAxis) * (1.0/0.902-1.0);
+    float along = max(0.0, -dot(q,ray)/dot(ray,ray));
+    float clearance = length(q+ray*along);
+    float penumbra = max(fwidth(clearance)*0.75, solarAngularRadius*along*length(ray));
+    penumbra = max(penumbra, 0.00001);
+    float visibility = smoothstep(1.0-penumbra,1.0+penumbra,clearance);
+    float incidence = abs(dot(sunDirection,planetAxis));
+    vec3 viewDirection = normalize(cameraPosition-vWorldPosition);
+    float phase = pow(max(dot(-sunDirection,viewDirection),0.0),5.0);
+    float light = 0.045 + visibility * (0.28 + incidence*0.8 + phase*0.12);
     #include <logdepthbuf_fragment>
     gl_FragColor = vec4(color*light,density*0.95);
     #include <tonemapping_fragment>
@@ -545,6 +558,7 @@ export function createPlanetModel(
   const surfaceMap = SURFACE_MAPS[body.id];
   const profile = proceduralBodyProfile(body);
   const proceduralUniforms = {
+    solarAngularRadius: { value: 0.00465 / Math.max(body.distanceFromSunMillionKm / 149.5978707, 0.01) },
     bodySeed: { value: new THREE.Vector3(...profile.seed) },
     bodyTerrain: { value: new THREE.Vector4(...profile.terrain) },
     bodyWeather: { value: new THREE.Vector4(...profile.weather) },
@@ -663,6 +677,7 @@ export function createPlanetModel(
         fragmentShader: ringFragment,
         uniforms: {
           sunDirection: { value: sunDirection },
+          solarAngularRadius: proceduralUniforms.solarAngularRadius,
           planetAxis: { value: axis },
           planetCenter: { value: placement.center },
           bodyRadius: { value: placement.radius },
