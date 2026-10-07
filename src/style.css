@@ -2355,7 +2355,7 @@ body.photo-mode > :not(#app),
 .observatory.photo-mode { min-height: 0; height: 100dvh; }
 .observatory.photo-mode .main,
 .observatory.photo-mode .space-stage { inset: 0; }
-.observatory.photo-mode canvas { cursor: grab; }
+.observatory.photo-mode canvas { cursor: grab; outline: none; }
 
 @media (max-width: 800px) {
   .surface-placement { left: 15px; right: 15px; bottom: 65px; max-width: none; padding: 10px 12px; }
