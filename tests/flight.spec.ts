@@ -59,6 +59,9 @@ test("自由航行真实渲染，推力、刹车、服务端保存和恢复正�
   });
   await launch(page);
   await expect(page.getByRole("region", { name: "飞船驾驶台" })).toBeVisible();
+  await expect(page.locator("#flight-engine")).toHaveAttribute("data-engine", "planetary");
+  await expect(page.locator("#flight-engine-range")).toHaveText("设定航速 100 km/s · 最低 100 km/s");
+  expect(await page.locator("#flight-cruise-speed").getAttribute("max")).toBeNull();
   await expect
     .poll(async () =>
       number(await page.locator("#flight-distance").innerText()),
@@ -197,58 +200,81 @@ test("可在九个天体附近驾驶，刷新后恢复目的地、视角和位�
   await page.screenshot({ path: info.outputPath("flight-saturn.png") });
 });
 
-test("手动高档恢复后可达十万千米每秒，切换常规立即限速，刹车保留手动档位", async ({ page }, info) => {
+test("超过二十万千米每秒的航速保存恢复，切换四种引擎均保留手动航速并可刹车", async ({ page }, info) => {
+  test.setTimeout(120000);
   const world = await (await page.request.get("/api/world")).json();
+  const cruiseSpeedKm = 350001.5;
   await page.request.get("/api/flight/save");
   const response = await page.request.post("/api/flight/save", { data: {
-    version: 2, position: [1e6, 0, 0], velocity: [0, 0, -100000 / world.unitsKm],
+    version: 2, worldLayoutVersion: world.layoutVersion, position: [1e6, 0, 0],
+    velocity: [0, 0, -cruiseSpeedKm / world.unitsKm],
     orientation: [0, 0, 0, 1], target: "earth", camera: "cockpit", assist: false, elapsed: 0,
-    engineMode: "interstellar", atmosphericSpeedMps: 245,
+    engineMode: "interstellar", cruiseSpeedKm,
   } });
-  expect(response.ok()).toBe(true);
+  expect(response.ok(), "保存接口应接受超过旧200,000 km/s隐藏上限的速度").toBe(true);
   await launch(page);
+  await page.locator("#flight-pause").click();
   await page.locator("#flight-resume").click();
-  await expect(page.locator("#flight-engine")).toHaveText("星际引擎 · 手动高档");
-  await expect(page.locator("#flight-engine-range")).toHaveText("10,000–100,000 km/s");
-  await expect(page.locator("#flight-speed")).toHaveText("100,000");
+  await expect(page.locator("#flight-engine")).toHaveText("星际引擎 · 手动选择");
+  await expect(page.locator("#flight-engine-range")).toHaveText("设定航速 350,001.5 km/s · 最低 100 km/s");
+  await expect(page.locator("#flight-speed")).toHaveText("350,001.5");
   await page.locator("#flight-propulsion summary").click();
-  await expect(page.locator("#flight-engine-mode")).toHaveValue("interstellar");
-  await expect(page.locator("#flight-low-speed")).toHaveValue("245");
-  await expect(page.locator("#flight-low-speed-number")).toHaveValue("245");
-  await page.locator("#flight-engine-mode").selectOption("standard");
-  await expect(page.locator("#flight-engine")).toHaveText("行星引擎 · 常规");
-  await expect(page.locator("#flight-engine-range")).toHaveText("100–10,000 km/s");
-  await expect(page.locator("#flight-speed")).toHaveText("10,000");
-  await page.locator("#flight-engine-mode").selectOption("interstellar");
-  await expect(page.locator("#flight-engine")).toHaveAttribute("data-engine", "interstellar");
+  await expect(page.locator("#flight-cruise-speed")).toHaveValue(String(cruiseSpeedKm));
+  for (const mode of ["atmospheric", "orbital", "planetary", "interstellar"]) {
+    await page.locator("#flight-engine-mode").selectOption(mode);
+    await expect(page.locator("#flight-engine")).toHaveAttribute("data-engine", mode);
+    await expect(page.locator("#flight-speed")).toHaveText("350,001.5");
+    await expect(page.locator("#flight-cruise-speed")).toHaveValue(String(cruiseSpeedKm));
+  }
+  await page.locator("#flight-save").click();
+  await expect(page.locator("#flight-storage")).toHaveText("已保存 · 服务端");
+  const saved = (await (await page.request.get("/api/flight/save")).json()).state;
+  expect(saved.engineMode).toBe("interstellar");
+  expect(saved.cruiseSpeedKm).toBe(cruiseSpeedKm);
+  expect(Math.hypot(...saved.velocity) * world.unitsKm).toBeCloseTo(cruiseSpeedKm, 5);
+  await page.locator("#flight-cruise-speed").fill("100");
+  await page.locator("#flight-cruise-speed").press("Tab");
+  await page.locator("#flight-resume").click();
+  await expect(page.locator("#flight-cruise-speed")).toHaveValue(String(cruiseSpeedKm));
+  await expect(page.locator("#flight-speed")).toHaveText("350,001.5");
   await page.locator("#flight-propulsion summary").click();
+  await page.locator("#flight-pause").click();
   const release = await hold(page, "Space", info.project.name === "mobile");
   try {
     await expect.poll(async () => number(await page.locator("#flight-speed").innerText())).toBeLessThan(0.1);
   } finally {
     await release();
   }
-  await expect(page.locator("#flight-engine")).toHaveText("星际引擎 · 手动高档");
-  await page.locator("#flight-propulsion summary").click();
-  await page.locator("#flight-engine-mode").selectOption("standard");
-  await expect(page.locator("#flight-engine")).toHaveText("近地轨道引擎 · 常规");
-  await expect(page.locator("#flight-engine-range")).toHaveText("1–100 km/s");
+  await expect(page.locator("#flight-engine")).toHaveAttribute("data-engine", "interstellar");
+  await page.locator("#flight-pause").click();
+  await page.locator("#flight-save").click();
+  await expect(page.locator("#flight-storage")).toHaveText("已保存 · 服务端");
+  const stopped = (await (await page.request.get("/api/flight/save")).json()).state;
+  expect(stopped.engineMode).toBe("interstellar");
+  expect(stopped.cruiseSpeedKm).toBe(cruiseSpeedKm);
+  expect(Math.hypot(...stopped.velocity) * world.unitsKm).toBeLessThan(0.1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test("旧高速存档补常规档位，不能根据航速自动启动星际引擎", async ({ page }) => {
+test("旧存档迁移到默认行星引擎和100千米每秒，不再使用旧低空预设", async ({ page }) => {
   const world = await (await page.request.get("/api/world")).json();
   await page.request.get("/api/flight/save");
   const response = await page.request.post("/api/flight/save", { data: {
-    version: 2, position: [1e6, 0, 0], velocity: [0, 0, -50000 / world.unitsKm],
+    version: 2, worldLayoutVersion: world.layoutVersion, position: [1e6, 0, 0], velocity: [0, 0, -50000 / world.unitsKm],
     orientation: [0, 0, 0, 1], target: "earth", camera: "cockpit", assist: false, elapsed: 0,
+    engineMode: "standard", atmosphericSpeedMps: 245,
   } });
   expect(response.ok()).toBe(true);
   await launch(page);
+  await page.locator("#flight-pause").click();
   await page.locator("#flight-resume").click();
-  await expect(page.locator("#flight-engine")).toHaveText("行星引擎 · 常规");
-  await expect(page.locator("#flight-speed")).toHaveText("10,000");
+  await expect(page.locator("#flight-engine")).toHaveText("行星引擎 · 手动选择");
+  await expect(page.locator("#flight-speed")).toHaveText("100");
   await page.locator("#flight-propulsion summary").click();
-  await expect(page.locator("#flight-engine-mode")).toHaveValue("standard");
-  await expect(page.locator("#flight-low-speed-number")).toHaveValue("1000");
+  await expect(page.locator("#flight-engine-mode")).toHaveValue("planetary");
+  await expect(page.locator("#flight-cruise-speed")).toHaveValue("100");
+  const migrated = (await (await page.request.get("/api/flight/save")).json()).state;
+  expect(migrated.engineMode).toBe("planetary");
+  expect(migrated.cruiseSpeedKm).toBe(100);
+  expect(migrated).not.toHaveProperty("atmosphericSpeedMps");
 });

@@ -43,7 +43,7 @@ export interface FlightStats {
   systemId: SystemId;
   renderMode: FlightRenderMode;
   engine: ShipDynamics["engine"];
-  atmosphericSpeedMps: number;
+  cruiseSpeedKm: number;
   engineMode: ShipDynamics["engineMode"];
   orbitalEngineActive: boolean;
   orbitalBlockReason: string | null;
@@ -1367,7 +1367,10 @@ export class SolarScene {
     if (this.dynamics?.warping) this.flightFrameDirty = true;
     this.dynamics?.cancelWarp();
   }
-  setAtmosphericFlightSpeed(mps: number) { if (!this.walking) this.dynamics?.setAtmosphericSpeed(mps); }
+  setFlightCruiseSpeed(kmps: number): string | null {
+    if (this.walking) return "请先返回飞船，再设置航速";
+    return this.dynamics?.setCruiseSpeed(kmps) ?? (this.dynamics ? null : "飞船尚未就绪");
+  }
   setFlightEngineMode(mode: ShipDynamics["engineMode"]): string | null {
     if (this.walking) return "请先返回飞船，再切换引擎";
     return this.dynamics?.setEngineMode(mode) ?? (this.dynamics ? null : "飞船尚未就绪");
@@ -1375,9 +1378,7 @@ export class SolarScene {
   startOrbitalFlight(): string | null {
     if (!this.dynamics) return "飞船尚未就绪";
     if (this.walking) return "请先返回飞船，再启动轨道引擎";
-    const error = this.dynamics.startOrbitalEngine();
-    this.flightControls?.clear();
-    return error;
+    return this.dynamics.startOrbitalEngine();
   }
   landFlight(): string | null {
     if (this.walking) return "请先返回飞船，再起飞";
@@ -1609,7 +1610,7 @@ export class SolarScene {
       systemId: ship.systemId,
       renderMode: this.renderPolicy.mode,
       engine: ship.engine,
-      atmosphericSpeedMps: ship.atmosphericSpeedMps,
+      cruiseSpeedKm: ship.cruiseSpeedKm,
       engineMode: ship.engineMode,
       orbitalEngineActive: ship.orbitalEngineActive,
       orbitalBlockReason: ship.orbitalBlockReason,
@@ -1617,7 +1618,7 @@ export class SolarScene {
       warpBlockReason: ship.warpBlockReason,
       warpPhase: ship.warpPhase,
       warpProgress: ship.warpProgress,
-      speedKm: ship.warping ? ship.warpSpeedKm : ship.velocity.length() * ship.config.unitsKm,
+      speedKm: ship.warping ? ship.warpSpeedKm : Math.hypot(ship.velocity.x, ship.velocity.y, ship.velocity.z) * ship.config.unitsKm,
       speedLimitKm: ship.speedLimit * ship.config.unitsKm,
       altitudeKm: environment.altitudeKm,
       nearest: environment.body.id,

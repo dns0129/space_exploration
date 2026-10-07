@@ -2,10 +2,10 @@
 .flight-propulsion { margin-top: 10px; color: #a9cbd9; font-size: 11px; pointer-events: auto; }
 .flight-propulsion summary { cursor: pointer; padding: 5px 0; }
 .flight-propulsion label { display: block; margin: 12px 0 7px; }
-.flight-propulsion .flight-low-speed-fields { display: flex; align-items: center; gap: 8px; }
-.flight-low-speed-fields input { min-width: 0; pointer-events: auto; accent-color: #a3dce6; }
-.flight-low-speed-fields input[type="range"] { flex: 1; width: 100%; }
-.flight-low-speed-fields input[type="number"] { width: 62px; padding: 6px; border: 1px solid #7fb8ca55; border-radius: 4px; background: #091620; color: #d0e9ef; }
+#flight-cruise-speed { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #7fb8ca55; border-radius: 4px; background: #091620; color: #d0e9ef; pointer-events: auto; }
+.flight-speed-presets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 7px; }
+.flight-speed-presets button { min-width: 0; padding: 6px 4px; font-size: inherit; }
+.flight-speed-presets button[aria-pressed="true"] { border-color: #a3dce6; color: #e0f7ff; }
 .flight-propulsion select { width: 100%; max-width: 100%; }
 .flight-propulsion small { display: block; margin-top: 8px; line-height: 1.6; }
 .flight-title, .flight-instruments, .flight-marker, .flight-key-guide { text-shadow: 0 1px 3px #061019; }
