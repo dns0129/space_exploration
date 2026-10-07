@@ -4,6 +4,78 @@ import type { ShipDynamics } from "./ship-dynamics";
 import type { WalkingDynamics } from "./walking-dynamics";
 import { atmosphereCloudProfile, atmosphereScattering, atmosphereStrength } from "./atmosphere";
 import { entryClouds } from "./entry-clouds";
+import { mapSampling, noise } from "./planet-models";
+import { createEnhancedSurfaceUniforms, enhancedSurfaceSampling } from "./enhanced-surface";
+import { earthDetailSampling } from "./earth-detail";
+import { canonicalTerrainFragmentSampling, createCanonicalTerrainUniforms } from "./canonical-terrain-material";
+import { getBody } from "./solar-system";
+import type { BodyId } from "./solar-system";
+
+export interface SurfaceMaterialSnapshot {
+  bodyId: string;
+  texture: THREE.Texture | null;
+  /** Includes the source map's longitude offset. */
+  photoRotation: THREE.Matrix3;
+  /** Body pose only: detail tiles already bake their source longitude offset. */
+  detailRotation: THREE.Matrix3;
+  cloudTexture?: THREE.Texture | null;
+  cloudRotation?: THREE.Matrix3;
+  tint?: THREE.Vector3;
+  detailKind?: "native" | "enhanced";
+  /** Uniform objects are shared with the orbital material, including tile fades. */
+  detailUniforms?: Record<string, THREE.IUniform>;
+}
+
+function createLocalDetailUniforms(): Record<string, THREE.IUniform> {
+  const result = createEnhancedSurfaceUniforms();
+  result.detailBlend = { value: new THREE.Vector4() };
+  for (let i = 0; i < 4; i++) {
+    result[`detailTile${i}`] = { value: null };
+    result[`detailRect${i}`] = { value: new THREE.Vector4(0, 0, 1 / 8, 1 / 4) };
+  }
+  return result;
+}
+
+const localSurfaceSampling = /* glsl */ `
+  varying vec3 groundPosition, groundRadial;
+  uniform vec3 groundCamera, groundFog, groundSun, groundMapTint;
+  uniform sampler2D dayMap, groundHorizonCloudMap;
+  uniform mat3 groundMapRotation, groundDetailRotation, groundCloudRotation;
+  uniform vec2 mapSize;
+  uniform float groundAtmosphere, groundMapReady, groundDetailKind, groundCloudMapReady, groundCloudMapBlend;
+  uniform float groundCanonicalMaterial, groundEarth;
+  ${noise}
+  ${mapSampling}
+  ${enhancedSurfaceSampling}
+  ${earthDetailSampling}
+  ${canonicalTerrainFragmentSampling}
+  vec2 groundSphereUv(vec3 p) {
+    p = normalize(p);
+    return vec2(fract(atan(p.z, -p.x) / 6.28318530718), 1.0 - acos(clamp(p.y, -1.0, 1.0)) / 3.14159265359);
+  }
+  vec3 groundAlbedo(vec3 worldRadial, vec3 fallback) {
+    if (groundCanonicalMaterial > 0.5) fallback = canonicalProceduralGround(worldRadial);
+    vec2 photoUv = groundSphereUv(groundMapRotation * worldRadial);
+    vec2 detailUv = groundSphereUv(groundDetailRotation * worldRadial);
+    vec2 gx, gy;
+    bool seam = seamGradients(photoUv, gx, gy);
+    vec3 base = groundMapReady > 0.0 ? sampleMap(dayMap, photoUv, mapSize, gx, gy, seam).rgb : fallback;
+    if (groundDetailKind > 0.5 && groundDetailKind < 1.5) {
+      vec2 dx, dy;
+      bool detailSeam = seamGradients(detailUv, dx, dy);
+      base = earthDay(detailUv, dx, dy, detailSeam);
+    } else if (groundDetailKind > 1.5) {
+      vec2 dx, dy;
+      seamGradients(detailUv, dx, dy);
+      // Unimaged terrain retains its one canonical macro material; its 16K
+      // texture is a multiplication around one, never a replacement landscape.
+      base = groundMapReady > 0.0
+        ? sampleEnhancedSurface(base, detailUv, dx, dy).rgb
+        : base * sampleEnhancedSurface(vec3(1.0), detailUv, dx, dy).rgb;
+    }
+    return base * groundMapTint;
+  }
+`;
 
 /** A small curved terrain tile near the pilot, independent of AU-scale GPU coordinates. */
 export class SurfaceScene {
@@ -19,7 +91,14 @@ export class SurfaceScene {
   private normal = new THREE.Vector3();
   private bodyId = "";
   private tileExtentKm = 10;
+  private terrainUnitsKm = 6371;
+  private terrainBodyRadius = 1;
+  private readonly terrainBodyCenter = new THREE.Vector3();
   private walkingDetail = false;
+  private readonly detailUniforms = createLocalDetailUniforms();
+  private canonicalUniforms: Record<string, THREE.IUniform> = createCanonicalTerrainUniforms(getBody("earth"));
+  private compiledHorizonUniforms?: Record<string, THREE.IUniform>;
+  private compiledGroundUniforms?: Record<string, THREE.IUniform>;
   private readonly terrainUniforms = {
     groundCamera: { value: new THREE.Vector3() },
     groundFog: { value: new THREE.Color() },
@@ -28,14 +107,18 @@ export class SurfaceScene {
     groundAtmosphere: { value: 0 },
     groundExtent: { value: 10000 },
     groundHorizonOffset: { value: new THREE.Vector3() },
-    groundHorizonMap: { value: null as THREE.Texture | null },
+    dayMap: { value: null as THREE.Texture | null },
+    mapSize: { value: new THREE.Vector2(1, 1) },
     groundHorizonCloudMap: { value: null as THREE.Texture | null },
     groundMapRotation: { value: new THREE.Matrix3() },
+    groundDetailRotation: { value: new THREE.Matrix3() },
+    groundDetailKind: { value: 0 },
+    groundCanonicalMaterial: { value: 0 },
+    groundEarth: { value: 0 },
     groundMapTint: { value: new THREE.Vector3(1, 1, 1) },
     groundCloudRotation: { value: new THREE.Matrix3() },
     groundMapReady: { value: 0 },
     groundCloudMapReady: { value: 0 },
-    groundMapBlend: { value: 0 },
     groundCloudMapBlend: { value: 0 },
   };
   private readonly groundDetail: THREE.DataTexture;
@@ -114,16 +197,34 @@ export class SurfaceScene {
     const env = ship.environment;
     return !!env.body.atmosphereKm && env.altitudeKm < env.body.atmosphereKm * 4 && !ship.warping;
   }
-  /** Reuse a resident base image at entry without streaming or updating orbital models. */
+  /** Reuse the exact orbital colour layer and its resident detail tiles. */
+  setSurfaceMap(snapshot: SurfaceMaterialSnapshot) {
+    this.canonicalUniforms = createCanonicalTerrainUniforms(getBody(snapshot.bodyId as BodyId));
+    this.horizonMapBodyId = snapshot.bodyId;
+    this.terrainUniforms.dayMap.value = snapshot.texture;
+    const image = snapshot.texture?.image as { width?: number; height?: number } | undefined;
+    this.terrainUniforms.mapSize.value.set(image?.width ?? 1, image?.height ?? 1);
+    this.terrainUniforms.groundHorizonCloudMap.value = snapshot.cloudTexture ?? null;
+    this.terrainUniforms.groundMapRotation.value.copy(snapshot.photoRotation);
+    this.terrainUniforms.groundDetailRotation.value.copy(snapshot.detailRotation);
+    this.terrainUniforms.groundCloudRotation.value.copy(snapshot.cloudRotation ?? snapshot.photoRotation);
+    this.terrainUniforms.groundMapTint.value.copy(snapshot.tint ?? new THREE.Vector3(1, 1, 1));
+    this.terrainUniforms.groundDetailKind.value = snapshot.detailKind === "native" ? 1 : snapshot.detailKind === "enhanced" ? 2 : 0;
+    this.terrainUniforms.groundCanonicalMaterial.value = Number(!snapshot.texture && surfaceProfile(snapshot.bodyId as BodyId).solid);
+    this.terrainUniforms.groundEarth.value = Number(snapshot.bodyId === "earth");
+    // Existing shaders hold uniform objects by reference. Rebind their tables
+    // when entering a different body rather than copying the current values.
+    Object.assign(this.detailUniforms, createLocalDetailUniforms(), snapshot.detailUniforms ?? {});
+    if (this.compiledHorizonUniforms) Object.assign(this.compiledHorizonUniforms, this.terrainUniforms, this.detailUniforms, this.canonicalUniforms);
+    if (this.compiledGroundUniforms) Object.assign(this.compiledGroundUniforms, this.terrainUniforms, this.detailUniforms, this.canonicalUniforms);
+  }
+  /** Compatibility wrapper for callers that have only a resident base map. */
   setHorizonMap(bodyId: string, texture: THREE.Texture | null, worldToSurfaceRotation: THREE.Matrix3,
       cloudMap: THREE.Texture | null = null, worldToCloudRotation = worldToSurfaceRotation,
       mapTint = new THREE.Vector3(1, 1, 1)) {
-    this.horizonMapBodyId = bodyId;
-    this.terrainUniforms.groundHorizonMap.value = texture;
-    this.terrainUniforms.groundHorizonCloudMap.value = cloudMap;
-    this.terrainUniforms.groundMapRotation.value.copy(worldToSurfaceRotation);
-    this.terrainUniforms.groundCloudRotation.value.copy(worldToCloudRotation);
-    this.terrainUniforms.groundMapTint.value.copy(mapTint);
+    this.setSurfaceMap({ bodyId, texture, photoRotation: worldToSurfaceRotation,
+      detailRotation: worldToSurfaceRotation, cloudTexture: cloudMap,
+      cloudRotation: worldToCloudRotation, tint: mapTint });
   }
   /** Space transitions only update the inexpensive sky, never local geometry. */
   updateSky(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight, local = false) {
@@ -184,9 +285,8 @@ export class SurfaceScene {
     this.terrainUniforms.groundFog.value.set(env.profile.sky).multiplyScalar(0.035 + day * 0.7);
     this.terrainUniforms.groundVisibility.value = 1 - THREE.MathUtils.smoothstep(env.groundAltitudeKm, 38, 70);
     this.terrainUniforms.groundAtmosphere.value = env.body.atmosphereKm ? day : 0;
-    this.terrainUniforms.groundMapReady.value = Number(this.horizonMapBodyId === env.body.id && !!this.terrainUniforms.groundHorizonMap.value);
+    this.terrainUniforms.groundMapReady.value = Number(this.horizonMapBodyId === env.body.id && !!this.terrainUniforms.dayMap.value);
     this.terrainUniforms.groundCloudMapReady.value = Number(this.horizonMapBodyId === env.body.id && !!this.terrainUniforms.groundHorizonCloudMap.value);
-    this.terrainUniforms.groundMapBlend.value = THREE.MathUtils.smoothstep(env.groundAltitudeKm, 38, 80);
     this.terrainUniforms.groundCloudMapBlend.value = THREE.MathUtils.smoothstep(env.altitudeKm, 18, 36);
     this.light.position.copy(sun).multiplyScalar(10);
     this.light.color.copy(sunlight.color);
@@ -202,9 +302,10 @@ export class SurfaceScene {
     }
     const env = ship.environment;
     this.horizonBodyId = env.body.id;
-    // One small, texture-free curved shell fills everything beyond the detailed
-    // tile. It is generated once per local body, including the 70–160 km band.
-    const geometry = new THREE.SphereGeometry(env.body.radius, 96, 64);
+    this.compiledHorizonUniforms = undefined;
+    // The distant shell and detailed tile sample one radial colour/height field.
+    // Only geometry density changes while approaching the ground.
+    const geometry = new THREE.SphereGeometry(env.body.radius, 256, 128);
     const position = geometry.getAttribute("position");
     const colors: number[] = [];
     const ground = new THREE.Color(env.profile.solid ? env.profile.ground : env.profile.sky);
@@ -224,41 +325,33 @@ export class SurfaceScene {
     geometry.computeVertexNormals();
     const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, transparent: true });
     material.onBeforeCompile = shader => {
-      Object.assign(shader.uniforms, this.terrainUniforms);
+      this.compiledHorizonUniforms = shader.uniforms;
+      Object.assign(shader.uniforms, this.terrainUniforms, this.detailUniforms, this.canonicalUniforms);
       shader.vertexShader = shader.vertexShader.replace("#include <common>",
         "#include <common>\nvarying vec3 groundPosition, groundRadial; uniform vec3 groundHorizonOffset;")
         .replace("#include <begin_vertex>", `#include <begin_vertex>\ngroundPosition = position * ${Number(ship.config.unitsKm * 1000).toFixed(1)} + groundHorizonOffset; groundRadial = normalize(position);`);
       shader.fragmentShader = shader.fragmentShader.replace("#include <common>", `#include <common>
-        varying vec3 groundPosition, groundRadial; uniform vec3 groundCamera, groundFog, groundSun, groundMapTint;
-        uniform sampler2D groundHorizonMap, groundHorizonCloudMap;
-        uniform mat3 groundMapRotation, groundCloudRotation;
-        uniform float groundAtmosphere, groundMapReady, groundCloudMapReady, groundMapBlend, groundCloudMapBlend;
-        vec2 groundSphereUv(vec3 p) {
-          p = normalize(p);
-          return vec2(fract(atan(p.z, -p.x) / 6.28318530718), 1.0 - acos(clamp(p.y, -1.0, 1.0)) / 3.14159265359);
-        }`)
+        ${localSurfaceSampling}`)
         .replace("#include <color_fragment>", `#include <color_fragment>
-          vec3 horizonPhoto = diffuseColor.rgb;
+          vec3 horizonPhoto = groundAlbedo(groundRadial, diffuseColor.rgb);
+          diffuseColor.rgb = horizonPhoto;
           float horizonCover = 0.0;
-          if (groundMapReady * groundMapBlend > 0.0) {
-            vec2 groundMapUv = groundSphereUv(groundMapRotation * groundRadial);
-            horizonPhoto = texture2D(groundHorizonMap, groundMapUv).rgb * groundMapTint;
-            diffuseColor.rgb = mix(diffuseColor.rgb, horizonPhoto, groundMapBlend);
-          }
           if (groundCloudMapReady * groundCloudMapBlend > 0.0) {
             vec2 cloudMapUv = groundSphereUv(groundCloudRotation * groundRadial);
             horizonCover = texture2D(groundHorizonCloudMap, cloudMapUv).r * groundCloudMapBlend;
             diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.96, 1.0), horizonCover * 0.82);
           }`)
         .replace("#include <opaque_fragment>", `
-          // Base photography uses the same simple day response as the orbital
-          // view; local PBR and extra ground haze emerge only during descent.
-          float horizonDay = max(dot(normalize(groundRadial), groundSun), 0.0);
-          vec3 photoLight = horizonPhoto * (0.015 + horizonDay * 1.08) * (1.0 - horizonCover * 0.26);
+          // Photo albedo stays on the shell at every altitude. Lighting may gain
+          // local terrain shading, but the visible geographical features stay.
+          vec3 horizonNormal = canonicalTerrainWorldNormal(groundRadial);
+          float horizonDay = max(dot(horizonNormal, groundSun), 0.0)
+            * smoothstep(-0.12, 0.04, dot(normalize(groundRadial), groundSun));
+          vec3 photoLight = horizonPhoto * (mix(0.009, 0.015, groundEarth) + horizonDay * mix(1.05, 1.08, groundEarth)) * (1.0 - horizonCover * 0.26);
           photoLight = mix(photoLight, vec3(0.92, 0.96, 1.0) * (0.035 + horizonDay * 1.1), horizonCover * 0.82);
-          outgoingLight = mix(outgoingLight, photoLight, groundMapReady * groundMapBlend);
+          outgoingLight = mix(outgoingLight, photoLight, max(groundMapReady, groundCanonicalMaterial));
           float groundDistance = length(groundPosition - groundCamera);
-          float haze = (1.0 - exp(-groundDistance / 23000.0)) * groundAtmosphere * 0.6 * (1.0 - groundMapReady * groundMapBlend);
+          float haze = (1.0 - exp(-groundDistance / 23000.0)) * groundAtmosphere * 0.6 * (1.0 - groundMapReady);
           outgoingLight = mix(outgoingLight, groundFog, haze);
           #include <opaque_fragment>`);
     };
@@ -285,6 +378,10 @@ export class SurfaceScene {
     }
     const env = ship.environment;
     this.bodyId = env.body.id;
+    this.compiledGroundUniforms = undefined;
+    this.terrainUnitsKm = ship.config.unitsKm;
+    this.terrainBodyRadius = env.body.radius;
+    this.terrainBodyCenter.fromArray(env.body.position);
     this.anchor.copy(point);
     this.normal.copy(point).sub(new THREE.Vector3().fromArray(env.body.position)).normalize();
     const tangent = new THREE.Vector3(0, 1, 0).cross(this.normal).normalize();
@@ -336,16 +433,18 @@ export class SurfaceScene {
     geometry.computeVertexNormals();
     const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, side: THREE.DoubleSide, transparent: true,
       map: this.groundDetail, bumpMap: this.groundDetail, bumpScale: 0.018 / (ship.config.unitsKm * 1000) });
-    // Metre-scale procedural grit adds detail without downloading additional textures.
-    material.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, this.terrainUniforms);
-      shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 groundPosition;")
-        .replace("#include <begin_vertex>", `#include <begin_vertex>\ngroundPosition = position * ${Number(ship.config.unitsKm * 1000).toFixed(1)};`);
+    // Metre-scale grit changes reflectance around the shared surface albedo.
+    // It never supplies a different large-scale ground colour or landscape.
+    material.onBeforeCompile = shader => {
+      this.compiledGroundUniforms = shader.uniforms;
+      Object.assign(shader.uniforms, this.terrainUniforms, this.detailUniforms, this.canonicalUniforms);
+      shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 groundPosition, groundRadial; uniform vec3 groundHorizonOffset;")
+        .replace("#include <begin_vertex>", `#include <begin_vertex>\ngroundPosition = position * ${Number(ship.config.unitsKm * 1000).toFixed(1)}; groundRadial = normalize(groundPosition - groundHorizonOffset);`);
       shader.fragmentShader = shader.fragmentShader.replace("#include <common>", `#include <common>
-        varying vec3 groundPosition;
-        uniform vec3 groundCamera, groundFog, groundSun;
-        uniform float groundVisibility, groundAtmosphere, groundExtent;`)
+        ${localSurfaceSampling}
+        uniform float groundVisibility, groundExtent;`)
         .replace("#include <color_fragment>", `#include <color_fragment>
+          diffuseColor.rgb = groundAlbedo(groundRadial, diffuseColor.rgb);
           float grit = fract(sin(dot(floor(groundPosition * 2.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453) - 0.5;
           float fade = 1.0 - smoothstep(0.5, 4.0, length(fwidth(groundPosition)));
           diffuseColor.rgb *= 1.0 + grit * 0.07 * fade;`)
@@ -385,6 +484,16 @@ export class SurfaceScene {
     this.rocks.instanceMatrix.needsUpdate = true;
     this.rocks.frustumCulled = false;
     this.group.add(this.rocks);
+  }
+  /** The measured centre vertex, so verification observes the drawn terrain. */
+  get terrainSample(): { bodyId: string; normal: number[]; heightKm: number } | undefined {
+    if (!this.terrain || !this.terrain.visible || !this.bodyId) return undefined;
+    const positions = this.terrain.geometry.getAttribute("position");
+    const centre = Math.floor(positions.count / 2);
+    const radial = new THREE.Vector3().fromBufferAttribute(positions, centre)
+      .add(this.anchor).sub(this.terrainBodyCenter);
+    const heightKm = (radial.length() - this.terrainBodyRadius) * this.terrainUnitsKm;
+    return { bodyId: this.bodyId, normal: radial.normalize().toArray(), heightKm };
   }
   dispose() {
     this.groundDetail.dispose();

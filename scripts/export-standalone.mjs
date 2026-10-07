@@ -6,8 +6,36 @@ import { build } from "vite";
 
 const project = fileURLToPath(new URL("../", import.meta.url));
 const filename = "voyager-warp.html";
+// The standalone browser and optional backend read one embedded height dataset.
+// Keep their physical geology identical without duplicating several MiB in ZIP.
+const terrainModule = await readFile(join(project, "shared/terrain-fields.mjs"), "utf8");
+const rasterDeclaration = terrainModule.match(/^const rasterDefinitions = (\{[^\n]+\});$/m);
+if (!rasterDeclaration) throw new Error("Canonical terrain format changed; update the export adapter.");
+const terrainJson = rasterDeclaration[1];
+JSON.parse(terrainJson);
+const terrainMarker = '<script id="canonical-height-data" type="application/json">';
+const backendTerrainModule = 'import { openSync, readSync, closeSync } from "node:fs";\n' + terrainModule.replace(rasterDeclaration[0], `
+const rasterDefinitions = (() => {
+  const file = openSync(new URL("../${filename}", import.meta.url), "r");
+  const chunk = Buffer.alloc(256 * 1024), marker = ${JSON.stringify(terrainMarker)};
+  let prefix = "";
+  try {
+    for (;;) {
+      const size = readSync(file, chunk, 0, chunk.length, null);
+      if (!size) throw new Error("Canonical terrain dataset is missing from the game document.");
+      prefix += chunk.toString("utf8", 0, size);
+      const start = prefix.indexOf(marker);
+      if (start < 0) { prefix = prefix.slice(-marker.length); continue; }
+      const end = prefix.indexOf("</script>", start + marker.length);
+      if (end >= 0) return JSON.parse(prefix.slice(start + marker.length, end));
+    }
+  } finally { closeSync(file); }
+})();`);
+// Canonical height fields are embedded in shared code. Old DEM PNGs and the
+// replaced per-system panorama remain in public provenance, but are not loaded.
+const retiredTextures = new Set(["earth-terrain-4k.png", "earth-terrain-8k.png", "centauri-milky-way-4k.jpg"]);
 const textures = {};
-for (const file of (await readdir(join(project, "public/textures"))).filter((file) => /\.(jpg|png)$/.test(file)).sort()) {
+for (const file of (await readdir(join(project, "public/textures"))).filter((file) => /\.(jpg|png)$/.test(file) && !retiredTextures.has(file)).sort()) {
   const bytes = await readFile(join(project, "public/textures", file));
   const type = file.endsWith(".png") ? "image/png" : "image/jpeg";
   textures[file] = `data:${type};base64,${bytes.toString("base64")}`;
@@ -23,6 +51,10 @@ const result = await build({
       name: "standalone-local-textures",
       enforce: "pre",
       transform(code, id) {
+        if (id.endsWith("/shared/terrain-fields.mjs")) return {
+          code: code.replace(rasterDeclaration[0], 'const rasterDefinitions = JSON.parse(document.getElementById("canonical-height-data").textContent);'),
+          map: null,
+        };
         if (!id.endsWith("/src/planet-scene.ts")) return;
         const location = "`${import.meta.env.BASE_URL}textures/${file}`";
         if (!code.includes(location))
@@ -69,7 +101,7 @@ let html = source(htmlAsset);
 const script = chunks[0].code.replace(/<\/script/gi, "<\\/script");
 html = html.replace(
   /<script\b[^>]*\bsrc="[^"]+"[^>]*>\s*<\/script>/,
-  () => `<script type="module">${script}</script>`,
+  () => `${terrainMarker}${terrainJson.replace(/</g, "\\u003c")}</script><script type="module">${script}</script>`,
 );
 html = html.replace(
   /<link\b(?=[^>]*\brel="stylesheet")[^>]*>/,
@@ -90,15 +122,16 @@ W 前进，S 减速（停稳后倒车），A/D 平移，R/F 升降，Q/E 翻滚�
 Shift 加速，空格刹车，C 切换座舱/外部视角，J 启动跃迁，O 启动近地轨道引擎，L 自动着陆/起飞/中止。手机使用触屏驾驶按钮。
 选择并靠近岩石行星或卫星，按 L 连续下降并展开起落架；着陆后 L 或 R 起飞，升至离地 2 km 恢复手动驾驶。空格或手动操纵中止自动下降/起飞，暂停冻结进度。太阳和巨行星没有可着陆的固体地表。
 落地后按 E 离舱；WASD 行走，Shift 奔跑，空格跳跃，方向键或拖动看向，C 切换第一/第三人称。落地且距离停泊点12m内按E返舱，返舱后再L/R起飞。不同天体重力改变跳跃高度、滞空与抓地；极低重力有宇航服回落辅助。人物位置、速度、腾空和视角支持保存恢复。徒步场景用24m登陆艇表示返舱入口，飞行船停泊坐标不变。
-近地具有程序化曲面地形、颗粒与碰撞。地球 100 km 已进入稀薄大气，蓝色地平线与天空散射随下降逐步增强、星空逐步淡出，晨昏出现暖色散射；外部镜头保持飞船附近的高度。光学密度为游戏美术参数，大气阻力仍按稀薄高空密度计算。辅助驾驶补偿近地重力；关闭后需自行施加升力。地形是游戏示意，不是真实测绘，地球局部不区分全球海陆。地表存档可恢复着陆状态。
+远处、近观与落地后使用同一球面材质和地貌位置，34个固体天体的轨道表面、地表网格、着陆与徒步碰撞共用高度场。地球使用1024×512的GEBCO高度与海陆分类；其他天体使用512×256影像明暗推断高度或固定程序坑场，属于游戏示意，16K颜色材质不代表16K测绘高程。土卫一的Herschel大坑保留几何坑底和坑沿。旧版有效着陆/徒步存档恢复时贴合新地表，保留表面方向和离地高度。
+地球100km已进入稀薄大气，蓝色地平线与天空散射随下降逐步增强、星空逐步淡出，晨昏出现暖色散射；外部镜头保持飞船附近的高度。光学密度为游戏美术参数，大气阻力仍按稀薄高空密度计算。辅助驾驶补偿近地重力；关闭后需自行施加升力。
 仅离固体地表10000m以内使用低速引擎；“航速与引擎”用滑块或数字手动调1–1000m/s，施加推力时达到所选速度上限，空格可刹停。超过10km后引擎档位至少1km/s，低速预设不生效，大气内巡航为1km/s。离地超过10000m、船头朝太空且没有向内漂移时，按O显式启动向太空离地；大气内仍限1km/s。离开后太空常规最高10000km/s，100000km/s须在面板手动选择星际高档，Shift不会自动切高档。设置随存档保存。
 距天体1000km的真空安全区未显式向外离地时最高100km/s；大气限速优先，高速扫掠会制动。大气内及1000km内禁止跃迁。自动着陆也遵守气内限速。
 卫星导航提供月球及木星 4、土星 8、天王星 5、海王星 8 颗主要卫星。火星和月球使用原生8K影像，触屏、低内存或GPU纹理上限不足时使用4K；其他有探测器影像的卫星使用 4K/2K 实测全球影像，海王星小卫星与海卫二使用 4K 高清概念图；半径及平均轨道距离采用公里比例，位置为静态示意。减速时显示琥珀色制动脉冲。
 “恒星系统”切换太阳系、半人马座 α 或参宿四的导航目标，再选择天体。半人马座包含南门二 A/B、比邻星，以及比邻星 b、c、d；c/d 标记为候选行星。系外行星的半径、地表与大气是游戏示意。
 参宿四目前仅包含一颗红超巨星，半径约 764 个太阳半径，距离约 548 光年；参数仍有观测不确定性。原生 8K 表面表现巨型对流胞，紧凑设备使用 4K 版本；均为原创艺术示意，恒星不能着陆。参宿四复用银河全景并单独设置方向与亮度。
 半人马座三颗恒星与比邻星 b/c/d 使用 4K 高清概念图，不是实测照片。各航区共享真实8K/4K银河全景，实际跃迁与存档恢复会自动切换观察方向与亮度；程序星点是美术细节，不是天文星表。跨系统距离以光年显示。
-全部43个球形天体支持16384×8192（16K）近景贴图。地球保留原生16K影像，其他天体在原有2K/4K/8K影像或谷神星程序地貌上合成16K增强分块；新增岩石坑纹、冰面裂隙、气态云丝与恒星颗粒来自AI生成素材和独立天体种子，属于游戏美术，不是新测绘数据。桌面高清/超清在距星球中心三倍半径内启用，GPU只需支持2064像素分块；最多驻留四块，手机、低内存或标准画质保留原基础影像。空间站是模型，不生成星球表面贴图。无需联网即可生成细节。
-所有天体采用自身ID的独立程序种子，程序着色近距离细节最高32K周向采样层级，独立于16K合成贴图，不能视作原生32K影像。地球增加1.6–6.5km低空积云、7.8–15.5km入气云层和21km薄卷云，蓝天、浅色地平线、太阳盘与晨昏散射连续衔接；地表具有连续山脉、积雪与柔和远景雾。星球内和太空使用独立场景，每帧只更新当前模式，内模式暂停全球细节与贴图上传，地形按需生成。精细船体有实体装甲缝、曲面座舱、涡轮喷口与柔和尾焰。
+全部43个球形天体支持16384×8192（16K）表面材质。地球保留原生16K影像，其他天体在原有2K/4K/8K影像或谷神星程序底色上合成16K增强分块；新增岩石纹理、冰面裂隙、气态云丝与恒星颗粒来自AI素材和固定天体种子，属于游戏美术。远处过滤与近处缓存采样同一材质函数，进入地表继续沿用当前天体的影像与分块。桌面高清/超清近观距中心三倍半径内生成缓存，GPU需要支持2064像素；有效区域2048×2048加四周8像素边界，最多驻留四块。手机、低内存或标准画质保留较轻影像与相同地貌；空间站使用结构模型。全部素材和高度数据随包提供，断网可用。
+地球具有1.6–6.5km低空积云、7.8–15.5km入气云层和21km薄卷云，蓝天、浅色地平线、太阳盘与晨昏散射连续衔接。星球内和太空使用独立场景，每帧只更新当前模式；星球内暂停无关全球模型，允许当前天体的基础影像、材质和16K缓存更新，地形按需生成。精细船体有实体装甲缝、曲面座舱、涡轮喷口与柔和尾焰。
 飞船船体长 10 km，与星球共用公里比例；地表附近使用起落架参考点与近地观察镜头。
 点击天体导航选择目的地；“启动跃迁”蓄能、穿越航道，在星球仍很小时开始直线减速，星球随实际距离连续放大，航道光效逐渐淡出，可暂停或中止。末段保持朝向和翻滚，不自动调平或转向地平线。抵达侧保留出发方向；岩石行星通常距表面约 1100 km，巨行星和土星环系保留安全余量。
 可以暂停航行、保存与恢复；无需服务器的独立 HTML 使用本机存档。
@@ -185,6 +218,7 @@ const zip = archive([
   ],
   ["shared/world.json", await readFile(join(project, "shared/world.json"))],
   ["shared/surface.mjs", await readFile(join(project, "shared/surface.mjs"))],
+  ["shared/terrain-fields.mjs", backendTerrainModule],
   ["ASSETS.md", await readFile(join(project, "ASSETS.md"))],
   ["THIRD_PARTY_NOTICES.md", await readFile(join(project, "THIRD_PARTY_NOTICES.md"))],
   ["public/textures/provenance.json", await readFile(join(project, "public/textures/provenance.json"))],

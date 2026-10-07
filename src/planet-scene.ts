@@ -3,7 +3,7 @@ import { createAsteroidBelt } from "./orbital-structures";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { EARTH, getBody, STAR_SYSTEMS } from "./solar-system";
 import type { BodyId, Layer, SystemId } from "./solar-system";
-import { createPlanetModel, atmosphereFragment, mapSampling, noise, setSurfaceMap } from "./planet-models";
+import { createPlanetModel, atmosphereFragment, mapSampling, noise, setSurfaceMap, bindEnhancedSurfaceUniforms } from "./planet-models";
 import { SURFACE_MAPS } from "./body-textures";
 import type { PlanetModel } from "./planet-models";
 import { bodySystem, systemConfig } from "../shared/world-navigation.mjs";
@@ -19,7 +19,8 @@ import { GalaxySky, selectGalaxyFile } from "./galaxy-sky";
 import type { GalaxyTextureFile } from "./galaxy-sky";
 import { SurfaceScene } from "./surface-scene";
 import { atmosphereStrength } from "./atmosphere";
-import { surfaceProfile } from "../shared/surface.mjs";
+import { surfaceProfile, terrainHeightField, TERRAIN_VERSION } from "../shared/surface.mjs";
+import { createCanonicalTerrainUniforms, canonicalTerrainVertexSampling, canonicalTerrainFragmentSampling, disposeCanonicalTerrainTextures } from "./canonical-terrain-material";
 import { projectFlightTarget } from "./flight-target";
 import type { FlightTargetStats } from "./flight-target";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
@@ -100,10 +101,11 @@ const surfaceVertex = /* glsl */ `
 `;
 
 const earthSurfaceVertex = surfaceVertex
-  .replace("void main()", "uniform sampler2D terrainMap; uniform float terrainDetail; uniform float elevationStrength; void main()")
+  .replace("void main()", `${canonicalTerrainVertexSampling} void main()`)
   .replace("vec4 world = modelMatrix * vec4(position, 1.0);", /* glsl */ `
-    float elevation = max(textureLod(terrainMap, uv, 0.0).r - 40.0 / 255.0, 0.0) * (255.0 / 215.0);
-    vec3 displaced = position * (1.0 + elevation * 0.00142 * terrainDetail * elevationStrength);
+    vec3 radial = normalize(mat3(modelMatrix) * position);
+    float heightKm = canonicalTerrainHeightKm(radial);
+    vec3 displaced = position * (1.0 + heightKm / canonicalRadiusKm);
     vec4 world = modelMatrix * vec4(displaced, 1.0);
   `);
 
@@ -132,6 +134,7 @@ const surfaceFragment = /* glsl */ `
   ${noise}
   ${mapSampling}
   ${earthDetailSampling}
+  ${canonicalTerrainFragmentSampling}
   float elevation(float value) { return max(value - 40.0 / 255.0, 0.0) * (255.0 / 215.0); }
   void main() {
     vec3 normal = normalize(vNormal);
@@ -147,21 +150,11 @@ const surfaceFragment = /* glsl */ `
     float ring = length(p.xz);
     vec3 eastward = vec3(p.z, 0.0, -p.x) / max(ring, 0.0001);
     vec3 northward = cross(p, eastward);
-    if(terrainDetail>0.5) {
-      // Relief differenced in texture space keeps mountains smooth at any zoom, without texel facets.
-      float stepTexels = max(1.0, max(length(gx * terrainSize), length(gy * terrainSize)));
-      vec2 du = vec2(stepTexels / terrainSize.x, 0.0), dv = vec2(0.0, stepTexels / terrainSize.y);
-      float reliefLod = log2(stepTexels);
-      float east = elevation(textureLod(terrainMap, vUv + du, reliefLod).r) - elevation(textureLod(terrainMap, vUv - du, reliefLod).r);
-      float north = elevation(textureLod(terrainMap, vUv + dv, reliefLod).r) - elevation(textureLod(terrainMap, vUv - dv, reliefLod).r);
-      vec3 slope = 0.00142 * (east * terrainSize.x / (12.566 * max(ring, 0.15) * stepTexels) * eastward
-        + north * terrainSize.y / (6.2832 * stepTexels) * northward);
+    vec3 worldRadial = normalize(mat3(vAxisX, vAxisY, vAxisZ) * p);
+    terrainNormal = canonicalTerrainWorldNormal(worldRadial);
+    if (terrainDetail > 0.5) {
       vec4 grain = surfaceGrain(p, 2600.0, footprint, magnify, vec3(1.0), 3.7);
-      float land = 1.0 - water;
-      slope += grain.yzw * 0.035 * land;
-      landGrain = grain.x * land;
-      slope -= p * dot(slope, p);
-      terrainNormal = normalize(normal - mat3(vAxisX, vAxisY, vAxisZ) * slope);
+      landGrain = grain.x * (1.0 - water);
     }
     float daylight = dot(normal, sunDirection);
     float diffuse = max(dot(terrainNormal, sunDirection), 0.0) * smoothstep(-0.12, 0.04, daylight);
@@ -275,6 +268,8 @@ export class SolarScene {
   private readonly flightLight = new FlightLight();
   private readonly surfaceScene = new SurfaceScene();
   private surfaceMapBody: BodyId | null = null;
+  private surfaceBindingSignature = "";
+  private readonly localSurfaceProxy = new THREE.Mesh();
   private galaxy?: THREE.Texture;
   private readonly backgrounds = new Map<SystemId, THREE.Texture>();
   private backgroundSystem: SystemId = "solar";
@@ -506,8 +501,9 @@ export class SolarScene {
     if (model.body.id === "earth" || model.body.kind === "station" || !model.enhancedSurface) return;
     const detail = new EnhancedSurface(this.renderer, () => this.materialAtlas, state => {
       this.enhancedStates.set(model, state);
+      this.flightFrameDirty = true;
     });
-    Object.assign((model.enhancedSurface.material as THREE.ShaderMaterial).uniforms, detail.uniforms);
+    bindEnhancedSurfaceUniforms(model, detail.uniforms);
     this.enhancedDetails.set(model, detail);
   }
 
@@ -515,9 +511,15 @@ export class SolarScene {
     const data = this.renderer.domElement.dataset;
     if (!model || model.body.kind === "station") {
       for (const key of ["surfaceDetailKind", "surfaceDetailBody", "surfaceDetailResolution", "surfaceDetailTileResolution",
-        "surfaceDetailTiles", "surfaceDetailStatus", "surfaceDetailFamily"]) delete data[key];
+        "surfaceDetailTiles", "surfaceDetailStatus", "surfaceDetailFamily", "surfaceDetailTileIds",
+        "surfaceContentId", "surfaceContentSource", "surfaceHeightSource", "surfaceNormal", "surfaceHeightKm"]) delete data[key];
+      data.surfaceDetailTotalTiles = "0";
       return;
     }
+    const field = terrainHeightField(model.body.id);
+    data.surfaceContentId = `${model.body.id}:surface-v${TERRAIN_VERSION}:16k`;
+    data.surfaceContentSource = model.body.id === "earth" ? "earth-native-16k" : model.surfaceMap?.file ?? field?.sourceId ?? "canonical-procedural";
+    data.surfaceHeightSource = field?.sourceId ?? "none";
     const native = model.body.id === "earth";
     const state = this.enhancedStates.get(model);
     const count = disabled ? 0 : native ? this.earthDetails.get(model)?.residentTiles ?? 0 : state?.residentTiles ?? 0;
@@ -525,6 +527,10 @@ export class SolarScene {
     data.surfaceDetailBody = model.body.id;
     data.surfaceDetailFamily = native ? "earth" : enhancedSurfaceProfile(model.body).family;
     data.surfaceDetailTiles = String(count);
+    data.surfaceDetailTileIds = JSON.stringify(native ? this.earthDetails.get(model)?.tileIds ?? []
+      : this.enhancedDetails.get(model)?.tileIds ?? []);
+    data.surfaceDetailTotalTiles = String([...this.enhancedDetails.values()].reduce((count, detail) => count + detail.tileIds.length, 0)
+      + [...this.earthDetails.values()].reduce((count, detail) => count + detail.residentTiles, 0));
     data.surfaceDetailStatus = disabled ? "disabled" : count === 4 ? "ready" : count > 0 ? "pending"
       : native ? data.earthDetail === "loading" ? "pending" : "global" : state?.status ?? "global";
     if (count > 0) {
@@ -539,7 +545,7 @@ export class SolarScene {
   private loadMaterialAtlas(now: number) {
     if (this.materialAtlas || this.atlasLoading || now < this.atlasRetryAt) return;
     this.atlasLoading = (async () => {
-      await this.waitForSpaceWork();
+      await this.waitForSpaceWork("surface-material-atlas.jpg");
       const texture = await this.loadTexture("surface-material-atlas.jpg", false);
       // The atlas is material height/albedo data, rather than a color photograph.
       texture.colorSpace = THREE.NoColorSpace;
@@ -547,6 +553,7 @@ export class SolarScene {
       this.renderer.initTexture(texture);
       this.textures.add(texture);
       this.materialAtlas = texture;
+      this.flightFrameDirty = true;
       this.renderBudget.hold(1.5);
     })().catch(() => {
       // Generated detail is optional: complete base imagery continues to render.
@@ -557,19 +564,23 @@ export class SolarScene {
   private updateEnhancedSurfaces(delta: number, time: number) {
     const active = this.flying ? this.flightModelById.get(this.dynamics!.environment.body.id) : this.currentModel;
     const capable = !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 2064 && this.quality !== "standard";
+    if (active && active.body.kind !== "station") this.loadMaterialAtlas(time);
     // Release the previous world's tiles before materializing any tiles for the new world.
     for (const [model, detail] of this.enhancedDetails) if (model !== active)
       detail.update(undefined, this.camera, false, delta, time, undefined, enhancedSurfaceProfile(model.body));
     if (active) {
       const detail = this.enhancedDetails.get(active);
       if (detail) {
-        const surface = active.enhancedSurface!;
+        const rock = active.body.id === "venus" && !active.layers.clouds?.visible;
+        const surface = rock ? active.surface : active.enhancedSurface!;
         surface.updateWorldMatrix(true, false);
         const distance = surface.worldToLocal(this.flightRelative.copy(this.camera.position)).length();
-        const source = active.mapUniforms?.detailMap.value ?? undefined;
-        const enabled = capable && distance <= 3 && (!active.surfaceMap || !!source);
-        if (enabled) this.loadMaterialAtlas(time);
-        detail.update(surface, this.camera, enabled, delta, time, source, enhancedSurfaceProfile(active.body));
+        const source = rock ? undefined : active.mapUniforms?.detailMap.value ?? undefined;
+        const enabled = capable && distance <= 3 && (rock || !active.surfaceMap || !!source);
+        this.loadMaterialAtlas(time);
+        const profile = enhancedSurfaceProfile(active.body);
+        detail.update(surface, this.camera, enabled, delta, time, source,
+          rock ? { ...profile, family: "rock", offset: 0, strength: 0.28 } : profile);
       }
     }
     this.publishSurfaceDetail(active, !capable);
@@ -633,16 +644,16 @@ export class SolarScene {
     } catch (error) {
       if (!surfaceMap?.compactFile || file === surfaceMap.compactFile || this.destroyed) throw error;
       // Optional native 8K imagery can fail without replacing the complete 4K surface with noise.
-      await this.waitForSpaceWork();
+      await this.waitForSpaceWork(file);
       if (this.destroyed) throw error;
       file = surfaceMap.compactFile;
       texture = await loader.loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
     }
-    await this.waitForSpaceWork();
+    await this.waitForSpaceWork(file);
     if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
     const image = texture.image as HTMLImageElement;
     await image.decode?.().catch(() => undefined);
-    await this.waitForSpaceWork();
+    await this.waitForSpaceWork(file);
     if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
     const maximumWidth = Math.min(this.renderer.capabilities.maxTextureSize,
       surface && this.compactTextures && !surfaceMap?.compactFile ? 2048 : Infinity);
@@ -664,9 +675,22 @@ export class SolarScene {
     return texture;
   }
 
-  /** Network requests already in flight may finish, but their decoding/upload waits outside the local renderer. */
-  private async waitForSpaceWork() {
-    while (!this.destroyed && this.flying && this.renderPolicy.mode === "surface")
+  private surfaceWorkAllowed(file?: string) {
+    if (!this.flying || this.renderPolicy.mode !== "surface") return true;
+    const bodyId = this.dynamics!.environment.body.id;
+    if (file === "surface-material-atlas.jpg") return true;
+    if (bodyId === "earth" && file?.startsWith("earth-")) {
+      if (file.startsWith("earth-detail-")) return !this.compactTextures && this.quality === "ultra";
+      if (file.includes("8k")) return !this.compactTextures && this.quality !== "standard";
+      return true;
+    }
+    const map = SURFACE_MAPS[bodyId];
+    return !!file && (file === map?.file || file === map?.compactFile);
+  }
+
+  /** Only the current body's shared surface may decode/upload while its local scene is active. */
+  private async waitForSpaceWork(file?: string) {
+    while (!this.destroyed && !this.surfaceWorkAllowed(file))
       await new Promise<void>(resolve => this.spaceWorkWaiters.add(resolve));
   }
 
@@ -682,7 +706,7 @@ export class SolarScene {
 
   /** Marks a body's map as in use and starts loading it if it isn't resident. */
   private touchSurfaceMap(id: BodyId) {
-    if (this.flying && this.renderPolicy.mode === "surface") return;
+    if (this.flying && this.renderPolicy.mode === "surface" && id !== this.dynamics!.environment.body.id) return;
     const surfaceMap = SURFACE_MAPS[id];
     if (!surfaceMap || surfaceMap.core) return;
     const now = performance.now();
@@ -697,7 +721,7 @@ export class SolarScene {
       loading.texture = texture;
       this.textures.add(texture);
       this.pendingSurfaceMaps.add(file);
-      if (!this.flying || this.renderPolicy.mode === "space") this.applyPendingSurfaceMaps();
+      if (!this.flying || this.renderPolicy.mode === "space" || id === this.dynamics!.environment.body.id) this.applyPendingSurfaceMaps();
     }).catch((error) => {
       loading.failedAt = performance.now();
       console.warn(`Surface map ${file} unavailable; keeping the procedural surface.`, error);
@@ -705,6 +729,7 @@ export class SolarScene {
   }
 
   private applyPendingSurfaceMaps() {
+    if (this.pendingSurfaceMaps.size) this.flightFrameDirty = true;
     for (const file of this.pendingSurfaceMaps) {
       const texture = this.lazyMaps.get(file)?.texture;
       if (!texture) continue;
@@ -712,7 +737,8 @@ export class SolarScene {
       this.renderBudget.hold(0.75);
       for (const model of this.allModels())
         if (model.surfaceMap?.file === file && model.mapUniforms?.detailMap.value !== texture) {
-          const immediate = !this.flying && model === this.currentModel;
+          const immediate = !this.flying && model === this.currentModel
+            || this.flying && this.renderPolicy.mode === "surface" && model.body.id === this.dynamics!.environment.body.id;
           setSurfaceMap(model, texture, immediate ? 1 : 0);
           if (immediate) this.publishSurfaceResolution(model);
           if (!immediate) this.mapFades.add(model);
@@ -720,6 +746,7 @@ export class SolarScene {
     }
     this.pendingSurfaceMaps.clear();
     this.releaseSurfaceMaps();
+    if (this.flying && this.renderPolicy.mode === "surface") this.snapshotSurfaceMaps(this.dynamics!.environment.body.id);
   }
 
   private async loadSurfaceMap(id: BodyId): Promise<THREE.Texture | null> {
@@ -833,12 +860,24 @@ export class SolarScene {
   }
 
   private async loadEarthMap(file: string, monochrome = false): Promise<THREE.Texture> {
+    if (file.startsWith("earth-terrain-")) {
+      const field = terrainHeightField("earth")!;
+      const encoded = new Uint8Array(field.data.length);
+      for (let i = 0; i < encoded.length; i++)
+        encoded[i] = field.waterMask?.[i] ? 0 : Math.round(40 + field.data[i] * 215 / 255);
+      const texture = new THREE.DataTexture(encoded, field.width, field.height, THREE.RedFormat);
+      texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.magFilter = THREE.LinearFilter; texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.generateMipmaps = true; texture.needsUpdate = true;
+      this.textures.add(texture);
+      return texture;
+    }
     let texture = await new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
-    await this.waitForSpaceWork();
+    await this.waitForSpaceWork(file);
     if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
     const image = texture.image as HTMLImageElement;
     await image.decode?.().catch(() => undefined);
-    await this.waitForSpaceWork();
+    await this.waitForSpaceWork(file);
     if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
     if (monochrome) {
       // One-byte density/elevation/radiance maps use one quarter of RGBA texture memory.
@@ -885,11 +924,11 @@ export class SolarScene {
     this.earthUpgrade = (async () => {
       // Stagger decoding and uploads; one large map at a time avoids a burst of frame stalls.
       for (const file of ["earth-day-8k.jpg", "earth-night-8k.jpg", "earth-terrain-8k.png", "earth-clouds-8k.jpg"]) {
-        await this.waitForSpaceWork();
+        await this.waitForSpaceWork(file);
         if (this.destroyed) throw new Error("场景已关闭");
         const texture = await this.loadEarthMap(file, file !== "earth-day-8k.jpg");
         batch.push(texture);
-        await this.waitForSpaceWork();
+        await this.waitForSpaceWork(file);
         if (this.destroyed) throw new Error("场景已关闭");
         this.renderBudget.hold(1.5);
         this.renderer.initTexture(texture);
@@ -929,6 +968,7 @@ export class SolarScene {
     const geometry = new THREE.SphereGeometry(1, compactMesh ? 256 : 512, compactMesh ? 128 : 256);
     const detail = new EarthDetail(maps[0], file => this.loadEarthMap(file),
       texture => this.releaseEarthMap(texture), texture => {
+        this.flightFrameDirty = true;
         this.renderBudget.hold(1.5);
         this.renderer.initTexture(texture);
       }, this.renderer.domElement);
@@ -943,6 +983,7 @@ export class SolarScene {
           terrainMap: { value: maps[2] },
           cloudMap: { value: maps[3] },
           ...detail.uniforms,
+          ...createCanonicalTerrainUniforms(getBody("earth")),
           terrainSize: { value: new THREE.Vector2(maps[2].image.width, maps[2].image.height) },
           nightSize: { value: new THREE.Vector2(maps[1].image.width, maps[1].image.height) },
           cloudSize: { value: new THREE.Vector2(maps[3].image.width, maps[3].image.height) },
@@ -957,6 +998,10 @@ export class SolarScene {
       }),
     );
     surface.rotation.y = -1.8;
+    surface.onBeforeRender = () => {
+      (surface.material as THREE.ShaderMaterial).uniforms.canonicalWorldToMap.value.copy(
+        surfaceMapRotation("earth", EARTH.axialTiltDeg, { group: group.quaternion, surface: surface.quaternion }));
+    };
     const clouds = new THREE.Mesh(
       new THREE.SphereGeometry(1.0018, 256, 128),
       new THREE.ShaderMaterial({
@@ -1071,6 +1116,8 @@ export class SolarScene {
         this.updateSurfaceMaps(delta, time);
         this.updateEarthDetail(delta, time);
         this.updateEnhancedSurfaces(delta, time);
+      } else {
+        this.updateLocalSurfaceDetail(delta, time);
       }
       const reuseFrame = this.flightPaused && this.renderPolicy.mode === "surface"
         && this.stillSeconds > 0.4 && !this.flightFrameDirty && this.flightCameraQuiet();
@@ -1443,23 +1490,71 @@ export class SolarScene {
     }
   }
 
-  /** Take resident asset references once at entry; the local world never traverses or updates space models. */
+  /** Bind one canonical surface source into both orbital and local draws. */
   private snapshotSurfaceMaps(bodyId: BodyId) {
-    const model = this.flightModelById.get(bodyId);
+    const body = this.dynamics!.config.bodies.find(body => body.id === bodyId)!;
+    const model = this.flightModelById.get(bodyId) ?? this.createFlightModel(body);
     const axialTilt = getBody(bodyId).axialTiltDeg;
     const map = SURFACE_MAPS[bodyId];
-    const pose = { group: model?.group.quaternion, surface: model?.surface.quaternion,
-      clouds: model?.layers.clouds?.quaternion };
-    const rotation = surfaceMapRotation(bodyId, axialTilt, pose, map?.offset);
+    const rock = bodyId === "venus";
+    const pose = { group: model.group.quaternion, surface: model.surface.quaternion,
+      clouds: rock ? model.surface.quaternion : model.layers.clouds?.quaternion };
+    const rotation = surfaceMapRotation(bodyId, axialTilt, pose, rock ? 0 : map?.offset);
+    const detailRotation = surfaceMapRotation(bodyId, axialTilt, pose);
     const cloudRotation = bodyId === "earth" ? surfaceMapRotation(bodyId, axialTilt,
       { group: pose.group, surface: pose.clouds }) : rotation;
     const earth = this.earthHighMaps ?? this.earthMaps;
-    const texture = bodyId === "earth" ? earth?.[0]
-      : this.planetMaps.get(bodyId) ?? this.lazyMaps.get(SURFACE_MAPS[bodyId]?.file ?? "")?.texture;
-    this.surfaceScene.setHorizonMap(bodyId, texture ?? null, rotation,
-      bodyId === "earth" ? earth?.[3] ?? null : null, cloudRotation,
-      new THREE.Vector3(...(map?.tint ?? [1, 1, 1])));
+    const texture = rock ? undefined : bodyId === "earth" ? earth?.[0]
+      : this.planetMaps.get(bodyId) ?? this.lazyMaps.get(map?.file ?? "")?.texture;
+    const signature = `${bodyId}:${texture?.uuid ?? "none"}:${earth?.[3]?.uuid ?? "none"}:${model.enhancedSurface?.uuid ?? "native"}`;
     this.surfaceMapBody = bodyId;
+    if (signature === this.surfaceBindingSignature) return;
+    this.surfaceBindingSignature = signature;
+    this.surfaceScene.setSurfaceMap({ bodyId, texture: texture ?? null, photoRotation: rotation, detailRotation,
+      cloudTexture: bodyId === "earth" ? earth?.[3] ?? null : null, cloudRotation,
+      tint: new THREE.Vector3(...(rock ? [1, 1, 1] as const : map?.tint ?? [1, 1, 1])),
+      detailKind: bodyId === "earth" ? "native" : "enhanced",
+      detailUniforms: bodyId === "earth" ? this.earthDetails.get(model)?.uniforms : this.enhancedDetails.get(model)?.uniforms });
+  }
+
+  private updateLocalSurfaceDetail(delta: number, time: number) {
+    const ship = this.dynamics!, body = ship.environment.body;
+    const model = this.flightModelById.get(body.id) ?? this.createFlightModel(body);
+    this.touchSurfaceMap(body.id);
+    if (this.pendingSurfaceMaps.size) this.applyPendingSurfaceMaps();
+    this.snapshotSurfaceMaps(body.id);
+    // Only a body-fixed UV proxy moves with the pilot; no dormant global scene is traversed.
+    const source = body.id === "venus" ? model.surface : model.enhancedSurface ?? model.surface;
+    this.localSurfaceProxy.position.fromArray(body.position).sub(ship.position);
+    this.localSurfaceProxy.quaternion.copy(model.group.quaternion).multiply(source.quaternion);
+    this.localSurfaceProxy.scale.copy(source.scale).multiplyScalar(body.radius);
+    this.localSurfaceProxy.updateMatrixWorld(true);
+    const capable = !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 2064;
+    for (const [other, detail] of this.enhancedDetails) if (other !== model)
+      detail.update(undefined, this.camera, false, delta, time, undefined, enhancedSurfaceProfile(other.body));
+    for (const [other, detail] of this.earthDetails) if (other !== model)
+      detail.update(undefined, this.camera, false, delta, time);
+    if (body.id === "earth") {
+      this.earthDetails.get(model)?.update(this.localSurfaceProxy, this.camera,
+        capable && this.quality === "ultra", delta, time);
+    } else {
+      this.loadMaterialAtlas(time);
+      const profile = enhancedSurfaceProfile(model.body);
+      this.enhancedDetails.get(model)?.update(this.localSurfaceProxy, this.camera,
+        capable && this.quality !== "standard", delta, time, body.id === "venus" ? undefined : model.mapUniforms?.detailMap.value,
+        body.id === "venus" ? { ...profile, family: "rock", offset: 0, strength: 0.28 } : profile);
+    }
+    if (!(body.id === "earth" ? this.earthDetails.get(model)?.isSettled : this.enhancedDetails.get(model)?.isSettled))
+      this.flightFrameDirty = true;
+    this.publishSurfaceDetail(model, !capable || this.quality === "standard");
+    const sample = this.surfaceScene.terrainSample;
+    if (sample?.bodyId === body.id) {
+      this.renderer.domElement.dataset.surfaceNormal = JSON.stringify(sample.normal);
+      this.renderer.domElement.dataset.surfaceHeightKm = String(sample.heightKm);
+    } else {
+      delete this.renderer.domElement.dataset.surfaceNormal;
+      delete this.renderer.domElement.dataset.surfaceHeightKm;
+    }
   }
 
   private updateFlightCamera(blend: number) {
@@ -1478,13 +1573,12 @@ export class SolarScene {
     this.renderer.domElement.dataset.renderMode = mode;
     this.renderer.domElement.dataset.spaceWorkActive = String(mode === "space");
     if (mode !== previousMode && mode === "surface") {
-      // Preserve the independent local-world policy: no global tile generation in surface mode.
-      for (const [model, detail] of this.enhancedDetails)
-        detail.update(undefined, this.camera, false, 0, performance.now(), undefined, enhancedSurfaceProfile(model.body));
-      this.publishSurfaceDetail(this.flightModelById.get(environment.body.id), true);
+      this.surfaceBindingSignature = "";
+      this.resumeSpaceWork();
     }
-    if (mode === "surface" && (previousMode !== "surface" || this.surfaceMapBody !== environment.body.id))
+    if (mode === "surface") {
       this.snapshotSurfaceMaps(environment.body.id);
+    }
     if (mode === "space") this.updateSpaceWorld();
     const stars = ship.activeBodies.filter(body => body.kind === "star");
     const light = stars.reduce((closest, body) =>
@@ -1684,6 +1778,7 @@ export class SolarScene {
       this.currentModel.ringsEnabled.value = Number(visible);
   }
   setQuality(quality: RenderQuality) {
+    this.resumeSpaceWork();
     if (quality === this.quality) return;
     this.quality = quality;
     this.galaxySky.setDetailed(quality !== "standard" && !this.compactTextures
@@ -1722,6 +1817,9 @@ export class SolarScene {
     this.galaxySky.dispose();
     this.surfaceGalaxySky.dispose();
     this.surfaceScene.dispose();
+    disposeCanonicalTerrainTextures();
+    this.localSurfaceProxy.geometry.dispose();
+    (this.localSurfaceProxy.material as THREE.Material).dispose();
     this.shipSun.shadow.dispose();
     this.earthDetails.forEach(detail => detail.dispose());
     this.enhancedDetails.forEach(detail => detail.dispose());

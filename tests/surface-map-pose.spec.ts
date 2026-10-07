@@ -1,6 +1,9 @@
 import { test, expect } from "@playwright/test";
 import * as THREE from "three";
 import { surfaceMapRotation } from "../src/surface-map-pose";
+import { SURFACE_MAPS } from "../src/body-textures";
+import { getBody } from "../src/solar-system";
+import { terrainMapNormal } from "../shared/surface.mjs";
 
 const sphereUv = (direction: THREE.Vector3) => {
   const p = direction.clone().normalize();
@@ -45,4 +48,19 @@ test("金星摄影采用云顶姿态；直接恢复时使用初始云顶姿态",
   const restoredWorld = local.clone().applyQuaternion(new THREE.Quaternion().setFromAxisAngle(
     new THREE.Vector3(0, 0, 1), THREE.MathUtils.degToRad(177.4)));
   expect(restoredWorld.applyMatrix3(surfaceMapRotation("venus", 177.4)).distanceTo(local)).toBeLessThan(1e-10);
+});
+
+test("碰撞高度与轨道和局部摄影对同一地貌使用相同经纬坐标", () => {
+  for (const id of ["earth", "mars", "mimas", "umbriel", "thalassa", "ceres"] as const) {
+    const body = getBody(id);
+    const offset = SURFACE_MAPS[id]?.offset ?? 0;
+    for (const uv of [[.155, .5], [.985, .32], [.01, .78]]) {
+      // Construct a world location through the collision height's UV frame,
+      // then sample it through the independent render-map pose transform.
+      const normal = new THREE.Vector3().fromArray(terrainMapNormal(id, uv));
+      const actual = sphereUv(normal.applyMatrix3(surfaceMapRotation(id, body.axialTiltDeg, {}, offset)));
+      expect(Math.abs(THREE.MathUtils.euclideanModulo(actual[0] - uv[0] + .5, 1) - .5), `${id}经度对应同一地貌`).toBeLessThan(1e-10);
+      expect(actual[1], `${id}纬度对应同一地貌`).toBeCloseTo(uv[1], 10);
+    }
+  }
 });

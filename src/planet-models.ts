@@ -9,6 +9,7 @@ import type { SurfaceMap } from "./body-textures";
 import { PROCEDURAL_DETAIL_WIDTH, proceduralBodyProfile } from "./procedural-body";
 import { SATURN_RING_INNER, SATURN_RING_OUTER, saturnRingOptics } from "./saturn-rings";
 import { createEnhancedSurfaceUniforms, enhancedSurfaceSampling } from "./enhanced-surface";
+import { canonicalTerrainFragmentSampling, canonicalTerrainVertexSampling, createCanonicalTerrainUniforms } from "./canonical-terrain-material";
 
 export interface PlanetModel {
   body: CelestialBody;
@@ -46,6 +47,9 @@ export const modelVertex = /* glsl */ `
   varying vec3 vAxisX;
   varying vec3 vAxisY;
   varying vec3 vAxisZ;
+  #ifdef CANONICAL_TERRAIN
+    ${canonicalTerrainVertexSampling}
+  #endif
   void main() {
     vUv = uv;
     vLocalPosition = position;
@@ -53,7 +57,12 @@ export const modelVertex = /* glsl */ `
     vAxisX = normalize(mat3(modelMatrix)[0]);
     vAxisY = normalize(mat3(modelMatrix)[1]);
     vAxisZ = normalize(mat3(modelMatrix)[2]);
-    vec4 world = modelMatrix * vec4(position, 1.0);
+    vec3 renderedPosition = position;
+    #ifdef CANONICAL_TERRAIN
+      vec3 worldRadial = normalize(mat3(modelMatrix) * position);
+      renderedPosition += normalize(position) * canonicalTerrainHeightKm(worldRadial) / canonicalRadiusKm;
+    #endif
+    vec4 world = modelMatrix * vec4(renderedPosition, 1.0);
     vWorldPosition = world.xyz;
     vec3 n = normalMatrix * normal;
     vNormal = normalize(vec3(dot(viewMatrix[0].xyz,n),dot(viewMatrix[1].xyz,n),dot(viewMatrix[2].xyz,n)));
@@ -221,6 +230,9 @@ const planetFragment = /* glsl */ `
   ${noise}
   ${mapSampling}
   ${enhancedSurfaceSampling}
+  #ifdef CANONICAL_TERRAIN
+    ${canonicalTerrainFragmentSampling}
+  #endif
   #if BODY_KIND == 4
     ${saturnRingOptics}
   #endif
@@ -235,7 +247,6 @@ const planetFragment = /* glsl */ `
       float texels = max(length(gx * mapSize), length(gy * mapSize));
       float footprint = max(length(dFdx(p)), length(dFdy(p)));
       float magnify = 1.0 - smoothstep(0.6, 1.4, texels);
-      float reliefLod = log2(max(texels, 1.0));
     #endif
     #if BODY_KIND == 7
       float terrain = fbm(p*bodyTerrain.x+bodySeed);
@@ -254,8 +265,6 @@ const planetFragment = /* glsl */ `
       #ifdef SURFACE_MAP
         if (mapReady > 0.001) {
           vec3 photo = sampleEnhancedSurface(sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb, vUv, gx, gy).rgb;
-          vec4 grain = magnify > 0.0 ? surfaceDetail(p, mapSize.x / 6.2832, footprint, magnify, detailStretch, bodySeed, detailRidges) : vec4(0.0);
-          grain *= 1.0 - enhancedSurfaceCoverage(vUv);
           // Illustrated stars keep the map's granulation and spots in their own temperature colour.
           vec3 stellar = stellarIllustration > 0.5
             ? stellarTint * 1.5 * pow(max(mapLuminance(photo) * mapTint.x, 0.0), 3.0)
@@ -263,7 +272,7 @@ const planetFragment = /* glsl */ `
           #ifdef RED_SUPERGIANT
             stellar = photo * 1.8 * (0.94+convection*0.16);
           #endif
-          color = mix(color, stellar * (1.0 + grain.x * mapGrain * 2.0), mapReady);
+          color = mix(color, stellar, mapReady);
         }
       #endif
       vec3 viewDirection = normalize(cameraPosition-vWorldPosition);
@@ -342,54 +351,39 @@ const planetFragment = /* glsl */ `
       if (moonStyle == 3.0) color = moonColor*(0.8+fbm(p*vec3(12.0,4.0,12.0)+bodySeed)*0.35);
       if (moonStyle == 4.0) color *= mix(0.18,1.3,smoothstep(-0.1,0.12,p.x));
     #endif
+    #ifdef CANONICAL_TERRAIN
+      // Before an optional source map arrives, the fallback still depicts the
+      // canonical relief rather than a second set of procedural craters.
+      color = canonicalProceduralGround(normalize(mat3(vAxisX, vAxisY, vAxisZ) * p));
+    #endif
     #ifdef SURFACE_MAP
     }
     #else
-      // Unimaged Ceres keeps its independent macro-geology beneath generated fine material.
+      // Unimaged terrain uses the same canonical macro-geology at every scale.
       vec2 detailGx, detailGy;
       seamGradients(vUv, detailGx, detailGy);
       vec4 generated = sampleEnhancedSurface(vec3(1.0), vUv, detailGx, detailGy);
       color *= generated.rgb;
-      height += (generated.a - 0.5) * 0.006;
     #endif
     vec3 geometric = normalize(vNormal);
     vec3 normal = geometric;
     vec3 dpdx = dFdx(vWorldPosition), dpdy = dFdy(vWorldPosition);
     vec3 r1 = cross(dpdy,normal), r2 = cross(normal,dpdx);
     float determinant = dot(dpdx,r1);
-    vec3 gradient = sign(determinant)*(dFdx(height)*r1+dFdy(height)*r2);
-    normal = normalize(max(abs(determinant),0.0000001)*normal-0.012*bodyRadius*gradient);
+    #ifdef CANONICAL_TERRAIN
+      // Orbit, local ground and collision all read the same complete height.
+      normal = canonicalTerrainWorldNormal(normalize(mat3(vAxisX, vAxisY, vAxisZ) * p));
+    #else
+      vec3 gradient = sign(determinant)*(dFdx(height)*r1+dFdy(height)*r2);
+      normal = normalize(max(abs(determinant),0.0000001)*normal-0.012*bodyRadius*gradient);
+    #endif
     #ifdef SURFACE_MAP
       if (mapReady > 0.001) {
         vec4 enhanced = sampleEnhancedSurface(sampleMap(detailMap, uv, mapSize, gx, gy, seam).rgb, vUv, gx, gy);
         vec3 photo = enhanced.rgb;
-        // Grain only exists beyond the map's native resolution; skip it entirely otherwise.
-        vec4 grain = magnify > 0.0 ? surfaceDetail(p, mapSize.x / 6.2832, footprint, magnify, detailStretch, bodySeed, detailRidges) : vec4(0.0);
-        grain *= 1.0 - enhancedSurfaceCoverage(vUv);
-        vec3 slope = grain.yzw * mapGrain * 2.5;
-        if (mapRelief > 0.0) {
-          // Map brightness read as relief, differenced in texture space: smooth per-pixel normals, no 2x2 blocks.
-          float stepTexels = max(1.0, texels);
-          vec2 du = vec2(stepTexels / mapSize.x, 0.0), dv = vec2(0.0, stepTexels / mapSize.y);
-          float contrast = 1.0 / (mapLuminance(photo) + 0.04);
-          float east = (mapLuminance(textureLod(detailMap, uv + du, reliefLod).rgb) - mapLuminance(textureLod(detailMap, uv - du, reliefLod).rgb)) * contrast;
-          float north = (mapLuminance(textureLod(detailMap, uv + dv, reliefLod).rgb) - mapLuminance(textureLod(detailMap, uv - dv, reliefLod).rgb)) * contrast;
-          float ring = length(p.xz);
-          vec3 eastward = vec3(p.z, 0.0, -p.x) / max(ring, 0.0001);
-          vec3 northward = cross(p, eastward);
-          slope += mapRelief * (east * mapSize.x / (12.566 * max(ring, 0.15) * stepTexels) * eastward
-            + north * mapSize.y / (6.2832 * stepTexels) * northward);
-        }
-        slope -= p * dot(slope, p);
-        // Bound image-derived relief so dark photo features do not become deep grooves.
-        slope *= inversesqrt(1.0 + dot(slope, slope) / 0.36);
-        vec3 photoNormal = normalize(geometric - mat3(vAxisX, vAxisY, vAxisZ) * slope);
-        color = mix(color, photo * mapTint * (1.0 + grain.x * mapGrain * 2.2), mapReady);
-        normal = normalize(mix(normal, photoNormal, mapReady));
-        if (mapRelief > 0.0) {
-          vec3 fineGradient = sign(determinant) * (dFdx(enhanced.a) * r1 + dFdy(enhanced.a) * r2);
-          normal = normalize(max(abs(determinant), 0.0000001) * normal - 0.00008 * bodyRadius * fineGradient);
-        }
+        // The shared 16K material owns all magnified albedo; its distant mips
+        // retain the same geography and no second orbital grit can replace it.
+        color = mix(color, photo * mapTint, mapReady);
       }
     #endif
     // Detail normals never light terrain beyond the geometric terminator.
@@ -585,6 +579,21 @@ export function setSurfaceMap(model: PlanetModel, map: THREE.Texture | null, rea
   model.mapUniforms.mapReady.value = map ? ready : 0;
 }
 
+/** Venus has two physical surfaces; whichever is visible shares the active cache. */
+export function enhancedSurfaceTarget(model: PlanetModel, local = false): THREE.Mesh {
+  return model.body.id === "venus" && (local || model.layers.clouds?.visible === false)
+    ? model.surface : model.enhancedSurface ?? model.surface;
+}
+
+/** Bind objects, so orbital Venus rock and local ground read the same 16K material. */
+export function bindEnhancedSurfaceUniforms(model: PlanetModel, uniforms: Record<string, THREE.IUniform>) {
+  const targets = new Set([model.enhancedSurface ?? model.surface]);
+  if (model.body.id === "venus") targets.add(model.surface);
+  for (const target of targets) {
+    if (target.material instanceof THREE.ShaderMaterial) Object.assign(target.material.uniforms, uniforms);
+  }
+}
+
 export function createPlanetModel(
   body: CelestialBody,
   sunDirection: THREE.Vector3,
@@ -624,6 +633,8 @@ export function createPlanetModel(
     detailRidges: { value: profile.ridgeMix },
   };
   const mapUniforms = surfaceMap ? createMapUniforms(surfaceMap, map) : undefined;
+  const solid = surfaceProfile(body.id).solid;
+  const terrainUniforms = solid ? createCanonicalTerrainUniforms(body) : {};
   // Venus shows its imaged cloud deck; the procedural surface stays beneath it.
   const mapOnSurface = mapUniforms && body.id !== "venus";
   const surface = new THREE.Mesh(
@@ -631,10 +642,11 @@ export function createPlanetModel(
     new THREE.ShaderMaterial({
       vertexShader: modelVertex,
       fragmentShader: planetFragment,
-      defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(mapOnSurface ? { SURFACE_MAP: 1 } : {}), ...(body.id === "betelgeuse" ? { RED_SUPERGIANT: 1 } : {}) },
+      defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(mapOnSurface ? { SURFACE_MAP: 1 } : {}), ...(solid ? { CANONICAL_TERRAIN: 1 } : {}), ...(body.id === "betelgeuse" ? { RED_SUPERGIANT: 1 } : {}) },
       uniforms: {
         ...createEnhancedSurfaceUniforms(),
         ...proceduralUniforms,
+        ...terrainUniforms,
         ...(mapOnSurface ? mapUniforms : {}),
         sunDirection: { value: sunDirection },
         planetAxis: { value: axis },
@@ -650,8 +662,19 @@ export function createPlanetModel(
       },
     }),
   );
-  surface.scale.y = body.flattening;
+  // Solid worlds use the same mean-radius reference as terrain and collision.
+  surface.scale.y = solid ? 1 : body.flattening;
   surface.rotation.y = -0.4;
+  if (solid) {
+    const inversePose = new THREE.Quaternion();
+    const rotationMatrix = new THREE.Matrix4();
+    const offsetMatrix = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRotationY((surfaceMap?.offset ?? 0) * Math.PI * 2));
+    surface.onBeforeRender = () => {
+      const worldToMap = terrainUniforms.canonicalWorldToMap.value as THREE.Matrix3;
+      rotationMatrix.makeRotationFromQuaternion(surface.getWorldQuaternion(inversePose).invert());
+      worldToMap.setFromMatrix4(rotationMatrix).premultiply(offsetMatrix);
+    };
+  }
   group.add(surface);
   const model: PlanetModel = {
     body,

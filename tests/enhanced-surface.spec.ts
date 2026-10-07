@@ -2,7 +2,8 @@ import { test, expect, type Page } from "@playwright/test";
 import { PNG } from "pngjs";
 import { getBody, getSystemGroup, type BodyId } from "../src/solar-system";
 
-const detailAttributes = ["kind", "body", "family", "resolution", "tile-resolution", "tiles", "status"] as const;
+const detailAttributes = ["kind", "body", "family", "resolution", "tile-resolution", "tile-ids", "tiles", "status"] as const;
+const contentAttributes = ["content-id", "content-source", "height-source", "normal", "height-km"] as const;
 const representatives = ["mars", "europa", "jupiter", "venus", "sun", "ceres", "naiad", "proxima-b", "betelgeuse"] as const;
 const screenshotStyle = ".control-panel, .altitude, .toast, .viewport-tools, .mobile-settings, .destination-selectors { visibility: hidden !important; }";
 
@@ -50,27 +51,51 @@ async function expectTiles(page: Page, id: BodyId, kind: "native" | "enhanced") 
   const canvas = page.locator("canvas");
   await expect(canvas).toHaveAttribute("data-surface-detail-status", "ready", { timeout: 60_000 });
   await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "4");
+  await expect(canvas).toHaveAttribute("data-surface-detail-total-tiles", "4");
   await expect(canvas).toHaveAttribute("data-surface-detail-body", id);
   await expect(canvas).toHaveAttribute("data-surface-detail-kind", kind);
   await expect(canvas).toHaveAttribute("data-surface-detail-resolution", "16384x8192");
   await expect(canvas).toHaveAttribute("data-surface-detail-tile-resolution", "2064x2064");
 }
 
-function surfaceDifference(before: PNG, after: PNG) {
+function macroDifference(before: PNG, after: PNG) {
   expect([after.width, after.height], "比较地表细节时画布分辨率必须相同").toEqual([before.width, before.height]);
-  let changed = 0, sampled = 0;
-  for (let y = Math.round(before.height * .3); y < before.height * .65; y++) {
-    for (let x = Math.round(before.width * .4); x < before.width * .7; x++) {
-      const i = (y * before.width + x) * 4;
-      const delta = Math.abs(before.data[i] - after.data[i]) + Math.abs(before.data[i + 1] - after.data[i + 1]) + Math.abs(before.data[i + 2] - after.data[i + 2]);
-      sampled++;
-      if (delta > 3) changed++;
+  const samples: number[][] = [];
+  for (const image of [before, after]) {
+    const values: number[] = [];
+    // Averaging small blocks removes grain and mip differences. Geography and
+    // broad colour must remain the same when the GPU cache becomes available.
+    const size = 16;
+    for (let y = Math.round(image.height * .3); y < image.height * .65 - size; y += size) {
+      for (let x = Math.round(image.width * .4); x < image.width * .7 - size; x += size) {
+        const rgb = [0, 0, 0];
+        for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) {
+          const i = ((y + dy) * image.width + x + dx) * 4;
+          for (let channel = 0; channel < 3; channel++) rgb[channel] += image.data[i + channel];
+        }
+        values.push(...rgb.map(value => value / (size * size)));
+      }
     }
+    samples.push(values);
   }
-  return { changed, sampled };
+  return samples[0].reduce((sum, value, i) => sum + Math.abs(value - samples[1][i]), 0) / samples[0].length;
 }
 
-test("岩石、冰壳、云层、气态、恒星与程序世界的 16K 合成分块实际改变地表像素", async ({ page }, info) => {
+function expectVisibleTexture(image: PNG, id: BodyId) {
+  const levels = new Set<number>();
+  let lit = 0;
+  for (let y = Math.round(image.height * .3); y < image.height * .65; y++) {
+    for (let x = Math.round(image.width * .4); x < image.width * .7; x++) {
+      const i = (y * image.width + x) * 4;
+      const light = image.data[i] * .2126 + image.data[i + 1] * .7152 + image.data[i + 2] * .0722;
+      if (light > 10) { lit++; levels.add(Math.floor(light / 4)); }
+    }
+  }
+  expect(lit, `${id}须实际显示有光照的地表`).toBeGreaterThan(2000);
+  expect(levels.size, `${id}表面须有实际纹理和地貌明暗`).toBeGreaterThan(6);
+}
+
+test("各类天体使用同一 16K 内容，画质只改变细节缓存而不替换地貌", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop", "完整 16K 合成仅在桌面启用");
   test.setTimeout(420_000);
   await page.setViewportSize({ width: 900, height: 650 });
@@ -87,24 +112,33 @@ test("岩石、冰壳、云层、气态、恒星与程序世界的 16K 合成分
     await freezeCloseView(page, id);
     await expect(canvas).toHaveAttribute("data-surface-detail-status", "disabled");
     await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "0");
+    await expect(canvas).toHaveAttribute("data-surface-detail-total-tiles", "0");
+    await expect(canvas).toHaveAttribute("data-surface-content-id", `${id}:surface-v2:16k`);
+    const heightSource = await canvas.getAttribute("data-surface-height-source");
+    expect(heightSource).toBeTruthy();
     const before = PNG.sync.read(await canvas.screenshot({ style: screenshotStyle }));
+    expectVisibleTexture(before, id);
     await quality(page, "ultra");
     await expectTiles(page, id, "enhanced");
+    await expect(canvas).toHaveAttribute("data-surface-content-id", `${id}:surface-v2:16k`);
+    await expect(canvas).toHaveAttribute("data-surface-height-source", heightSource!);
     await expect(canvas).toHaveAttribute("data-render-scale", "1.00");
-    // Fade completion precedes comparison; the source view and rotation remain frozen.
+    // Cache loading can sharpen the same material; it must not repaint it.
     await page.waitForTimeout(700);
     const after = PNG.sync.read(await canvas.screenshot({ path: info.outputPath(`${id}-enhanced-16k.png`), style: screenshotStyle }));
-    const difference = surfaceDifference(before, after);
-    expect(difference.changed, `${id}必须显示实际 16K 合成细节，不能仅改变标签`).toBeGreaterThan(difference.sampled * .01);
+    expectVisibleTexture(after, id);
+    expect(macroDifference(before, after), `${id}标准与超清必须保留相同的宏观地貌与颜色`).toBeLessThan(14);
     await quality(page, "standard");
     await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "0");
+    await expect(canvas).toHaveAttribute("data-surface-detail-total-tiles", "0");
     expect(await canvas.getAttribute("data-surface-detail-resolution"), "关闭合成细节应释放分块").toBeNull();
-    const restored = PNG.sync.read(await canvas.screenshot({ style: screenshotStyle }));
-    expect(surfaceDifference(before, restored).changed, `${id}关闭细节应恢复同一冻结视图，排除镜头移动造成差异`)
-      .toBeLessThan(Math.max(40, difference.changed * .1));
+    await expect(canvas).toHaveAttribute("data-surface-content-id", `${id}:surface-v2:16k`);
+    await expect(canvas).toHaveAttribute("data-surface-height-source", heightSource!);
   }
   await selectBody(page, "earth-station");
   for (const attribute of detailAttributes) expect(await canvas.getAttribute(`data-surface-detail-${attribute}`)).toBeNull();
+  for (const attribute of contentAttributes) expect(await canvas.getAttribute(`data-surface-${attribute}`)).toBeNull();
+  await expect(canvas).toHaveAttribute("data-surface-detail-total-tiles", "0");
   expect(errors).toEqual([]);
 });
 
@@ -123,7 +157,7 @@ test("地球保持原生 16K 影像分块并与合成细节分别标注", async 
   expect(await page.locator("canvas").getAttribute("data-surface-detail-resolution")).toBeNull();
 });
 
-test("手机保留完整 4K 或 2K 基础影像，不分配桌面 16K 合成分块", async ({ page }, info) => {
+test("手机使用同一最高精度内容的低分辨率采样，不分配桌面 16K 缓存", async ({ page }, info) => {
   test.skip(info.project.name !== "mobile");
   test.setTimeout(120_000);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -135,6 +169,8 @@ test("手机保留完整 4K 或 2K 基础影像，不分配桌面 16K 合成分�
     await closeView(page);
     const canvas = page.locator("canvas");
     await expect(canvas).toHaveAttribute("data-surface-resolution", resolution);
+    await expect(canvas).toHaveAttribute("data-surface-content-id", `${id}:surface-v2:16k`);
+    expect(await canvas.getAttribute("data-surface-height-source")).toBeTruthy();
     await expect(canvas).toHaveAttribute("data-surface-detail-status", "disabled");
     await expect(canvas).toHaveAttribute("data-surface-detail-tiles", "0");
     expect(await canvas.getAttribute("data-surface-detail-resolution")).toBeNull();
@@ -162,6 +198,8 @@ test("4096 纹理上限仍可显示分块 16K，低于物理分块尺寸时保�
       const canvas = page.locator("canvas");
       await expect(canvas).toHaveAttribute("data-surface-map", "mars-real.jpg");
       await expect(canvas).toHaveAttribute("data-surface-resolution", `${maximum}x${maximum / 2}`);
+      await expect(canvas).toHaveAttribute("data-surface-content-id", "mars:surface-v2:16k");
+      expect(await canvas.getAttribute("data-surface-height-source")).toBeTruthy();
       if (maximum === 4096) {
         await expectTiles(page, "mars", "enhanced");
         await selectBody(page, "earth");
@@ -204,5 +242,7 @@ test("AI 素材下载失败保留基础表面，切换空间站清除待生成�
   expect(warm, "增强素材不可用时火星基础影像仍须可见").toBeGreaterThan(1500);
   await selectBody(page, "earth-station");
   for (const attribute of detailAttributes) expect(await canvas.getAttribute(`data-surface-detail-${attribute}`)).toBeNull();
+  for (const attribute of contentAttributes) expect(await canvas.getAttribute(`data-surface-${attribute}`)).toBeNull();
+  await expect(canvas).toHaveAttribute("data-surface-detail-total-tiles", "0");
   expect(errors).toEqual([]);
 });

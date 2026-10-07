@@ -53,6 +53,8 @@ export class EarthDetail {
   }
 
   get residentTiles() { return this.slots.filter(Boolean).length; }
+  get tileIds() { return this.slots.flatMap(slot => slot ? [slot.texture.uuid] : []); }
+  get isSettled() { return this.slots.every(slot => !slot || slot.fade >= 1); }
 
   update(surface: THREE.Mesh | undefined, camera: THREE.Camera, enabled: boolean, delta: number, now: number) {
     if (this.disposed) return;

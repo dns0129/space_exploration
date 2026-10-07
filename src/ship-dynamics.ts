@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
-import { surfaceProfile, terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
+import { surfaceProfile, terrainHeightKm, terrainMaxHeightKm, TERRAIN_VERSION, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { bodySystem, systemBodies, systemDisplacement } from "../shared/world-navigation.mjs";
 import type { BodyId, SystemId } from "./solar-system";
 // Centimetre tolerance compensates for subtraction at AU-scale coordinates.
@@ -119,6 +119,7 @@ export class ShipDynamics {
     return {
       version: 2,
       worldLayoutVersion: this.config.layoutVersion ?? 1,
+      terrainVersion: TERRAIN_VERSION,
       ...(this.landedBody ? { landedBody: this.landedBody } : {}),
       systemId: this.systemId,
       ...(this.escapeBody ? { escapeBody: this.escapeBody } : {}),
@@ -335,7 +336,7 @@ export class ShipDynamics {
         // The outer terrain envelope only brakes to the orbital minimum.
         // Apply the selected metre-speed cap at the actual terrain boundary.
         const hardShellKm = Math.max(body.atmosphereKm ?? 0,
-          surfaceProfile(body.id).solid ? (body.id === "earth" ? 15.2 : 10.125) : 0);
+          surfaceProfile(body.id).solid ? 10 + terrainMaxHeightKm(body.id) + LANDING_CLEARANCE_KM + SURFACE_EPSILON_KM : 0);
         const t = THREE.MathUtils.clamp(center.clone().sub(previous).dot(travel) / travel.lengthSq(), 0, 1);
         const closestDistance = previous.clone().addScaledVector(travel, t).distanceTo(center);
         if (hardShellKm > 0 && closestDistance <= body.radius + hardShellKm / this.config.unitsKm) {
@@ -369,7 +370,7 @@ export class ShipDynamics {
   }
   private lowFlightPathEntry(body: WorldConfig["bodies"][number], from: THREE.Vector3, travel: THREE.Vector3): number | null {
     const center = new THREE.Vector3().fromArray(body.position);
-    const envelopeKm = 10 + (body.id === "earth" ? 5.2 : 0.125);
+    const envelopeKm = 10 + terrainMaxHeightKm(body.id) + LANDING_CLEARANCE_KM + SURFACE_EPSILON_KM;
     const closestT = travel.lengthSq() ? THREE.MathUtils.clamp(center.clone().sub(from).dot(travel) / travel.lengthSq(), 0, 1) : 0;
     if (from.clone().addScaledVector(travel, closestT).distanceTo(center) > body.radius + envelopeKm / this.config.unitsKm)
       return null;

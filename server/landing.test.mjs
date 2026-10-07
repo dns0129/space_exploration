@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import { terrainHeightKm, surfaceProfile, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
+import { mappedMountainNormal } from "./terrain-fixtures.mjs";
 
 function place(ship, id, clearanceKm, normal = new THREE.Vector3(0, 0, -1)) {
   ship.jump(id);
@@ -162,7 +163,7 @@ test("automatic atmospheric entry uses 1000 m/s above 10 km regardless of the se
 });
 
 test("automatic descent switches from 1000 m/s to the selected speed at 10 km above mountain terrain without jumping", () => {
-  const normal = new THREE.Vector3(0, 0, 1);
+  const normal = mappedMountainNormal();
   assert(terrainHeightKm("earth", normal.toArray()) > 4,
     "use a mountain where the 10 km ground boundary lies well above the old radial shell");
   for (const selectedMps of [1, 133]) {
@@ -293,14 +294,17 @@ test("density changes drag; unassisted near-surface flight feels gravity; malfor
 });
 
 test("Earth has continuous kilometre-scale mountain ranges and collision follows their peaks", () => {
+  const region = mappedMountainNormal();
+  const east = new THREE.Vector3(0, 1, 0).cross(region).normalize();
+  const north = region.clone().cross(east).normalize();
   let low = Infinity, high = -Infinity, summit;
   for (let x = -100; x <= 100; x += 4) for (let y = -100; y <= 100; y += 4) {
-    const normal = new THREE.Vector3(x / 6371, y / 6371, -1).normalize();
+    const normal = region.clone().multiplyScalar(6371).addScaledVector(east, x).addScaledVector(north, y).normalize();
     const height = terrainHeightKm("earth", normal.toArray());
-    assert(height >= 0 && height < 5.3);
+    assert(height >= 0 && height < 10);
     low = Math.min(low, height);
     if (height > high) { high = height; summit = normal; }
-    const next = normal.clone().add(new THREE.Vector3(0.001 / 6371, 0, 0)).normalize();
+    const next = normal.clone().addScaledVector(east, 0.001 / 6371).normalize();
     assert(Math.abs(height - terrainHeightKm("earth", next.toArray())) < 0.005,
       "a metre of lateral travel must not produce a height discontinuity");
   }

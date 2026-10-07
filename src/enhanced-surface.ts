@@ -35,6 +35,11 @@ export function createEnhancedSurfaceUniforms(): Record<string, THREE.IUniform> 
   const uniforms: Record<string, THREE.IUniform> = {
     enhancedBlend: { value: new THREE.Vector4() },
     enhancedModulation: { value: 0 },
+    enhancedAtlas: { value: null }, enhancedAtlasSize: { value: new THREE.Vector2(1, 1) },
+    enhancedAtlasQuadrant: { value: new THREE.Vector2() }, enhancedMaterialSeed: { value: new THREE.Vector3() },
+    enhancedMaterialStretch: { value: new THREE.Vector3(1, 1, 1) }, enhancedMaterialMean: { value: 0.5 },
+    enhancedMaterialDeviation: { value: 0.15 }, enhancedDetailStrength: { value: 0 },
+    enhancedMaterialReady: { value: 0 }, enhancedAtlasSrgb: { value: 0 },
   };
   for (let i = 0; i < 4; i++) {
     uniforms[`enhancedTile${i}`] = { value: null };
@@ -43,8 +48,41 @@ export function createEnhancedSurfaceUniforms(): Record<string, THREE.IUniform> 
   return uniforms;
 }
 
+/** The same body-fixed artistic material is evaluated by cached tiles and their filtered fallback. */
+const enhancedMaterialSampling = /* glsl */ `
+  uniform sampler2D enhancedAtlas;
+  uniform vec2 enhancedAtlasSize, enhancedAtlasQuadrant;
+  uniform vec3 enhancedMaterialSeed, enhancedMaterialStretch;
+  uniform float enhancedMaterialMean, enhancedMaterialDeviation, enhancedDetailStrength;
+  uniform float enhancedMaterialReady, enhancedAtlasSrgb;
+  vec3 enhancedAtlasValue(vec2 uv, float lod) {
+    vec2 mirrored = 1.0 - abs(fract(uv * 0.5) * 2.0 - 1.0);
+    vec2 inset = vec2(2.0) / enhancedAtlasSize;
+    vec2 coord = enhancedAtlasQuadrant * 0.5 + inset + mirrored * (0.5 - 2.0 * inset);
+    vec3 value = textureLod(enhancedAtlas, coord, lod).rgb;
+    if (enhancedAtlasSrgb > 0.5) value = mix(value * 12.92,
+      1.055 * pow(value, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), value));
+    return value;
+  }
+  vec3 enhancedSphereDirection(vec2 uv) {
+    float longitude = uv.x * 6.28318530718, latitude = (1.0 - uv.y) * 3.14159265359;
+    return vec3(-cos(longitude) * sin(latitude), cos(latitude), sin(longitude) * sin(latitude));
+  }
+  float enhancedStructure(vec3 p, float lod) {
+    float frequency = 16384.0 / (6.28318530718 * (enhancedAtlasSize.x * 0.5));
+    vec3 q = p * enhancedMaterialStretch * frequency + enhancedMaterialSeed * 0.1137;
+    vec3 weight = pow(abs(p), vec3(4.0));
+    weight /= max(dot(weight, vec3(1.0)), 0.0001);
+    vec3 material = enhancedAtlasValue(q.yz, lod) * weight.x
+      + enhancedAtlasValue(q.zx, lod) * weight.y + enhancedAtlasValue(q.xy, lod) * weight.z;
+    return clamp((dot(material, vec3(0.2126, 0.7152, 0.0722)) - enhancedMaterialMean)
+      / max(enhancedMaterialDeviation, 0.05), -2.0, 2.0);
+  }
+`;
+
 /** Uses mapSampling's filtered lookup; uv is the unoffset, body-local sphere UV. */
 export const enhancedSurfaceSampling = /* glsl */ `
+  ${enhancedMaterialSampling}
   uniform sampler2D enhancedTile0, enhancedTile1, enhancedTile2, enhancedTile3;
   uniform vec4 enhancedRect0, enhancedRect1, enhancedRect2, enhancedRect3;
   uniform vec4 enhancedBlend;
@@ -76,7 +114,15 @@ export const enhancedSurfaceSampling = /* glsl */ `
     return mix(base,detail,weight);
   }
   vec4 sampleEnhancedSurface(vec3 base,vec2 uv,vec2 gx,vec2 gy) {
-    vec4 result = vec4(base,0.5);
+    vec4 result = vec4(base, 0.5);
+    if (enhancedMaterialReady > 0.5 && enhancedSurfaceCoverage(uv) < 0.999) {
+      float texels = max(length(gx * vec2(16384.0, 8192.0)), length(gy * vec2(16384.0, 8192.0)));
+      // A minified view reads the same field's mips; no separate distant geology.
+      float field = enhancedStructure(enhancedSphereDirection(uv), log2(max(texels, 1.0)));
+      field *= 1.0 - smoothstep(16.0, 128.0, texels);
+      result = vec4(base * (1.0 + clamp(field * enhancedDetailStrength, -0.26, 0.26)),
+        clamp(0.5 + field * 0.14, 0.12, 0.88));
+    }
     result = enhancedSurfaceTile(enhancedTile0,enhancedRect0,enhancedBlend.x,result,uv,gx,gy);
     result = enhancedSurfaceTile(enhancedTile1,enhancedRect1,enhancedBlend.y,result,uv,gx,gy);
     result = enhancedSurfaceTile(enhancedTile2,enhancedRect2,enhancedBlend.z,result,uv,gx,gy);
@@ -99,28 +145,7 @@ const bakeFragment = /* glsl */ `
   uniform vec3 bodySeed,sourceTint,materialStretch;
   uniform float sourceReady,sourceOffset,materialMean,materialDeviation,detailStrength,atlasSrgb;
   varying vec2 bakeUv;
-  vec3 atlasValue(vec2 uv) {
-    // Mirror at each repeat boundary inside a quadrant, never across another
-    // material. Two physical texels of inset keep bilinear samples inside it.
-    vec2 mirrored = 1.0-abs(fract(uv*0.5)*2.0-1.0);
-    vec2 inset = vec2(2.0)/atlasSize;
-    vec2 coord = atlasQuadrant*0.5+inset+mirrored*(0.5-2.0*inset);
-    vec3 value = texture2D(materialAtlas,coord).rgb;
-    // The generated atlas is height/structure data. Be tolerant of a caller
-    // using the ordinary sRGB image loader instead of a data-texture loader.
-    if (atlasSrgb>0.5) value = mix(value*12.92,1.055*pow(value,vec3(1.0/2.4))-0.055,
-      step(vec3(0.0031308),value));
-    return value;
-  }
-  float structure(vec3 p) {
-    float frequency = 16384.0/(6.28318530718*(atlasSize.x*0.5));
-    vec3 q = p*materialStretch*frequency+bodySeed*0.1137;
-    vec3 weight = pow(abs(p),vec3(4.0));
-    weight /= max(dot(weight,vec3(1.0)),0.0001);
-    vec3 material = atlasValue(q.yz)*weight.x+atlasValue(q.zx)*weight.y+atlasValue(q.xy)*weight.z;
-    float value = dot(material,vec3(0.2126,0.7152,0.0722));
-    return clamp((value-materialMean)/max(materialDeviation,0.05),-2.0,2.0);
-  }
+  ${enhancedMaterialSampling}
   void main() {
     // Interior pixels address an actual 16384x8192 composite. Gutters evaluate
     // exactly the same global function as the adjacent tile's interior.
@@ -129,20 +154,13 @@ const bakeFragment = /* glsl */ `
     float longitude = uv.x*6.28318530718;
     float latitude = (1.0-uv.y)*3.14159265359;
     vec3 p = vec3(-cos(longitude)*sin(latitude),cos(latitude),sin(longitude)*sin(latitude));
-    float field = structure(p);
+    float field = enhancedStructure(p, 0.0);
     float albedoDetail = clamp(field*detailStrength,-0.26,0.26);
     vec3 composite = vec3((1.0+albedoDetail)*0.5);
     if (sourceReady>0.5) {
       vec2 sourceUv = vec2(fract(uv.x+sourceOffset),uv.y);
-      vec2 stepUv = 0.65/sourceSize;
-      // The virtual grid is finer than every source map. Fixed mip 0 also
-      // prevents fract(longitude) from selecting blurry mips at the wrap.
-      vec3 source = textureLod(baseMap,sourceUv,0.0).rgb;
-      vec3 neighbours = (textureLod(baseMap,vec2(fract(sourceUv.x+stepUv.x),clamp(sourceUv.y+stepUv.y,0.0,1.0)),0.0).rgb
-        + textureLod(baseMap,vec2(fract(sourceUv.x-stepUv.x),clamp(sourceUv.y-stepUv.y,0.0,1.0)),0.0).rgb)*0.5;
-      // Modest local contrast retains the photographed geography and palette;
-      // the newly painted fine structure is explicitly generated enhancement.
-      source = clamp(source+(source-neighbours)*0.16,0.0,1.0);
+      // A cache samples the same source and material as the direct path.
+      vec3 source = textureLod(baseMap, sourceUv, 0.0).rgb;
       composite = max(source*sourceTint*(1.0+albedoDetail),vec3(0.0));
     }
     gl_FragColor = vec4(composite,clamp(0.5+field*0.14,0.12,0.88));
@@ -193,6 +211,7 @@ export class EnhancedSurface {
       vertexShader: bakeVertex, fragmentShader: bakeFragment,
       depthTest: false, depthWrite: false, toneMapped: false,
       uniforms: {
+        ...this.uniforms,
         baseMap: { value: this.fallback }, materialAtlas: { value: this.fallback },
         sourceSize: { value: new THREE.Vector2(1,1) }, atlasSize: { value: new THREE.Vector2(1,1) },
         atlasQuadrant: { value: new THREE.Vector2() }, tileRect: { value: new THREE.Vector4() },
@@ -214,6 +233,8 @@ export class EnhancedSurface {
   ) {
     if (this.disposed) return;
     this.bodyId = profile.bodyId;
+    this.configureMaterial(profile);
+    this.uniforms.enhancedModulation.value = sourceTexture ? 0 : 1;
     if (!enabled || !surface || this.renderer.capabilities.maxTextureSize<ENHANCED_TILE_SIZE) {
       this.clear(); this.publish("global"); return;
     }
@@ -233,7 +254,6 @@ export class EnhancedSurface {
     if (identity!==this.identity) {
       this.clear(); this.identity = identity; this.checkAt = 0; this.failedUntil = 0;
     }
-    this.uniforms.enhancedModulation.value = sourceTexture ? 0 : 1;
     const blend = this.uniforms.enhancedBlend.value as THREE.Vector4;
     this.slots.forEach((slot,i) => {
       if (slot) { slot.fade = Math.min(1,slot.fade+Math.max(0,delta)*2.5); blend.setComponent(i,slot.fade); }
@@ -255,6 +275,24 @@ export class EnhancedSurface {
       }
     }
     this.publish(this.slots.some(Boolean)?"ready":"pending");
+  }
+
+  get tileIds() { return this.slots.flatMap(slot => slot ? [slot.target.texture.uuid] : []); }
+  get isSettled() { return this.slots.every(slot => !slot || slot.fade >= 1); }
+
+  private configureMaterial(profile: EnhancedSurfaceProfile) {
+    const atlas = this.atlas(), image = atlas?.image as { width?: number; height?: number } | undefined;
+    const family = familyData[profile.family], u = this.uniforms;
+    u.enhancedMaterialReady.value = Number(!!atlas && !!image?.width && !!image.height);
+    u.enhancedAtlas.value = atlas ?? this.fallback;
+    u.enhancedAtlasSize.value.set(image?.width ?? 1, image?.height ?? 1);
+    u.enhancedAtlasQuadrant.value.set(...family.quadrant);
+    u.enhancedMaterialSeed.value.set(...profile.seed);
+    u.enhancedMaterialStretch.value.set(...family.stretch);
+    u.enhancedMaterialMean.value = family.mean;
+    u.enhancedMaterialDeviation.value = family.deviation;
+    u.enhancedDetailStrength.value = profile.strength ?? 0.12;
+    u.enhancedAtlasSrgb.value = Number(atlas?.colorSpace === THREE.SRGBColorSpace);
   }
 
   private bake(index: number,key: string,atlas: THREE.Texture,source: THREE.Texture | null | undefined,profile: EnhancedSurfaceProfile) {

@@ -12,6 +12,8 @@ export interface WalkingState {
 export interface FlightState {
   version: 2;
   worldLayoutVersion?: number;
+  /** Surface-height revision; omitted historical saves use terrain revision 1. */
+  terrainVersion?: number;
   position: number[];
   velocity: number[];
   orientation: number[];

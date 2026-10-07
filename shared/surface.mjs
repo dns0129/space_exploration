@@ -1,4 +1,7 @@
-// Gameplay profiles: density and terrain are illustrative, not weather or elevation data.
+import { getTerrainHeightField, terrainDefinitions } from "./terrain-fields.mjs";
+
+// Gameplay profiles: density and inferred rocky relief are illustrative. Earth
+// macrorelief uses the same shipped GEBCO elevation as its visible surface.
 const profiles = {
   "earth-station": { solid: false, gravity: 0 },
   ceres: { ground: "#82776a", gravity: 0.27 },
@@ -70,7 +73,7 @@ function earthNoise(x, y, z) {
       mix(hash(ix, iy + 1, iz + 1), hash(ix + 1, iy + 1, iz + 1), tx), ty), tz);
 }
 // A continuous function of the radial direction keeps collision and regenerated tiles identical.
-export function terrainHeightKm(id, normal) {
+export function legacyTerrainHeightKm(id, normal) {
   if (!surfaceProfile(id).solid) return 0;
   const [x, y, z] = normal;
   if (id === "earth") {
@@ -88,4 +91,95 @@ export function terrainHeightKm(id, normal) {
   const fine = Math.sin(x * 7200 + y * 3600 + seed) * Math.cos(z * 6400 - y * 3200);
   return 0.065 + broad * 0.045 + fine * 0.009;
 }
+export const TERRAIN_VERSION = 2;
+export const terrainHeightField = getTerrainHeightField;
+
+/** Map a fixed world radial into the photographic frame used during flight. */
+export function terrainMapUv(id, normal) {
+  const definition = terrainDefinitions[id];
+  const tilt = definition?.tiltRad ?? 0;
+  const yaw = -(definition?.yawRad ?? -0.4) + (definition?.mapOffset ?? 0) * Math.PI * 2;
+  const length = Math.hypot(...normal) || 1;
+  const [x, y, z] = normal.map(n => n / length);
+  const tx = Math.cos(tilt) * x + Math.sin(tilt) * y;
+  const ty = -Math.sin(tilt) * x + Math.cos(tilt) * y;
+  const mx = Math.cos(yaw) * tx + Math.sin(yaw) * z;
+  const mz = -Math.sin(yaw) * tx + Math.cos(yaw) * z;
+  const u = Math.atan2(mz, -mx) / (Math.PI * 2);
+  return [u - Math.floor(u), .5 + Math.asin(Math.max(-1, Math.min(1, ty))) / Math.PI];
+}
+/** Inverse mapping, useful for navigating/tests of a feature in a source mosaic. */
+export function terrainMapNormal(id, uv) {
+  const definition = terrainDefinitions[id];
+  const longitude = uv[0] * Math.PI * 2, latitude = (uv[1] - .5) * Math.PI;
+  const x = -Math.cos(longitude) * Math.cos(latitude), y = Math.sin(latitude), z = Math.sin(longitude) * Math.cos(latitude);
+  const yaw = (definition?.yawRad ?? -.4) - (definition?.mapOffset ?? 0) * Math.PI * 2;
+  const tilt = definition?.tiltRad ?? 0;
+  const tx = Math.cos(yaw) * x + Math.sin(yaw) * z;
+  const tz = -Math.sin(yaw) * x + Math.cos(yaw) * z;
+  return [Math.cos(tilt) * tx - Math.sin(tilt) * y, Math.sin(tilt) * tx + Math.cos(tilt) * y, tz];
+}
+
+// Pixel centres and wrap/clamp exactly match an uncoloured, linear-filtered
+// DataTexture with flipY=false. Neither quality nor distance changes this field.
+export function sampleTerrainField(field, uv) {
+  const x = (uv[0] - Math.floor(uv[0])) * field.width - .5;
+  const y = Math.max(0, Math.min(field.height - 1, uv[1] * field.height - .5));
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const tx = x - ix, ty = y - iy;
+  const wrap = n => (n % field.width + field.width) % field.width;
+  const north = Math.min(iy + 1, field.height - 1);
+  const a = field.data[iy * field.width + wrap(ix)], b = field.data[iy * field.width + wrap(ix + 1)];
+  const c = field.data[north * field.width + wrap(ix)], d = field.data[north * field.width + wrap(ix + 1)];
+  return ((a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty) / 255;
+}
+
+export function terrainHeightKm(id, normal) {
+  if (!surfaceProfile(id).solid) return 0;
+  const field = terrainHeightField(id);
+  if (!field) return legacyTerrainHeightKm(id, normal);
+  const length = Math.hypot(...normal) || 1;
+  const radial = normal.map(n => n / length);
+  const macro = field.heightOffsetKm + sampleTerrainField(field, terrainMapUv(id, radial)) * field.heightScaleKm;
+  // Preserve the continuous metre-scale game surface. Its zero-mean component
+  // is shared with orbit shaders; it cannot erase or move the macrorelief.
+  return macro + (field.fineEnabled ? legacyTerrainHeightKm(id, radial) - .065 : 0);
+}
+
+export function terrainMaxHeightKm(id) {
+  if (!surfaceProfile(id).solid) return 0;
+  const definition = terrainDefinitions[id];
+  return definition ? definition.heightOffsetKm + definition.heightScaleKm + (definition.fineEnabled ? .054 : 0) : .119;
+}
+
+/** GPU counterpart of terrainHeightKm; texture bytes/UV transforms are shared. */
+export const canonicalTerrainSampling = /* glsl */ `
+  uniform sampler2D canonicalHeightMap;
+  uniform float canonicalHeightScaleKm, canonicalHeightOffsetKm, canonicalHeightReady;
+  uniform float canonicalFineSeed, canonicalFineEnabled;
+  uniform mat3 canonicalWorldToMap;
+  vec2 canonicalTerrainUv(vec3 worldRadial) {
+    vec3 p = normalize(canonicalWorldToMap * normalize(worldRadial));
+    return vec2(fract(atan(p.z, -p.x) / 6.283185307179586),
+      0.5 + asin(clamp(p.y, -1.0, 1.0)) / 3.141592653589793);
+  }
+  // Geometry always reads the complete field. Shading may suppress only the
+  // subpixel fine waves; its crater/DEM macroheight never changes with distance.
+  float canonicalTerrainHeightFilteredKm(vec3 worldRadial, float broadWeight, float fineWeight) {
+    vec3 p = normalize(worldRadial);
+    float macroHeight = canonicalHeightOffsetKm;
+    if (canonicalHeightReady > 0.5)
+      macroHeight += texture2D(canonicalHeightMap, canonicalTerrainUv(p)).r * canonicalHeightScaleKm;
+    if (canonicalFineEnabled < 0.5 || max(broadWeight, fineWeight) <= 0.0) return macroHeight;
+    float broad = 0.0, fine = 0.0;
+    if (broadWeight > 0.0) broad = sin(p.x * 1900.0 + canonicalFineSeed)
+      * sin(p.y * 1700.0 - canonicalFineSeed) * cos(p.z * 2100.0);
+    if (fineWeight > 0.0) fine = sin(p.x * 7200.0 + p.y * 3600.0 + canonicalFineSeed)
+      * cos(p.z * 6400.0 - p.y * 3200.0);
+    return macroHeight + canonicalFineEnabled * (broad * 0.045 * broadWeight + fine * 0.009 * fineWeight);
+  }
+  float canonicalTerrainHeightKm(vec3 worldRadial) {
+    return canonicalTerrainHeightFilteredKm(worldRadial, 1.0, 1.0);
+  }
+`;
 export const LANDING_CLEARANCE_KM = 0.006;

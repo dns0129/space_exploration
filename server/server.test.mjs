@@ -8,6 +8,7 @@ import { createVoyagerServer } from "./server.mjs";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import { bodySystem } from "../shared/world-navigation.mjs";
 import { terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
+import { mappedMountainNormal } from "./terrain-fixtures.mjs";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
 import * as THREE from "three";
 import { RenderBudget } from "../src/render-budget.ts";
@@ -537,7 +538,7 @@ test("orbital thrust above 10 km permits a short slow start but sustained power 
 });
 
 test("the manual engine and preset switch on both sides of the actual 10 km terrain boundary", () => {
-  const normal = new THREE.Vector3(0, 0, 1);
+  const normal = mappedMountainNormal();
   assert(terrainHeightKm("earth", normal.toArray()) > 3, "the boundary fixture must lie above a kilometre-scale mountain");
   for (const id of ["earth", "moon"]) {
     const ship = new ShipDynamics();
@@ -578,7 +579,7 @@ test("the manual engine and preset switch on both sides of the actual 10 km terr
 });
 
 test("swept descent into the 10 km layer follows a mountain's actual height without braking clear high-altitude flight", () => {
-  const normal = new THREE.Vector3(0, 0, 1);
+  const normal = mappedMountainNormal();
   const mountain = terrainHeightKm("earth", normal.toArray());
   assert(mountain > 3);
   for (const selectedMps of [1, 133]) {
