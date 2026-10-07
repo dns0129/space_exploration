@@ -44,9 +44,8 @@ export interface FlightStats {
   renderMode: FlightRenderMode;
   engine: ShipDynamics["engine"];
   cruiseSpeedKm: number;
+  lowFlightSpeedMps: number;
   engineMode: ShipDynamics["engineMode"];
-  orbitalEngineActive: boolean;
-  orbitalBlockReason: string | null;
   environment: ShipDynamics["environment"];
   warpBlockReason: string | null;
   warpPhase: ShipDynamics["warpPhase"];
@@ -1371,14 +1370,9 @@ export class SolarScene {
     if (this.walking) return "请先返回飞船，再设置航速";
     return this.dynamics?.setCruiseSpeed(kmps) ?? (this.dynamics ? null : "飞船尚未就绪");
   }
-  setFlightEngineMode(mode: ShipDynamics["engineMode"]): string | null {
-    if (this.walking) return "请先返回飞船，再切换引擎";
-    return this.dynamics?.setEngineMode(mode) ?? (this.dynamics ? null : "飞船尚未就绪");
-  }
-  startOrbitalFlight(): string | null {
-    if (!this.dynamics) return "飞船尚未就绪";
-    if (this.walking) return "请先返回飞船，再启动轨道引擎";
-    return this.dynamics.startOrbitalEngine();
+  setLowFlightSpeed(mps: number): string | null {
+    if (this.walking) return "请先返回飞船，再设置航速";
+    return this.dynamics?.setLowFlightSpeed(mps) ?? (this.dynamics ? null : "飞船尚未就绪");
   }
   landFlight(): string | null {
     if (this.walking) return "请先返回飞船，再起飞";
@@ -1611,9 +1605,8 @@ export class SolarScene {
       renderMode: this.renderPolicy.mode,
       engine: ship.engine,
       cruiseSpeedKm: ship.cruiseSpeedKm,
+      lowFlightSpeedMps: ship.lowFlightSpeedMps,
       engineMode: ship.engineMode,
-      orbitalEngineActive: ship.orbitalEngineActive,
-      orbitalBlockReason: ship.orbitalBlockReason,
       environment,
       warpBlockReason: ship.warpBlockReason,
       warpPhase: ship.warpPhase,

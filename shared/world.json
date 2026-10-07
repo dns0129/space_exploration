@@ -6,28 +6,34 @@
   "boostSpeed": 15.69612305760477,
   "engines": [
     {
-      "id": "atmospheric",
-      "name": "\u6781\u4f4e\u5927\u6c14\u5f15\u64ce",
-      "accelerationKm": 0.3,
-      "boostAccelerationKm": 0.8
+      "id": "maneuver",
+      "name": "机动档",
+      "accelerationKm": 100,
+      "boostAccelerationKm": 200
     },
     {
-      "id": "orbital",
-      "name": "\u8fd1\u5730\u8f68\u9053\u5f15\u64ce",
-      "accelerationKm": 30,
-      "boostAccelerationKm": 100
+      "id": "cruise",
+      "name": "巡航档",
+      "accelerationKm": 1000,
+      "boostAccelerationKm": 2000
+    },
+    {
+      "id": "transfer",
+      "name": "转移档",
+      "accelerationKm": 10000,
+      "boostAccelerationKm": 20000
     },
     {
       "id": "planetary",
-      "name": "\u884c\u661f\u5f15\u64ce",
-      "accelerationKm": 2000,
-      "boostAccelerationKm": 6000
+      "name": "行星际档",
+      "accelerationKm": 50000,
+      "boostAccelerationKm": 100000
     },
     {
       "id": "interstellar",
-      "name": "\u661f\u9645\u5f15\u64ce",
-      "accelerationKm": 10000,
-      "boostAccelerationKm": 30000
+      "name": "星际档",
+      "accelerationKm": 150000,
+      "boostAccelerationKm": 300000
     }
   ],
   "flightSafety": {

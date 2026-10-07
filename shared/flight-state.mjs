@@ -1,5 +1,6 @@
 import world from "./world.json" with { type: "json" };
 import { surfaceProfile, terrainHeightKm, LANDING_CLEARANCE_KM } from "./surface.mjs";
+import { propulsionBand } from "./propulsion.mjs";
 export { world };
 const systemIds = new Set(world.systems.map(system => system.id));
 const ids = new Set(world.bodies.map((body) => body.id));
@@ -85,9 +86,10 @@ export function validateFlightState(value) {
     !vector(value.orientation, 4, 1.01) ||
     !ids.has(value.target) ||
     (value.systemId !== undefined && !systemIds.has(value.systemId)) ||
-    (value.engineMode !== undefined && !["standard", "atmospheric", "orbital", "planetary", "interstellar"].includes(value.engineMode)) ||
     (value.cruiseSpeedKm !== undefined && (typeof value.cruiseSpeedKm !== "number"
-      || !Number.isFinite(value.cruiseSpeedKm) || value.cruiseSpeedKm < 100)) ||
+      || !Number.isFinite(value.cruiseSpeedKm))) ||
+    (value.lowFlightSpeedMps !== undefined && (typeof value.lowFlightSpeedMps !== "number"
+      || !Number.isFinite(value.lowFlightSpeedMps))) ||
     !["cockpit", "chase"].includes(value.camera) ||
     typeof value.assist !== "boolean" ||
     typeof value.elapsed !== "number" ||
@@ -100,7 +102,7 @@ export function validateFlightState(value) {
   if (
     norm < 0.95 ||
     norm > 1.05 ||
-    !Number.isFinite(Math.hypot(...value.velocity)) || (value.version === 1 && Math.hypot(...value.velocity) > 120)
+    (value.version === 1 && Math.hypot(...value.velocity) > 120)
   )
     return null;
   const body = world.bodies.find((b) => b.id === value.target);
@@ -125,16 +127,30 @@ export function validateFlightState(value) {
     position, velocity: value.velocity, landedBody: value.landedBody, systemId: value.systemId ?? "solar",
   });
   if (value.walking !== undefined && (value.version !== 2 || !walking)) return null;
+  const cruiseSpeedKm = Math.max(1, Math.min(150000, value.version === 2 ? value.cruiseSpeedKm ?? 100 : 100));
+  const legacyLowSpeed = Number.isFinite(value.atmosphericSpeedMps) ? value.atmosphericSpeedMps : 1000;
+  const lowFlightSpeedMps = Math.max(1, Math.min(1000, value.version === 2 ? value.lowFlightSpeedMps ?? legacyLowSpeed : 1000));
+  let velocity = value.version === 1 ? [0, 0, 0] : [...value.velocity];
+  const maximumVelocity = 150000 / world.unitsKm;
+  if (Math.hypot(...velocity) > maximumVelocity) {
+    // Normalize in two stages, so even finite legacy components whose norm
+    // overflows can migrate to the current physical speed range.
+    const scale = Math.max(...velocity.map(Math.abs));
+    velocity = velocity.map(n => n / scale);
+    const norm = Math.hypot(...velocity);
+    velocity = velocity.map(n => n / norm * maximumVelocity);
+  }
   return {
     version: 2,
     worldLayoutVersion: world.layoutVersion ?? 1,
     ...(value.landedBody ? { landedBody: value.landedBody } : {}),
     ...(walking ? { walking } : {}),
     systemId: value.version === 1 ? "solar" : value.systemId ?? "solar",
-    engineMode: value.version === 2 && value.engineMode && value.engineMode !== "standard" ? value.engineMode : "planetary",
-    cruiseSpeedKm: value.version === 2 ? value.cruiseSpeedKm ?? 100 : 100,
+    engineMode: propulsionBand(cruiseSpeedKm).id,
+    cruiseSpeedKm,
+    lowFlightSpeedMps,
     position,
-    velocity: value.version === 1 ? [0, 0, 0] : [...value.velocity],
+    velocity,
     orientation: value.orientation.map((n) => n / (Math.abs(norm - 1) < 1e-10 ? 1 : norm)),
     target: value.target,
     camera: value.camera,
