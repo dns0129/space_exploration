@@ -17,7 +17,7 @@ test("belt particles occupy the main belt and station sits 400 km above Earth", 
   const belt = createAsteroidBelt(world.unitsKm, world.auKm, ceres.position);
   const positions = belt.children[0].geometry.getAttribute("position");
   for (let i = 0; i < positions.count; i++) {
-    const au = Math.hypot(positions.getX(i), positions.getZ(i)) * world.unitsKm / world.auKm;
+    const au = Math.hypot(positions.getX(i), positions.getY(i), positions.getZ(i)) * world.unitsKm / world.auKm;
     assert(au >= 2.1 && au <= 3.3);
   }
   assert.equal(belt.children[1].count, 180);

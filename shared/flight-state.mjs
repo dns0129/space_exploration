@@ -15,6 +15,23 @@ const vector = (value, count, bound) =>
   value.every(
     (n) => typeof n === "number" && Number.isFinite(n) && Math.abs(n) <= bound,
   );
+// Layout 1 placed every planet in the ecliptic. Preserve local ship/terrain
+// offsets near moved bodies, including landed and walking saves. Deep-space
+// positions retain their absolute coordinates. Current saves carry the layout
+// version so a normalized save can never be translated twice.
+function migrateLayoutPosition(value, position) {
+  if (value.version !== 2 || (value.worldLayoutVersion ?? 1) >= (world.layoutVersion ?? 1)) return position;
+  const bodies = world.bodies.filter(body => (body.systemId ?? "solar") === (value.systemId ?? "solar"));
+  const distanceTo = (body, previous) => Math.hypot(...position.map((n, i) => n - (previous ? body.previousPosition ?? body.position : body.position)[i]));
+  const anchor = value.landedBody ? bodies.find(body => body.id === value.landedBody)
+    : bodies.reduce((nearest, body) => !nearest || distanceTo(body, true) - body.radius < distanceTo(nearest, true) - nearest.radius ? body : nearest, undefined);
+  if (!anchor?.previousPosition) return position;
+  const oldDistance = distanceTo(anchor, true);
+  const currentDistance = Math.min(...bodies.map(body => distanceTo(body, false) - body.radius));
+  if (oldDistance - anchor.radius >= currentDistance
+    || (!value.landedBody && oldDistance - anchor.radius > Math.max(1e6 / world.unitsKm, anchor.radius * 20))) return position;
+  return position.map((n, i) => anchor.position[i] + (n - anchor.previousPosition[i]));
+}
 // Keep walking saves in the ship's metre-scale frame; never subtract two AU-scale character positions.
 export function validateWalkingState(value, flight, config = world) {
   if (!value || typeof value !== "object" || !flight || value.bodyId !== flight.landedBody
@@ -62,6 +79,7 @@ export function validateFlightState(value) {
     !value ||
     typeof value !== "object" ||
     ![1, 2].includes(value.version) ||
+    (value.worldLayoutVersion !== undefined && ![1, world.layoutVersion ?? 1].includes(value.worldLayoutVersion)) ||
     !vector(value.position, 3, value.version === 1 ? 1e6 : 1e12) ||
     !vector(value.velocity, 3, value.version === 1 ? 120 : world.boostSpeed * 2) ||
     !vector(value.orientation, 4, 1.01) ||
@@ -91,7 +109,7 @@ export function validateFlightState(value) {
   if (value.version === 1 && (!old || (value.systemId && value.systemId !== "solar"))) return null;
   const position = value.version === 1
     ? value.position.map((n, i) => body.position[i] + (n - old[1][i]) / old[0] * body.radius)
-    : [...value.position];
+    : migrateLayoutPosition(value, [...value.position]);
   if (!vector(position, 3, 1e12)) return null;
   if (value.landedBody !== undefined) {
     const ground = world.bodies.find((b) => b.id === value.landedBody);
@@ -110,6 +128,7 @@ export function validateFlightState(value) {
   if (value.walking !== undefined && (value.version !== 2 || !walking)) return null;
   return {
     version: 2,
+    worldLayoutVersion: world.layoutVersion ?? 1,
     ...(value.landedBody ? { landedBody: value.landedBody } : {}),
     ...(walking ? { walking } : {}),
     systemId: value.version === 1 ? "solar" : value.systemId ?? "solar",
