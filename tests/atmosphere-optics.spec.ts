@@ -158,13 +158,50 @@ test("大气按光程消光、薄层连续衰减，晨昏变暖且不会给地�
       if (clear - shadowed > 1) attenuatedPixels++;
       maxAddedRadiance = Math.max(maxAddedRadiance, shadowed - clear);
     }
+    // These planets place their cloud decks in the transparent render list.
+    // An alpha-one deck must still receive extinction from the shell above it.
+    const cloudAttenuation: { id: string; pixels: number; attenuatedPixels: number; meanTransmissionLoss: number }[] = [];
+    const comparisonGroups = [model.group, star.group];
+    const replacedCloudMaterials = [];
+    scene.remove(model.group);
+    light.set(...nightSun);
+    for (const id of ["venus", "neptune"] as const) {
+      const cloudModel = createPlanetModel({ ...getBody(id), axialTiltDeg: 0,
+        radiusKm, atmosphereKm: heightKm, flattening: 1 }, light);
+      cloudModel.surface.visible = false;
+      const deck = cloudModel.layers.clouds!;
+      replacedCloudMaterials.push(deck.material);
+      deck.material = new THREE.MeshBasicMaterial({ color: 0xb0b0b0,
+        transparent: true, opacity: 1, depthWrite: false });
+      const halo = cloudModel.layers.atmosphere!;
+      halo.children[0].material.uniforms.atmosphereColor.value.copy(tint);
+      halo.children[0].material.uniforms.strength.value = atmosphereStrength("earth");
+      scene.add(cloudModel.group);
+      comparisonGroups.push(cloudModel.group);
+      halo.visible = false;
+      const clearCloud = capture(`atmosphere-${id}-cloud-clear`);
+      halo.visible = true;
+      const shadowedCloud = capture(`atmosphere-${id}-cloud-shadowed`);
+      let pixels = 0, attenuated = 0, loss = 0;
+      for (let i = 0; i < clearCloud.length; i += 4) {
+        if (clearCloud[i + 3] < 250) continue;
+        const clear = (clearCloud[i] + clearCloud[i + 1] + clearCloud[i + 2]) / 3;
+        const shadowed = (shadowedCloud[i] + shadowedCloud[i + 1] + shadowedCloud[i + 2]) / 3;
+        pixels++;
+        loss += clear - shadowed;
+        if (clear - shadowed > 1) attenuated++;
+      }
+      cloudAttenuation.push({ id, pixels, attenuatedPixels: attenuated, meanTransmissionLoss: loss / pixels });
+      scene.remove(cloudModel.group);
+    }
     const glError = renderer.getContext().getError();
     sampleTarget.dispose();
     imageTarget.dispose();
     sampler.geometry.dispose();
     sampler.material.dispose();
     originalSurfaceMaterial.dispose();
-    for (const group of [model.group, star.group]) group.traverse((object: any) => {
+    replacedCloudMaterials.forEach(material => material.dispose());
+    for (const group of comparisonGroups) group.traverse((object: any) => {
       object.geometry?.dispose();
       if (Array.isArray(object.material)) object.material.forEach((material: any) => material.dispose());
       else object.material?.dispose();
@@ -174,7 +211,7 @@ test("大气按光程消光、薄层连续衰减，晨昏变暖且不会给地�
       beyondAtmosphere, finite, planetBlending, coronaBlending,
       normalBlending: THREE.NormalBlending, additiveBlending: THREE.AdditiveBlending,
       surfacePixels, attenuatedPixels, meanTransmissionLoss: transmissionLoss / surfacePixels,
-      maxAddedRadiance, glError, shots };
+      maxAddedRadiance, cloudAttenuation, glError, shots };
   });
   for (const shot of result.shots) {
     await writeFile(info.outputPath(`${shot.name}.png`), Buffer.from(shot.image, "base64"));
@@ -216,4 +253,11 @@ test("大气按光程消光、薄层连续衰减，晨昏变暖且不会给地�
     .toBeGreaterThan(result.surfacePixels * 0.1);
   expect(result.meanTransmissionLoss).toBeGreaterThan(0.5);
   expect(result.maxAddedRadiance, "The night shell must not add a luminous coat to the planet").toBeLessThanOrEqual(1);
+  for (const cloud of result.cloudAttenuation) {
+    expect(cloud.pixels, `${cloud.id} must render a resolved cloud deck`).toBeGreaterThan(1_000);
+    expect(cloud.attenuatedPixels, `${cloud.id}'s transparent cloud deck must receive atmospheric extinction`)
+      .toBeGreaterThan(cloud.pixels * 0.1);
+    expect(cloud.meanTransmissionLoss, `${cloud.id}'s cloud deck must not overwrite atmospheric attenuation`)
+      .toBeGreaterThan(0.5);
+  }
 });
