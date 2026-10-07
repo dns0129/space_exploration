@@ -1523,7 +1523,8 @@ export class SolarScene {
           Math.max(1, 1.07 / Math.max(this.camera.aspect, 0.55)),
         ),
         close: new THREE.Vector3(0, 1.3, 2.6),
-        night: new THREE.Vector3(4, 2, -4),
+        // View the unlit ring face instead of lining up exactly with its plane.
+        night: new THREE.Vector3(4, -1.8, -4),
       }[view];
     }
     if (this.currentModel?.body.id === "mars" && view === "overview")
