@@ -23,9 +23,17 @@ export async function verifyWalkingFlight(page) {
   } finally { await page.keyboard.up("KeyW"); }
   await expect(page.locator("#flight-land")).toBeDisabled();
   await page.keyboard.down("Space");
-  try { await expect(page.locator("#walking-panel")).toHaveAttribute("data-grounded", "false"); }
+  try {
+    // Freeze the first observed airborne frame in the browser. Separate CDP
+    // input round trips can outlast a short Earth jump under software rendering.
+    await page.waitForFunction(() => {
+      if (document.querySelector("#walking-panel")?.dataset.grounded !== "false") return false;
+      document.querySelector("#flight-pause").click();
+      return true;
+    }, null, { timeout: 45000 });
+  }
   finally { await page.keyboard.up("Space"); }
-  await page.locator("#flight-pause").click();
+  await expect(page.locator("#flight-pause")).toHaveAttribute("aria-pressed", "true");
   await page.locator("#flight-save").click();
   await expect(page.locator("#flight-storage")).toHaveText("已保存 · 本机");
   const saved = await read();
