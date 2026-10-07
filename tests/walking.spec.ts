@@ -10,6 +10,7 @@ async function seedLanded(page: Page, id: string) {
   const height = terrainHeightKm(id, [0, 0, -1]) + LANDING_CLEARANCE_KM;
   const state = {
     version: 2,
+    worldLayoutVersion: world.layoutVersion,
     position: [body.position[0], body.position[1], body.position[2] - body.radius - height / world.unitsKm],
     velocity: [0, 0, 0],
     orientation: [-Math.SQRT1_2, 0, 0, Math.SQRT1_2],

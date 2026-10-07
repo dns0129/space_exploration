@@ -11,6 +11,7 @@ export interface WalkingState {
 }
 export interface FlightState {
   version: 2;
+  worldLayoutVersion?: number;
   position: number[];
   velocity: number[];
   orientation: number[];
@@ -27,6 +28,7 @@ export interface FlightState {
 }
 export interface WorldConfig {
   version: number;
+  layoutVersion?: number;
   unitsKm: number;
   auKm: number;
   lightYearKm: number;
@@ -48,7 +50,7 @@ export interface WorldConfig {
     boostAccelerationKm: number;
   }[];
   warp: { chargeSeconds: number; travelSeconds: number; arrivalSeconds: number; cooldownSeconds: number };
-  bodies: { id: BodyId; radius: number; position: number[]; systemId: SystemId; kind?: "star" | "planet" | "station"; hostStarId?: BodyId; atmosphereKm?: number }[];
+  bodies: { id: BodyId; radius: number; position: number[]; previousPosition?: number[]; orbit?: { inclinationDeg: number; ascendingNodeDeg: number; longitudeDeg: number }; systemId: SystemId; kind?: "star" | "planet" | "station"; hostStarId?: BodyId; atmosphereKm?: number }[];
 }
 export const world: WorldConfig;
 export function validateFlightState(value: unknown): FlightState | null;

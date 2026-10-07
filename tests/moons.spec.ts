@@ -45,7 +45,7 @@ test("近地向太空推进和减速脉冲可见，不能绕过跃迁限制", as
   const earth = world.bodies.find((body: any) => body.id === "earth");
   await page.request.get("/api/flight/save");
   expect((await page.request.post("/api/flight/save", { data: {
-    version: 2, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 50 / world.unitsKm],
+    version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 50 / world.unitsKm],
     velocity: [0, 0, 0], orientation: [0, 1, 0, 0], target: "mars", camera: "cockpit", assist: false, elapsed: 0,
   } })).ok()).toBe(true);
   await page.goto("/");

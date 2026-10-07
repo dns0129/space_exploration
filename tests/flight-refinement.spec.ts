@@ -80,7 +80,7 @@ test("十公里以上大气恢复高速存档使用轨道档，低速预设和�
   const earth = world.bodies.find((body: any) => body.id === "earth");
   await page.request.get("/api/flight/save");
   const response = await page.request.post("/api/flight/save", { data: {
-    version: 2, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 50 / world.unitsKm],
+    version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 50 / world.unitsKm],
     velocity: [50000 / world.unitsKm, 0, 0], orientation: [0, 0, 0, 1],
     target: "earth", camera: "cockpit", assist: false, elapsed: 0,
   } });
@@ -127,7 +127,7 @@ test("朝太空且高于十公里时按 O 启动轨道引擎，大气以一公�
   const earth = world.bodies.find((body: any) => body.id === "earth");
   await page.request.get("/api/flight/save");
   const response = await page.request.post("/api/flight/save", { data: {
-    version: 2, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 40 / world.unitsKm],
+    version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 40 / world.unitsKm],
     velocity: [0, 0, 0], orientation: [0, 1, 0, 0], target: "earth", camera: "cockpit", assist: true, elapsed: 0,
     engineMode: "standard", atmosphericSpeedMps: 600,
   } });

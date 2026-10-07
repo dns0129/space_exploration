@@ -8,7 +8,7 @@ test("离地十公里内手动250与1米每秒生效，朝外仍不能启动轨�
   const altitudeKm = terrainHeightKm("earth", [0, 0, 1]) + LANDING_CLEARANCE_KM + 5;
   await page.request.get("/api/flight/save");
   const response = await page.request.post("/api/flight/save", { data: {
-    version: 2, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + altitudeKm / world.unitsKm],
+    version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + altitudeKm / world.unitsKm],
     velocity: [1000 / world.unitsKm, 0, 0], orientation: [0, 1, 0, 0],
     target: "earth", camera: "cockpit", assist: true, elapsed: 0,
   } });

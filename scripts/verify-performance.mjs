@@ -42,7 +42,7 @@ try {
           const body = world.bodies.find(body => body.id === target);
           const radial = new THREE.Vector3(0,0,-1), forward = new THREE.Vector3(1,0,0.25).normalize();
           const orientation = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), forward, radial));
-          const state = { version: 2, systemId: 'solar',
+          const state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: 'solar',
             position: new THREE.Vector3().fromArray(body.position).addScaledVector(radial, body.radius + altitude / world.unitsKm).toArray(),
             velocity: [0,0,0], orientation: orientation.toArray(), target, camera: 'cockpit', assist: true, elapsed: 0 };
           await page.evaluate(state => localStorage.setItem('voyager-flight-v1', JSON.stringify(state)), state);

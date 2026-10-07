@@ -41,7 +41,7 @@ test("超清地球近观呈现原生分块细节，切换画质释放分块，�
   // Flight starts in a far overview. Restore a real near-orbit position to exercise streaming.
   const world = await (await page.request.get("/api/world")).json();
   const earth = world.bodies.find((body: { id: string }) => body.id === "earth");
-  const state = { version: 2, systemId: "solar",
+  const state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar",
     position: [earth.position[0], earth.position[1], earth.position[2] - earth.radius - 1100 / world.unitsKm],
     velocity: [0, 0, 0], orientation: [0, 1, 0, 0], target: "earth", camera: "cockpit", assist: true, elapsed: 0 };
   await page.route("**/api/flight/save", route => route.fulfill({ json: { state } }));

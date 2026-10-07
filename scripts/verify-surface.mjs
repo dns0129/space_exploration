@@ -11,8 +11,8 @@ export async function verifySurfaceFlight(page) {
   await expect(page.locator("#loading-overlay")).toBeHidden();
   const earth = world.bodies.find((body) => body.id === "earth");
   const height = terrainHeightKm("earth", [0, 0, -1]) + LANDING_CLEARANCE_KM + 0.02;
-  const initial = { version: 2, systemId: "solar",
-    position: [earth.position[0], 0, earth.position[2] - earth.radius - height / world.unitsKm],
+  const initial = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar",
+    position: [earth.position[0], earth.position[1], earth.position[2] - earth.radius - height / world.unitsKm],
     velocity: [0, 0, 0], orientation: [-Math.SQRT1_2, 0, 0, Math.SQRT1_2],
     target: "earth", camera: "chase", assist: true, elapsed: 0 };
   await page.evaluate((state) => localStorage.setItem("voyager-flight-v1", JSON.stringify(state)), initial);

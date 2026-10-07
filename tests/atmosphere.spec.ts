@@ -39,7 +39,7 @@ test("100 km 大气可见、随高度连续变浓，越过边界不跳变，夜�
     const forward = view === "horizon" ? new THREE.Vector3(1, 0, 0) : view === "down" ? up.clone().negate() : up;
     const cameraUp = view === "horizon" ? up : new THREE.Vector3(0, 1, 0);
     const orientation = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), forward, cameraUp));
-    state = { version: 2, systemId: "solar", position: new THREE.Vector3().fromArray(body.position)
+    state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar", position: new THREE.Vector3().fromArray(body.position)
       .addScaledVector(up, body.radius + altitude / world.unitsKm).toArray(), velocity: [0,0,0],
       orientation: orientation.toArray(), target: id, camera: "cockpit", assist: true, elapsed: 0 };
     if (!images.size) await page.goto("/");
@@ -81,7 +81,7 @@ test("俯冲时外部镜头保持飞船在画内，并以行星地平线稳定�
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   const world = await (await page.request.get("/api/world")).json();
   const earth = world.bodies.find((body: any) => body.id === "earth");
-  const state = { version: 2, systemId: "solar",
+  const state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar",
     position: [earth.position[0], earth.position[1], earth.position[2] - earth.radius - 100 / world.unitsKm],
     velocity: [0,0,0], orientation: [0,1,0,0], target: "earth", camera: "chase", assist: true, elapsed: 0 };
   await page.route("**/api/flight/save", route => route.fulfill({ json: { state } }));

@@ -16,7 +16,7 @@ test("左右跃迁直线减速抵达，星球留在前方，存档保留落点",
       await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode","observe");
     }
     await page.request.post("/api/flight/save", { data: {
-      version: 2, systemId: "solar", position: [earth.position[0] + side * 15, 0, earth.position[2]],
+      version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar", position: [earth.position[0] + side * 15, earth.position[1], earth.position[2]],
       velocity: [0,0,0], orientation: [0,0,0,1], target: "earth", camera: "cockpit", assist: true, elapsed: 0,
     } });
     await page.goto("/");
@@ -50,7 +50,7 @@ test("跃迁末段实际画面从小星球连续拉近，暂停和抵达不改�
   const earth = world.bodies.find((body: any) => body.id === "earth");
   await page.request.get("/api/flight/save");
   await page.request.post("/api/flight/save", { data: {
-    version: 2, systemId: "solar", position: [earth.position[0], 0, earth.position[2] - 256],
+    version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar", position: [earth.position[0], earth.position[1], earth.position[2] - 256],
     velocity: [0,0,0], orientation: [0,1,0,0], target: "earth", camera: "cockpit", assist: true, elapsed: 0,
   } });
   await page.goto("/");

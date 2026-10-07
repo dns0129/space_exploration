@@ -27,7 +27,7 @@ test("局部大气和真空地表停止全局模型工作，返回太空重新�
     ["earth", 100, "surface"], ["moon", 20, "surface"], ["earth", 500, "space"],
   ] as const) {
     const body = world.bodies.find((body: { id: string }) => body.id === id);
-    state = { version: 2, systemId: "solar", position: [body.position[0], body.position[1],
+    state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar", position: [body.position[0], body.position[1],
       body.position[2] - body.radius - altitudeKm / world.unitsKm], velocity: [0, 0, 0],
       orientation: [0, 0, 0, 1], target: id, camera: "cockpit", assist: true, elapsed: 0 };
     if (id === "earth" && altitudeKm === 100) await page.goto("/");
@@ -71,7 +71,7 @@ test("暂停的局部座舱和追踪镜头保留画布，画质、恢复和视�
   const earth = world.bodies.find((body: { id: string }) => body.id === "earth");
   const up = new THREE.Vector3(0.4623, 0, -Math.sqrt(1 - 0.4623 ** 2));
   const forward = new THREE.Vector3(-up.z, 0, up.x).multiplyScalar(0.88).addScaledVector(up, 0.45).normalize();
-  const state = { version: 2, systemId: "solar", position: new THREE.Vector3().fromArray(earth.position)
+  const state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar", position: new THREE.Vector3().fromArray(earth.position)
     .addScaledVector(up, earth.radius + (terrainHeightKm("earth", up.toArray()) + 1.2) / world.unitsKm).toArray(), velocity: [0, 0, 0],
     orientation: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(
       new THREE.Vector3(), forward, up)).toArray(), target: "earth", camera: "cockpit", assist: true, elapsed: 0 };

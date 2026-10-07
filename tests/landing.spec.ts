@@ -12,7 +12,7 @@ test("地表实际渲染，L 连续降落、暂停、保存恢复与起飞，桌
   const height = terrainHeightKm("earth", [0, 0, -1]) + LANDING_CLEARANCE_KM + 0.06;
   await page.request.get("/api/flight/save");
   expect((await page.request.post("/api/flight/save", { data: {
-    version: 2, position: [earth.position[0], 0, earth.position[2] - earth.radius - height / world.unitsKm],
+    version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] - earth.radius - height / world.unitsKm],
     velocity: [0, 0, 0], orientation: [0, 0, 0, 1], target: "earth", camera: "chase", assist: true, elapsed: 0,
   } })).ok()).toBe(true);
   await page.goto("/");

@@ -65,7 +65,7 @@ test("低空天空与不同星球云系实际出现，穿云连续、晨昏暖�
     // their fixed 10.6/10.62/16.2 km radial cloud altitudes.
     const radialAltitude = view === "sky" || view === "sunset"
       ? terrainHeightKm(id, up.toArray()) + altitude : altitude;
-    state = { version: 2, systemId: body.systemId ?? "solar", position: new THREE.Vector3().fromArray(body.position)
+    state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: body.systemId ?? "solar", position: new THREE.Vector3().fromArray(body.position)
       .addScaledVector(up, body.radius + radialAltitude / world.unitsKm).toArray(), velocity: [0, 0, 0],
       orientation: orientation.toArray(), target: id, camera: "cockpit", assist: true, elapsed: 0 };
     if (results.size) await page.getByRole("button", { name: "行星观测", exact: true }).click();
