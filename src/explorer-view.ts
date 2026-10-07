@@ -14,6 +14,7 @@ export class ExplorerView {
   private readonly beacon: THREE.Mesh;
   private readonly shadow: THREE.Mesh;
   private stride = 0;
+  private photoMode = false;
   private readonly cameraRay = new THREE.Raycaster();
   private movementHeading = new THREE.Quaternion();
 
@@ -68,6 +69,11 @@ export class ExplorerView {
     this.group.visible = false;
   }
 
+  setPhotoMode(active: boolean) {
+    this.photoMode = active;
+    this.beacon.visible = !active;
+  }
+
   update(walker: WalkingDynamics, ship: ShipDynamics, camera: THREE.PerspectiveCamera,
       view: "first" | "third", dt: number, paused: boolean, immediate = false) {
     this.group.visible = walker.active;
@@ -95,6 +101,7 @@ export class ExplorerView {
     this.lander.group.quaternion.copy(ship.orientation);
     this.lander.group.position.copy(ground).addScaledVector(shipUp, this.lander.landingFootOffset * landerScale);
     this.beacon.scale.setScalar(1 / unitsM);
+    this.beacon.visible = !this.photoMode;
     this.beacon.position.copy(ground).addScaledVector(shipUp, 0.08 / unitsM);
     this.beacon.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), shipUp);
     this.shadow.position.copy(feet).addScaledVector(up, (0.035 - walker.groundClearanceM) / unitsM);

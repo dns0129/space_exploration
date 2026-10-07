@@ -4,7 +4,8 @@ import { watchSiteVersion } from "./site-version";
 import { FlightInterface } from "./flight-ui";
 import { SolarScene } from "./planet-scene";
 import { surfaceMapLabel } from "./body-textures";
-import type { View } from "./planet-scene";
+import type { SurfacePlacement, View } from "./planet-scene";
+import { surfaceProfile } from "../shared/surface.mjs";
 import { SOLAR_SYSTEM, PRIMARY_BODIES, EXPLORATION_BODIES, MOONS, CENTAURI_BODIES, BETELGEUSE_BODIES, STAR_SYSTEMS, getBodySystem, getSystemGroup, getBody, isBodyId } from "./solar-system";
 import type { BodyId, Layer } from "./solar-system";
 
@@ -27,6 +28,9 @@ const icons: Record<string, string> = {
   close: '<path d="m6 6 12 12M6 18 18 6"/>',
   settings:
     '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/>',
+  camera: '<path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="13" r="4"/>',
+  ship: '<path d="m12 3 4 8 5 6-7-2-2 6-2-6-7 2 5-6z"/>',
+  person: '<circle cx="12" cy="5" r="3"/><path d="M8 21v-7H5v-3l4-2h6l4 2v3h-3v7m-4-6v6"/>',
 };
 const icon = (name: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
@@ -37,7 +41,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <header class="header">
       <a class="brand" href="${publicSite ? `${import.meta.env.BASE_URL}index.html` : "#planet=earth"}" aria-label="${publicSite ? "星际探索首页" : "远航首页"}">${icon("orbit")}<span>${publicSite ? "星际探索" : "远航"} <b>VOYAGER</b></span></a>
       <nav class="main-nav" aria-label="主导航"><button id="mode-observe" class="nav-active" aria-pressed="true">行星观测</button><button id="mode-flight" class="scene-control" aria-pressed="false" disabled>自由航行</button></nav>
-      <div class="header-tools"><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
+      <div class="header-tools"><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button scene-control" id="photo-mode" aria-label="摄影模式" aria-pressed="false" title="摄影模式（P）· Enter 保存照片 · Esc 或双击画面退出" disabled>${icon("camera")}</button><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
     </header>
 
     <nav class="planet-rail" aria-label="太阳系天体">
@@ -74,6 +78,12 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       <div class="interaction-hint"><span class="mouse-icon"></span> 拖动环绕 <i>·</i> 滚轮缩放 <i>·</i> <kbd>空格</kbd> 暂停自转</div>
       <button class="mobile-settings" id="mobile-settings" aria-controls="control-panel" aria-expanded="false">${icon("settings")} 观测设置</button>
 
+      <section class="surface-placement" aria-label="地表放置">
+        <div class="surface-placement-tools"><span class="control-label">地表放置</span><button id="place-ship" aria-pressed="false" disabled>${icon("ship")} 放置飞船</button><button id="place-person" aria-pressed="false" disabled>${icon("person")} 放置人物</button></div>
+        <p id="surface-availability">选择对象，再点击星球上的位置</p>
+        <div id="placement-hint" role="status" hidden><span id="placement-message"></span><button id="cancel-placement">取消 <kbd>Esc</kbd></button></div>
+      </section>
+
       <section class="control-panel" id="control-panel" aria-label="观测设置">
         <div class="control-group views"><span class="control-label">观测视角 <small>VIEWPOINT</small></span><div class="segmented"><button class="scene-control selected" data-view="overview" aria-pressed="true" disabled>${icon("globe")} 全景</button><button class="scene-control" data-view="close" aria-pressed="false" disabled>${icon("compass")} 近地</button><button class="scene-control" data-view="night" aria-pressed="false" disabled>${icon("moon")} 夜景</button></div></div>
         <div class="control-group layers"><span class="control-label">画面图层 <small>LAYERS</small></span><div class="layer-switches"><button class="switch scene-control" role="switch" aria-checked="true" data-layer="clouds" disabled><span>云层</span><i></i></button><button class="switch scene-control" role="switch" aria-checked="true" data-layer="atmosphere" disabled><span>大气</span><i></i></button><button class="switch scene-control" role="switch" aria-checked="true" data-layer="stars" disabled><span>星空</span><i></i></button><button class="switch scene-control" role="switch" aria-checked="true" data-layer="rings" hidden disabled><span>环系</span><i></i></button></div></div>
@@ -85,7 +95,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <footer class="footer"><span><i></i><span id="render-status">准备观测系统</span></span><span class="footer-center">探索，始于仰望。</span><span>离舱探索 · 阶段 06 <b>V 0.6</b></span></footer>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">观测太阳、八颗行星及其主要卫星，或切换到自由航行驾驶飞船。航行时点击天体导航选择目标，用“对准目标”确定航向，再按 W 出发；按 J 启动跃迁引擎，蓄能后沿航线抵达。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div></dl><p class="scope-note">太阳、八颗行星和 26 颗主要卫星均可观测；“恒星系统”可切换半人马座 α，访问南门二 A/B、比邻星及比邻星行星，也可前往参宿四红超巨星。参宿四目前仅有恒星，使用 8K 表面艺术示意（紧凑设备使用原生 4K）；恒星无法着陆。各航区设置各自的星空方向与亮度；银河使用原生 8K 全景（紧凑设备使用 4K）；半人马座恒星与系外行星地表为高清概念示意。点击顶部“自由航行”驾驶飞船：W 前进，S 减速（停稳后倒车），A/D 平移，R/F 升降，Q/E 翻滚，方向键转向，触屏按住拖动、松手回正，Shift 加速，空格刹车，C 切换视角，J 启动跃迁，L 自动着陆或起飞。接近岩石行星和卫星后可连续下降到程序化地表；着陆后按 L 或 R 起飞，空格或手动操纵中止自动下降。气态与冰巨行星没有可着陆的固体地表。辅助驾驶让速度方向平滑跟随船头。导航目标可以收起，引擎滑条独立放在下方。拖动滑条选择五档目标航速：1–100、100–1000、1000–10,000、10,000–50,000、50,000–150,000 km/s，默认 100 km/s。飞船像《无人深空》一样逐渐加减速，换档或拖动滑条不会瞬间跳速。只有离实际固体地表 10 km 以内时，滑条切换为 1–1000 m/s 的低空引擎；离开后恢复太空航速预设。两种航速分别保存，Shift 增强推力响应，空格可刹停，自动着陆和起飞辅助负责接地减速。航行距离和天体半径按真实公里比例呈现，行星位置采用静态轨道示意，支持简化惯性与实体碰撞；保存与恢复使用服务端或本机存档。</p><p class="walking-guide"><strong>离舱探索：</strong>在固体星球或卫星着陆后，按 <kbd>E</kbd> 或点击“离开飞船”。<kbd>W A S D</kbd> 行走，按住 <kbd>Shift</kbd> 奔跑，<kbd>空格</kbd> 跳跃；鼠标按住拖动或方向键看向，<kbd>C</kbd> 切换第一 / 第三人称。触屏使用移动与视角按钮，刹车按钮会变成“跳跃”，加速按钮变成“奔跑”。低重力下跳得更高、滞空更久，抓地与落地响应也会改变；高重力下跳跃更低、回落更快。仪表显示当地重力、地面 / 腾空状态、步速与距离飞船。飞船在原处等待，靠近并落地后按 <kbd>E</kbd> 或“返回飞船”返舱，再按 <kbd>L</kbd> 起飞；离舱期间无法驾驶、起飞或跃迁。<kbd>H</kbd> 打开本指南并暂停，关闭后点击“继续探索”；存档保留人物与飞船的位置。</p><details class="credits"><summary>影像与素材来源</summary><p>16K 地球日面：NASA Blue Marble；8K 云层和城市夜景：NASA MODIS / VIIRS；8K 地形：GEBCO 08。数据镜像来自 <a href="https://github.com/simon23-12/orbital-botany/tree/c92393f8be6b94f3684399f18e55790c91a8fdb4/assets/earth" target="_blank" rel="noopener noreferrer">orbital-botany</a>，NASA 影像属公共领域，GEBCO 数据可自由使用；近观微纹理为程序化细化，非新增测绘。银河背景、水星、金星云顶、火星、天王星与月球贴图：Solar System Scope（CC BY 4.0）；木星、土星、海王星、木卫一、木卫三、土卫六、土卫七与海卫一：Askaniy Anpilogov、ItzImcool、NASA/JPL-Caltech/USGS、Björn Jónsson 等，收录于 CelestiaContent（CC BY 3.0 / 4.0）；天王星卫星：ItzImcool、Paul Schenk、Ted Stryk（CC BY-SA 4.0）；其余土星卫星、木卫二与木卫四：Paul Schenk、John van Vliet 等，收录于 CelestiaContent；太阳：Ruslan Kabatsayev、NASA/SDO HMI，收录于 Stellarium（CC BY-SA 4.0）。海王星小卫星、海卫二、半人马座恒星与比邻星行星为 cubicApocalypse、MrSpace43、AstroChara、Askaniy Anpilogov 与 Solar System Scope 的高清概念图（CC BY 4.0 / CC BY-SA 4.0 / CC BY 3.0），不是实测照片。参宿四表面为原创程序化 8K / 4K 艺术示意。部分影像缩小到 4K 并转换格式，未拍摄半球为示意填补。完整作者、修改、来源与许可见项目 ASSETS.md。</p></details></dialog>
+    <dialog id="help-dialog"><form method="dialog"><button class="icon-button dialog-close" aria-label="关闭操作指南">${icon("close")}</button></form><span class="eyebrow">WELCOME ABOARD</span><h2>从地球，望向宇宙。</h2><p class="dialog-intro">观测太阳、八颗行星及其主要卫星，或切换到自由航行驾驶飞船。航行时点击天体导航选择目标，用“对准目标”确定航向，再按 W 出发；按 J 启动跃迁引擎，蓄能后沿航线抵达。</p><dl class="guide"><div><dt>环绕观察</dt><dd>鼠标拖动 / 单指拖动 / 方向键</dd></div><div><dt>拉近与拉远</dt><dd>滚轮 / 双指捏合 / <kbd>+</kbd> <kbd>−</kbd></dd></div><div><dt>暂停星球自转</dt><dd><kbd>空格</kbd></dd></div><div><dt>回到全景</dt><dd><kbd>R</kbd></dd></div><div><dt>操作指南</dt><dd><kbd>H</kbd> / <kbd>Esc</kbd> 关闭</dd></div><div><dt>地表放置</dt><dd>选择“放置飞船”或“放置人物”，再点击星球地表；<kbd>Esc</kbd> 取消</dd></div><div><dt>摄影模式</dt><dd>相机按钮 / <kbd>P</kbd> 隐藏全部界面；<kbd>Enter</kbd> 保存 PNG；<kbd>P</kbd> / <kbd>Esc</kbd> / 双击画面退出，手机可用系统截图，双击画面退出</dd></div></dl><p class="scope-note">太阳、八颗行星和 26 颗主要卫星均可观测；“恒星系统”可切换半人马座 α，访问南门二 A/B、比邻星及比邻星行星，也可前往参宿四红超巨星。参宿四目前仅有恒星，使用 8K 表面艺术示意（紧凑设备使用原生 4K）；恒星无法着陆。各航区设置各自的星空方向与亮度；银河使用原生 8K 全景（紧凑设备使用 4K）；半人马座恒星与系外行星地表为高清概念示意。点击顶部“自由航行”驾驶飞船：W 前进，S 减速（停稳后倒车），A/D 平移，R/F 升降，Q/E 翻滚，方向键转向，触屏按住拖动、松手回正，Shift 加速，空格刹车，C 切换视角，J 启动跃迁，L 自动着陆或起飞。接近岩石行星和卫星后可连续下降到程序化地表；着陆后按 L 或 R 起飞，空格或手动操纵中止自动下降。气态与冰巨行星没有可着陆的固体地表。辅助驾驶让速度方向平滑跟随船头。导航目标可以收起，引擎滑条独立放在下方。拖动滑条选择五档目标航速：1–100、100–1000、1000–10,000、10,000–50,000、50,000–150,000 km/s，默认 100 km/s。飞船像《无人深空》一样逐渐加减速，换档或拖动滑条不会瞬间跳速。只有离实际固体地表 10 km 以内时，滑条切换为 1–1000 m/s 的低空引擎；离开后恢复太空航速预设。两种航速分别保存，Shift 增强推力响应，空格可刹停，自动着陆和起飞辅助负责接地减速。航行距离和天体半径按真实公里比例呈现，行星位置采用静态轨道示意，支持简化惯性与实体碰撞；保存与恢复使用服务端或本机存档。</p><p class="walking-guide"><strong>离舱探索：</strong>在固体星球或卫星着陆后，按 <kbd>E</kbd> 或点击“离开飞船”。<kbd>W A S D</kbd> 行走，按住 <kbd>Shift</kbd> 奔跑，<kbd>空格</kbd> 跳跃；鼠标按住拖动或方向键看向，<kbd>C</kbd> 切换第一 / 第三人称。触屏使用移动与视角按钮，刹车按钮会变成“跳跃”，加速按钮变成“奔跑”。低重力下跳得更高、滞空更久，抓地与落地响应也会改变；高重力下跳跃更低、回落更快。仪表显示当地重力、地面 / 腾空状态、步速与距离飞船。飞船在原处等待，靠近并落地后按 <kbd>E</kbd> 或“返回飞船”返舱，再按 <kbd>L</kbd> 起飞；离舱期间无法驾驶、起飞或跃迁。<kbd>H</kbd> 打开本指南并暂停，关闭后点击“继续探索”；存档保留人物与飞船的位置。</p><details class="credits"><summary>影像与素材来源</summary><p>16K 地球日面：NASA Blue Marble；8K 云层和城市夜景：NASA MODIS / VIIRS；8K 地形：GEBCO 08。数据镜像来自 <a href="https://github.com/simon23-12/orbital-botany/tree/c92393f8be6b94f3684399f18e55790c91a8fdb4/assets/earth" target="_blank" rel="noopener noreferrer">orbital-botany</a>，NASA 影像属公共领域，GEBCO 数据可自由使用；近观微纹理为程序化细化，非新增测绘。银河背景、水星、金星云顶、火星、天王星与月球贴图：Solar System Scope（CC BY 4.0）；木星、土星、海王星、木卫一、木卫三、土卫六、土卫七与海卫一：Askaniy Anpilogov、ItzImcool、NASA/JPL-Caltech/USGS、Björn Jónsson 等，收录于 CelestiaContent（CC BY 3.0 / 4.0）；天王星卫星：ItzImcool、Paul Schenk、Ted Stryk（CC BY-SA 4.0）；其余土星卫星、木卫二与木卫四：Paul Schenk、John van Vliet 等，收录于 CelestiaContent；太阳：Ruslan Kabatsayev、NASA/SDO HMI，收录于 Stellarium（CC BY-SA 4.0）。海王星小卫星、海卫二、半人马座恒星与比邻星行星为 cubicApocalypse、MrSpace43、AstroChara、Askaniy Anpilogov 与 Solar System Scope 的高清概念图（CC BY 4.0 / CC BY-SA 4.0 / CC BY 3.0），不是实测照片。参宿四表面为原创程序化 8K / 4K 艺术示意。部分影像缩小到 4K 并转换格式，未拍摄半球为示意填补。完整作者、修改、来源与许可见项目 ASSETS.md。</p></details></dialog>
   </div>
 `;
 
@@ -103,10 +113,14 @@ const state = {
   paused: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   view: "overview" as View,
   layers: { clouds: true, atmosphere: true, stars: true, rings: true },
+  placement: null as SurfacePlacement["kind"] | null,
+  photoMode: false,
 };
 let scene: SolarScene | undefined;
 let requestVersion = 0;
 let toastTimer: ReturnType<typeof setTimeout>;
+let photoReturnFocus: HTMLElement | null = null;
+let photoSaving = false;
 const toast = (message: string) => {
   $("#toast").textContent = message;
   $("#toast").classList.add("visible");
@@ -115,6 +129,7 @@ const toast = (message: string) => {
 };
 
 const flight = new FlightInterface(toast, (active, target) => {
+  cancelPlacement();
   state.mode = active ? "flight" : "observe";
   if (target) {
     state.body = target;
@@ -130,7 +145,74 @@ const flight = new FlightInterface(toast, (active, target) => {
     $("#connection-text").textContent = "远航号 · 驾驶在线";
     $("#render-status").textContent = "多恒星系统 · 8K / 4K 银河全景";
   }
+  updatePlacementControls();
 });
+
+function updatePlacementControls() {
+  const solid = surfaceProfile(state.body).solid;
+  for (const kind of ["ship", "person"] as const) {
+    const button = $<HTMLButtonElement>(`#place-${kind}`);
+    button.disabled = !state.ready || state.mode !== "observe" || !solid;
+    button.setAttribute("aria-pressed", String(state.placement === kind));
+  }
+  $("#surface-availability").textContent = solid
+    ? "选择对象，再点击星球上的位置"
+    : "当前天体没有可放置的固体地表";
+  $("#surface-availability").hidden = state.placement !== null;
+  $("#placement-hint").hidden = state.placement === null;
+}
+
+function cancelPlacement() {
+  state.placement = null;
+  delete $("#canvas-host").dataset.placement;
+  updatePlacementControls();
+}
+
+function setPhotoMode(active: boolean) {
+  if (active && (!state.ready || !scene)) return;
+  if (state.photoMode === active) return;
+  if (active) {
+    cancelPlacement();
+    photoReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.querySelectorAll<HTMLDialogElement>("dialog[open]").forEach(dialog => dialog.close());
+    clearTimeout(toastTimer);
+    $("#toast").classList.remove("visible");
+  }
+  lastPhotoTap = null;
+  state.photoMode = active;
+  $(".observatory").classList.toggle("photo-mode", active);
+  document.body.classList.toggle("photo-mode", active);
+  $("#photo-mode").setAttribute("aria-pressed", String(active));
+  scene?.setPhotoMode(active);
+  const canvas = document.querySelector<HTMLCanvasElement>("#canvas-host canvas");
+  if (active && canvas) {
+    canvas.tabIndex = 0;
+    canvas.focus({ preventScroll: true });
+  } else if (!active) {
+    canvas?.removeAttribute("tabindex");
+    photoReturnFocus?.focus({ preventScroll: true });
+    photoReturnFocus = null;
+  }
+}
+
+async function savePhoto() {
+  if (!state.photoMode || !scene || photoSaving) return;
+  photoSaving = true;
+  try {
+    const blob = await scene.capturePhoto();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `VOYAGER-${state.body}-${Date.now()}.png`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  } catch {
+    setPhotoMode(false);
+    toast("照片保存失败，请重试或使用系统截图");
+  } finally {
+    photoSaving = false;
+  }
+}
 
 function updatePause() {
   const button = $("#pause");
@@ -158,6 +240,7 @@ function setControlsReady(ready: boolean) {
     .forEach((element) => {
       element.disabled = !ready;
     });
+  updatePlacementControls();
 }
 
 function updateBodyInfo(id: BodyId) {
@@ -260,6 +343,7 @@ function updateBodyInfo(id: BodyId) {
     });
   $("#altitude").innerHTML = "— <small>km</small>";
   document.title = `远航 VOYAGER · ${body.name}观测站`;
+  updatePlacementControls();
   try {
     history.replaceState(null, "", `#planet=${id}`);
   } catch {
@@ -268,6 +352,8 @@ function updateBodyInfo(id: BodyId) {
 }
 
 function showError(message: string) {
+  setPhotoMode(false);
+  cancelPlacement();
   flight.stop();
   ++requestVersion;
   setControlsReady(false);
@@ -283,6 +369,8 @@ function showError(message: string) {
 }
 
 async function start(id: BodyId = state.body) {
+  setPhotoMode(false);
+  cancelPlacement();
   flight.stop();
   const version = ++requestVersion;
   state.body = id;
@@ -443,7 +531,108 @@ $("#mobile-settings").addEventListener("click", () => {
   $("#mobile-settings").setAttribute("aria-expanded", String(expanded));
   $("#control-panel").classList.toggle("mobile-open", expanded);
 });
+$("#photo-mode").addEventListener("click", () => setPhotoMode(!state.photoMode));
+for (const kind of ["ship", "person"] as const) {
+  $(`#place-${kind}`).addEventListener("click", () => {
+    if (!state.ready || state.mode !== "observe" || !surfaceProfile(state.body).solid) return;
+    if (state.placement === kind) { cancelPlacement(); return; }
+    state.placement = kind;
+    $("#canvas-host").dataset.placement = kind;
+    $("#placement-message").textContent = `点击星球地表，${kind === "ship" ? "停放飞船" : "开始人物探索"}`;
+    $("#mobile-settings").setAttribute("aria-expanded", "false");
+    $("#control-panel").classList.remove("mobile-open");
+    updatePlacementControls();
+  });
+}
+$("#cancel-placement").addEventListener("click", cancelPlacement);
+
+async function placeOnSurface(normal: SurfacePlacement["normal"]) {
+  if (!scene || !state.ready || !state.placement) return;
+  const placement: SurfacePlacement = { kind: state.placement, normal };
+  cancelPlacement();
+  const version = ++requestVersion;
+  setControlsReady(false);
+  $("#loading-overlay").hidden = false;
+  $("#loading-overlay small").textContent = "准备地表与探索模型";
+  try {
+    const ready = await flight.launch(scene, state.body, (percent) => {
+      if (version !== requestVersion) return;
+      $("#loading-text").textContent = `正在放置${placement.kind === "ship" ? "飞船" : "人物"} · ${percent}%`;
+      $("#loading-progress").style.width = `${percent}%`;
+    }, placement);
+    if (!ready || version !== requestVersion) return;
+    setControlsReady(true);
+    $("#loading-overlay").hidden = true;
+    $("#canvas-host").dataset.ready = "true";
+    toast(placement.kind === "ship"
+      ? "飞船已停放在所选地表 · E 离舱，L 起飞；P 进入摄影"
+      : "人物已到达所选地表 · WASD 行走，空格跳跃；P 进入摄影");
+  } catch (error) {
+    if (version === requestVersion) showError(error instanceof Error ? error.message : "地表放置失败，请重试");
+  }
+}
+
+const canvasPointers = new Map<number, { x: number; y: number; moved: boolean }>();
+let lastPhotoTap: { time: number; x: number; y: number } | null = null;
+$("#canvas-host").addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  if (canvasPointers.size) for (const pointer of canvasPointers.values()) pointer.moved = true;
+  canvasPointers.set(event.pointerId, { x: event.clientX, y: event.clientY, moved: canvasPointers.size > 0 });
+});
+$("#canvas-host").addEventListener("pointermove", (event) => {
+  const pointer = canvasPointers.get(event.pointerId);
+  if (pointer && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 8) pointer.moved = true;
+});
+$("#canvas-host").addEventListener("pointerup", (event) => {
+  const pointer = canvasPointers.get(event.pointerId);
+  canvasPointers.delete(event.pointerId);
+  if (!pointer || pointer.moved || canvasPointers.size || Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 8) { lastPhotoTap = null; return; }
+  if (state.photoMode) {
+    if (event.pointerType !== "mouse") {
+      const time = performance.now();
+      if (lastPhotoTap && time - lastPhotoTap.time < 450 && Math.hypot(event.clientX - lastPhotoTap.x, event.clientY - lastPhotoTap.y) < 32) {
+        lastPhotoTap = null;
+        setPhotoMode(false);
+      } else lastPhotoTap = { time, x: event.clientX, y: event.clientY };
+    }
+    return;
+  }
+  if (!state.placement || !state.ready || state.mode !== "observe") return;
+  const normal = scene?.pickSurface(event.clientX, event.clientY);
+  if (!normal) { toast("请点击星球表面；可先拖动或缩放寻找位置"); return; }
+  void placeOnSurface(normal);
+}, { capture: true });
+const clearCanvasPointer = (event: PointerEvent) => {
+  if (canvasPointers.delete(event.pointerId)) lastPhotoTap = null;
+};
+$("#canvas-host").addEventListener("pointercancel", clearCanvasPointer);
+$("#canvas-host").addEventListener("lostpointercapture", clearCanvasPointer);
+$("#canvas-host").addEventListener("dblclick", () => {
+  if (state.photoMode) setPhotoMode(false);
+});
 document.addEventListener("keydown", (event) => {
+  if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (event.code === "Escape" && (state.photoMode || state.placement)) {
+      event.preventDefault();
+      if (state.photoMode) setPhotoMode(false);
+      else cancelPlacement();
+      return;
+    }
+    if (event.code === "KeyP" && !event.repeat && !(event.target instanceof Element && event.target.closest("input,select,textarea,dialog"))) {
+      event.preventDefault();
+      setPhotoMode(!state.photoMode);
+      return;
+    }
+    if (state.photoMode && (event.code === "KeyH" || event.code === "Tab")) {
+      event.preventDefault();
+      return;
+    }
+    if (state.photoMode && event.code === "Enter") {
+      event.preventDefault();
+      if (!event.repeat) void savePhoto();
+      return;
+    }
+  }
   if (state.mode === "flight") {
     if (
       event.code === "KeyH" &&
@@ -506,6 +695,7 @@ window.addEventListener("pageshow", (event) => {
 });
 $("#mode-flight").addEventListener("click", async () => {
   if (!state.ready || !scene || flight.active) return;
+  cancelPlacement();
   const version = ++requestVersion;
   setControlsReady(false);
   $("#loading-overlay").hidden = false;

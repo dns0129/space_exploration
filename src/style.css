@@ -2308,3 +2308,62 @@ dialog h2 {
   .flight-ui[data-mode="walking"] .flight-instruments #flight-engine,
   .flight-ui[data-mode="walking"] .flight-instruments #flight-engine-range { display: none; }
 }
+
+.surface-placement {
+  position: absolute;
+  right: 28px;
+  bottom: 156px;
+  z-index: 4;
+  max-width: calc(100% - 40px);
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #0d1822e8;
+  backdrop-filter: blur(12px);
+}
+.surface-placement-tools { display: flex; align-items: center; gap: 12px; }
+.surface-placement .control-label { margin: 0; }
+.surface-placement-tools button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid #718da13b;
+  border-radius: 4px;
+  background: #132431;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.surface-placement-tools button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #264052;
+}
+.surface-placement-tools svg { width: 16px; height: 16px; }
+.surface-placement p { margin: 8px 0 0; color: #8ea4b9; font-size: 10px; }
+#placement-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 11px; color: var(--accent); }
+#cancel-placement { background: none; padding: 4px; font-size: 10px; }
+.canvas-host[data-placement] canvas { cursor: crosshair; }
+.flight-mode .surface-placement { display: none; }
+
+/* The camera alone fills the screen in photo mode, including short mobile viewports. */
+body.photo-mode { overflow: hidden; }
+body.photo-mode > :not(#app),
+.observatory.photo-mode > :not(.main),
+.observatory.photo-mode .main > :not(.space-stage),
+.observatory.photo-mode .space-stage > :not(.canvas-host) { display: none !important; }
+.observatory.photo-mode { min-height: 0; height: 100dvh; }
+.observatory.photo-mode .main,
+.observatory.photo-mode .space-stage { inset: 0; }
+.observatory.photo-mode canvas { cursor: grab; }
+
+@media (max-width: 800px) {
+  .surface-placement { left: 15px; right: 15px; bottom: 65px; max-width: none; padding: 10px 12px; }
+  .surface-placement-tools { gap: 8px; justify-content: space-between; }
+  .surface-placement-tools button { padding: 8px; font-size: 10px; }
+  .surface-placement .control-label { font-size: 10px; }
+  #placement-hint { font-size: 10px; gap: 6px; }
+}
+@media (max-width: 480px) {
+  .header-tools .connection { display: none; }
+}

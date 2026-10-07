@@ -102,6 +102,30 @@ export class ShipDynamics {
     this.align();
     this.collision = null;
   }
+  /** Start at a chosen terrain coordinate without an approach or landing animation. */
+  placeOnSurface(id: BodyId, radial: [number, number, number]): string | null {
+    const body = this.config.bodies.find(candidate => candidate.id === id);
+    if (!body || body.kind === "station" || !surfaceProfile(id).solid)
+      return "请选择有固体地表的行星或卫星放置";
+    if (!Array.isArray(radial) || radial.length !== 3 || !radial.every(Number.isFinite))
+      return "地表位置无效，请重新选择放置点";
+    const length = Math.hypot(...radial);
+    if (!Number.isFinite(length) || length <= 1e-12)
+      return "地表位置无效，请重新选择放置点";
+    const normal = new THREE.Vector3().fromArray(radial).divideScalar(length);
+    const height = terrainHeightKm(id, normal.toArray()) + LANDING_CLEARANCE_KM;
+    const radius = body.radius + height / this.config.unitsKm;
+    if (!Number.isFinite(radius) || radius <= 0)
+      return "地表位置无效，请重新选择放置点";
+    this.resetWarp();
+    this.systemId = bodySystem(body);
+    this.target = id;
+    this.camera = "chase";
+    this.deceleration = 0;
+    this.position.fromArray(body.position).addScaledVector(normal, radius);
+    this.touchDown(id);
+    return null;
+  }
   align() {
     this.angularVelocity.set(0, 0, 0);
     this.bank = 0;

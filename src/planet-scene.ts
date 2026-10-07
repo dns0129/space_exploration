@@ -19,7 +19,7 @@ import { GalaxySky, selectGalaxyFile } from "./galaxy-sky";
 import type { GalaxyTextureFile } from "./galaxy-sky";
 import { SurfaceScene } from "./surface-scene";
 import { atmosphereStrength } from "./atmosphere";
-import { surfaceProfile } from "../shared/surface.mjs";
+import { surfaceProfile, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { projectFlightTarget } from "./flight-target";
 import type { FlightTargetStats } from "./flight-target";
 import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
@@ -31,6 +31,7 @@ import type { FlightRenderMode } from "./render-mode";
 import { surfaceMapRotation } from "./surface-map-pose";
 
 export type View = "overview" | "close" | "night";
+export type SurfacePlacement = { kind: "ship" | "person"; normal: [number, number, number] };
 export interface SceneStats {
   altitudeKm: number;
   fps: number;
@@ -252,6 +253,8 @@ export class SolarScene {
   private drawnCameraFov = 0;
   private readonly camera = new THREE.PerspectiveCamera(40, 1, 0.01, 200);
   private readonly controls: OrbitControls;
+  private readonly surfacePicker = new THREE.Raycaster();
+  private photoCapture?: { resolve: (blob: Blob) => void; reject: (error: Error) => void };
   private readonly planet = new THREE.Group();
   private readonly galaxySky: GalaxySky;
   private readonly surfaceGalaxySky: GalaxySky;
@@ -269,6 +272,7 @@ export class SolarScene {
   private readonly shipAmbient = new THREE.HemisphereLight(0xc1e6ee, 0x233643, 0.85);
   private readonly shipRim = new THREE.DirectionalLight(0x77bfff, 0.45);
   private shipScale = SHIP_LENGTH_KM / (6371 * this.ship.hullLength);
+  private renderedShipScale = this.shipScale;
   private readonly warpEffect = createWarpEffect();
   private readonly flightLight = new FlightLight();
   private readonly surfaceScene = new SurfaceScene();
@@ -342,6 +346,10 @@ export class SolarScene {
   private hidden = document.hidden;
   private readonly visibilityHandler = () => {
     this.hidden = document.hidden;
+    if (this.hidden && this.photoCapture) {
+      this.photoCapture.reject(new Error("摄影已中止，请回到游戏画面后重试"));
+      this.photoCapture = undefined;
+    }
     this.flightFrameDirty = true;
     this.lastTime = 0;
     this.metricsStart = 0;
@@ -969,6 +977,40 @@ export class SolarScene {
     this.renderer.domElement.dataset.worldRenderCount = String(++this.worldRenderCount);
   }
 
+  setPhotoMode(active: boolean) {
+    this.explorerView.setPhotoMode(active);
+    this.resize();
+    this.flightFrameDirty = true;
+  }
+
+  /** Read the freshly rendered frame before WebGL releases its drawing buffer. */
+  capturePhoto(): Promise<Blob> {
+    if (this.destroyed || (!this.currentModel && !this.flying))
+      return Promise.reject(new Error("场景尚未就绪，请稍后拍照"));
+    if (this.hidden || this.renderer.getContext().isContextLost())
+      return Promise.reject(new Error("请回到可用的游戏画面后拍照"));
+    if (this.photoCapture) return Promise.reject(new Error("正在生成照片，请稍后再试"));
+    this.flightFrameDirty = true;
+    return new Promise((resolve, reject) => {
+      this.photoCapture = { resolve, reject };
+      if (!this.frame) this.animate(0);
+    });
+  }
+
+  private finishPhotoCapture() {
+    const capture = this.photoCapture;
+    if (!capture) return;
+    this.photoCapture = undefined;
+    try {
+      this.renderer.domElement.toBlob(blob => {
+        if (blob) capture.resolve(blob);
+        else capture.reject(new Error("照片生成失败，请重试"));
+      }, "image/png");
+    } catch {
+      capture.reject(new Error("照片生成失败，请重试"));
+    }
+  }
+
   private readonly animate = (time: number) => {
     if (this.destroyed) return;
     this.frame = requestAnimationFrame(this.animate);
@@ -1018,7 +1060,7 @@ export class SolarScene {
           camera.fov = this.camera.fov;
           camera.updateProjectionMatrix();
         }
-        camera.position.copy(this.camera.position).multiplyScalar(1 / this.shipScale);
+        camera.position.copy(this.camera.position).multiplyScalar(1 / this.renderedShipScale);
         camera.quaternion.copy(this.camera.quaternion);
         this.shipSun.position.copy(this.flightSun.position).normalize().multiplyScalar(10);
         this.shipSun.intensity = 2.8 * this.flightLight.illumination;
@@ -1032,6 +1074,7 @@ export class SolarScene {
         this.renderer.render(this.shipScene, camera);
         this.renderer.autoClear = true;
       }
+      this.finishPhotoCapture();
       return;
     }
     this.updateSurfaceMaps(delta, time);
@@ -1066,6 +1109,7 @@ export class SolarScene {
     this.controls.update();
     this.updateEarthDetail(delta, time);
     this.renderer.render(this.spaceScene, this.camera);
+    this.finishPhotoCapture();
     this.frames++;
     if (!this.metricsStart) this.metricsStart = time;
     if (time - this.metricsStart > 750) {
@@ -1084,21 +1128,38 @@ export class SolarScene {
     id: BodyId,
     config: WorldConfig,
     onProgress: (percent: number) => void,
+    placement?: SurfacePlacement,
   ): Promise<boolean> {
     const version = ++this.selectionVersion;
+    const dynamics = new ShipDynamics(config);
+    const walker = new WalkingDynamics(config);
+    if (placement) {
+      if (placement.kind !== "ship" && placement.kind !== "person")
+        throw new Error("放置类型无效，请重新选择");
+      const error = dynamics.placeOnSurface(id, placement.normal);
+      if (error) throw new Error(error);
+      if (placement.kind === "person") {
+        const walkingError = walker.disembark(dynamics);
+        if (walkingError) throw new Error(walkingError);
+      }
+    } else dynamics.jump(id);
     await this.loadSpaceTextures();
     await this.loadEarthTextures(onProgress);
+    if (placement) await this.loadSurfaceMap(id);
     if (this.destroyed || version !== this.selectionVersion) return false;
     if (!this.asteroidBelt) {
       this.asteroidBelt = createAsteroidBelt(config.unitsKm, config.auKm, config.bodies.find(body => body.id === "ceres")!.position);
       this.flightRoot.add(this.asteroidBelt);
     }
-    this.dynamics = new ShipDynamics(config);
-    this.walker = new WalkingDynamics(config);
+    this.dynamics = dynamics;
+    this.walker = walker;
+    if (placement && id === "venus") {
+      // Direct placement uses the initial photographic frame even after a previous flight's cloud drift.
+      this.flightModelById.get(id)?.layers.clouds?.quaternion.identity();
+    }
     this.explorerCamera = "third";
     this.shipScale = SHIP_LENGTH_KM / (config.unitsKm * this.ship.hullLength);
     this.renderer.domElement.dataset.shipLengthKm = String(SHIP_LENGTH_KM);
-    this.dynamics.jump(id);
     this.flightBoost = 0;
     this.flightMetrics = 0;
     this.flightPaused = false;
@@ -1112,13 +1173,14 @@ export class SolarScene {
     this.controls.enabled = false;
     this.targetPosition = null;
     this.camera.fov = 58;
-    this.camera.near = 1e-8;
+    this.camera.near = walker.active ? 0.03 / (config.unitsKm * 1000) : 1e-8;
     this.camera.far = 2e6;
     this.camera.updateProjectionMatrix();
     this.starsEnabled = true;
     this.useSystemBackground(this.dynamics!.systemId);
     this.flightControls?.dispose();
     this.flightControls = new FlightControls(this.renderer.domElement);
+    this.flightControls.setWalking(walker.active);
     this.renderer.domElement.setAttribute(
       "aria-label",
       "自由驾驶飞船：W/S 推力，方向键或触屏拖动转向，空格刹车",
@@ -1178,6 +1240,7 @@ export class SolarScene {
   }
 
   leaveFlight() {
+    ++this.selectionVersion;
     if (!this.flying) return;
     this.flying = false;
     this.walker?.reset();
@@ -1403,16 +1466,22 @@ export class SolarScene {
     this.flightSun.color.set(getBody(light.id).color);
     this.shipSun.color.copy(this.flightSun.color);
     this.useSystemBackground(ship.systemId);
-    const scale = this.shipScale;
+    // Use the same 24 m surface lander as walking, growing smoothly back to flight scale on ascent.
+    const surfaceHull = environment.profile.solid
+      ? 1 - THREE.MathUtils.smoothstep(environment.groundAltitudeKm, 0, 2) : 0;
+    const landerScale = 24 / (ship.config.unitsKm * 1000 * this.ship.hullLength);
+    const scale = this.renderedShipScale = THREE.MathUtils.lerp(this.shipScale, landerScale, surfaceHull);
     const surfaceView = environment.profile.solid ? 1-THREE.MathUtils.smoothstep(environment.groundAltitudeKm,20,50) : 0;
-    this.ship.group.position.set(0,this.ship.landingFootOffset*surfaceView,0).applyQuaternion(ship.orientation);
+    this.ship.group.position.set(0, this.ship.landingFootOffset * surfaceView
+      - LANDING_CLEARANCE_KM / (ship.config.unitsKm * scale) * surfaceHull, 0).applyQuaternion(ship.orientation);
     this.ship.group.scale.setScalar(1);
     const attitude = ship.orientation.clone().multiply(this.bankRotation.setFromAxisAngle(this.flightAxis, ship.bank));
     this.ship.group.quaternion.copy(attitude);
     this.ship.group.visible = ship.camera === "chase" && !ship.warping && !this.walking;
-    const cameraScale = THREE.MathUtils.lerp(scale,0.000015,surfaceView);
-    const chaseY = THREE.MathUtils.lerp(1.2,0.19,surfaceView);
-    const chaseZ = THREE.MathUtils.lerp(9+this.flightBoost*0.6,0.72,surfaceView);
+    const cameraScale = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.shipScale, 0.000015, surfaceView), scale, surfaceHull);
+    const chaseY = THREE.MathUtils.lerp(THREE.MathUtils.lerp(1.2, 0.19, surfaceView), this.ship.hullLength * 0.35, surfaceHull);
+    const chaseZ = THREE.MathUtils.lerp(THREE.MathUtils.lerp(9 + this.flightBoost * 0.6, 0.72, surfaceView),
+      this.ship.hullLength * 1.4 * Math.max(1, 1 / this.camera.aspect), surfaceHull);
     if (!this.walking) {
       const offset = new THREE.Vector3(0,ship.camera === "chase" ? chaseY : 0,ship.camera === "chase" ? chaseZ : 0).multiplyScalar(cameraScale).applyQuaternion(ship.orientation);
       if (ship.camera === "chase") {
@@ -1445,7 +1514,10 @@ export class SolarScene {
           ? 1 - THREE.MathUtils.smoothstep(environment.altitudeKm, environment.body.atmosphereKm, environment.body.atmosphereKm * 4) : 0;
         this.camera.up.lerp(environment.outward, nearAtmosphere * Math.pow(forward.dot(environment.outward), 2)).normalize();
         const lookAhead = 5 * cameraScale * (1 - nearAtmosphere * Math.abs(forward.dot(environment.outward)) * 0.92);
-        this.camera.lookAt(forward.multiplyScalar(lookAhead));
+        const lookTarget = forward.multiplyScalar(lookAhead);
+        const hullTarget = this.ship.group.position.clone().multiplyScalar(scale)
+          .addScaledVector(environment.outward, this.ship.hullLength * 0.1 * scale);
+        this.camera.lookAt(lookTarget.lerp(hullTarget, surfaceHull));
       } else {
         this.camera.position.copy(offset);
         this.camera.quaternion.slerp(attitude, blend);
@@ -1601,6 +1673,35 @@ export class SolarScene {
     this.configureRenderBudget();
   }
   getQuality(): RenderQuality { return this.quality; }
+  /** Preserve the selected visible map feature as observation surfaces rotate. */
+  pickSurface(clientX: number, clientY: number): [number, number, number] | null {
+    const model = this.currentModel;
+    if (this.flying || !model || !surfaceProfile(model.body.id).solid
+      || !model.surface.visible || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+    const bounds = this.renderer.domElement.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0 || clientX < bounds.left || clientX > bounds.right
+      || clientY < bounds.top || clientY > bounds.bottom) return null;
+    const point = new THREE.Vector2((clientX - bounds.left) / bounds.width * 2 - 1,
+      1 - (clientY - bounds.top) / bounds.height * 2);
+    this.camera.updateMatrixWorld();
+    model.group.updateWorldMatrix(true, true);
+    this.surfacePicker.setFromCamera(point, this.camera);
+    // Venus's visible photography is on its cloud shell; use that shell's UV frame when enabled.
+    const source = model.body.id === "venus" && model.layers.clouds?.visible
+      ? model.layers.clouds : model.surface;
+    const hit = this.surfacePicker.intersectObject(source, false)[0];
+    if (!hit?.uv) return null;
+    const offset = model.mapUniforms?.mapOffset.value ?? 0;
+    const longitude = (hit.uv.x + offset) * Math.PI * 2;
+    const latitude = (hit.uv.y - 0.5) * Math.PI;
+    const local = new THREE.Vector3(-Math.cos(longitude) * Math.cos(latitude),
+      Math.sin(latitude), Math.sin(longitude) * Math.cos(latitude));
+    // With Venus's cloud deck hidden, its bare surface uses the normal rocky-surface yaw.
+    const pose = model.body.id === "venus" && source === model.surface
+      ? { clouds: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.4) } : {};
+    return local.applyMatrix3(surfaceMapRotation(model.body.id, model.body.axialTiltDeg, pose, offset).invert())
+      .normalize().toArray();
+  }
   zoom(factor: number) {
     this.targetPosition = null;
     const distance = THREE.MathUtils.clamp(
@@ -1621,6 +1722,8 @@ export class SolarScene {
 
   private readonly contextLost = (event: Event) => {
     event.preventDefault();
+    this.photoCapture?.reject(new Error("图形上下文已中断，照片未能生成"));
+    this.photoCapture = undefined;
     this.onError(
       "图形上下文已中断，请重新加载场景。也可以关闭其他占用显卡的页面后重试。",
     );
@@ -1628,6 +1731,8 @@ export class SolarScene {
 
   dispose() {
     this.destroyed = true;
+    this.photoCapture?.reject(new Error("场景已关闭，照片未能生成"));
+    this.photoCapture = undefined;
     this.resumeSpaceWork();
     this.galaxySky.dispose();
     this.surfaceGalaxySky.dispose();

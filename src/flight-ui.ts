@@ -2,7 +2,7 @@ import type { RenderQuality } from "./earth-detail";
 import { FlightStore } from "./flight-store";
 import { getBody, STAR_SYSTEMS } from "./solar-system";
 import type { BodyId } from "./solar-system";
-import type { SolarScene, FlightStats, FlightTrackingStats } from "./planet-scene";
+import type { SolarScene, FlightStats, FlightTrackingStats, SurfacePlacement } from "./planet-scene";
 import type { FlightState } from "../shared/flight-state.mjs";
 import { surfaceProfile } from "../shared/surface.mjs";
 import { PROPULSION_BANDS, propulsionBand, speedToSlider, sliderToSpeed } from "../shared/propulsion.mjs";
@@ -193,18 +193,25 @@ export class FlightInterface {
       if (this.active && document.hidden) this.pause(true);
     });
   }
-  async launch(scene: SolarScene, id: BodyId, onProgress: (p: number) => void) {
+  async launch(scene: SolarScene, id: BodyId, onProgress: (p: number) => void, placement?: SurfacePlacement) {
     const version = ++this.generation;
     this.scene = scene;
     const config = await this.store.connect();
     if (version !== this.generation) return false;
+    let ready: boolean;
+    try {
+      ready = await scene.enterFlight(id, config, onProgress, placement);
+    } catch (error) {
+      if (version === this.generation) scene.leaveFlight();
+      throw error;
+    }
+    if (!ready || version !== this.generation) return false;
     scene.setFlightHandler((stats) => this.update(stats));
     scene.setFlightTargetHandler((stats) => this.updateTracking(stats));
-    const ready = await scene.enterFlight(id, config, onProgress);
-    if (!ready || version !== this.generation) return false;
     this.active = true;
     this.paused = false;
     this.warpPhase = "ready";
+    this.landingPhase = placement ? "landed" : "manual";
     this.lastAutoElapsed = 0;
     this.pause(false);
     scene.setQuality($<HTMLSelectElement>("#flight-quality").value as RenderQuality);
