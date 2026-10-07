@@ -5,6 +5,7 @@ import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import { terrainHeightKm, surfaceProfile, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { mappedMountainNormal } from "./terrain-fixtures.mjs";
+import { propulsionBand } from "../shared/propulsion.mjs";
 
 function place(ship, id, clearanceKm, normal = new THREE.Vector3(0, 0, -1)) {
   ship.jump(id);
@@ -68,11 +69,11 @@ test("all solid worlds descend continuously, touch terrain, stay landed and rest
       "takeoff must continue from its actual velocity instead of jumping to the old shield radius");
   }
 });
-test("automatic descent crosses the atmosphere at high speed, aligns and slows continuously before touching terrain", () => {
+test("automatic descent uses space speed through the atmosphere, then low-altitude speed above actual terrain", () => {
   const ship = new ShipDynamics();
   place(ship, "earth", 200);
   ship.setCruiseSpeed(250);
-  ship.setEngineMode("interstellar");
+  ship.setLowFlightSpeed(1000);
   ship.orientation.setFromEuler(new THREE.Euler(0.7, -0.4, 0.9));
   assert(new THREE.Vector3(0, 1, 0).applyQuaternion(ship.orientation).dot(ship.environment.outward) < 0.99);
   assert.equal(ship.startLanding(), null);
@@ -83,10 +84,19 @@ test("automatic descent crosses the atmosphere at high speed, aligns and slows c
     const after = ship.environment;
     const speedKm = ship.velocity.length() * world.unitsKm;
     const travelledKm = ship.position.distanceTo(previous) * world.unitsKm;
-    assert(speedKm <= 250 + 1e-8);
-    assert(travelledKm <= 250 * 0.05 + 1e-6);
+    if (before.groundAltitudeKm <= 10 + 1e-6) {
+      assert(speedKm <= 1 + 1e-8);
+      assert(travelledKm <= 0.05 + 1e-6);
+    } else if (after.groundAltitudeKm <= 10 + 1e-6) {
+      assert(speedKm <= 1 + 1e-8);
+      assert(travelledKm <= before.groundAltitudeKm - 10 + 0.05 + 1e-6,
+        "only the part above 10 km may use the faster space preset");
+    } else {
+      assert(speedKm <= 250 + 1e-8);
+      assert(travelledKm <= 250 * 0.05 + 1e-6);
+    }
     assert(Math.abs(travelledKm - (before.groundAltitudeKm - after.groundAltitudeKm)) < 1e-6);
-    assert.equal(ship.engine.id, "interstellar");
+    assert.equal(ship.engineMode, propulsionBand(250).id);
     assert.equal(ship.cruiseSpeedKm, 250);
     assert(new THREE.Vector3(0, 1, 0).applyQuaternion(ship.orientation).dot(after.outward) > 0.999,
       "automatic landing must retain surface alignment");
@@ -111,13 +121,13 @@ test("automatic descent crosses the atmosphere at high speed, aligns and slows c
   assert(ship.environment.groundAltitudeKm < 1e-6);
 });
 
-test("automatic descent obeys the user's cruise ceiling and preserves it in airless and atmospheric saves", () => {
+test("automatic descent above 10 km obeys the selected space speed and preserves both speed presets in saves", () => {
   for (const id of ["earth", "moon"]) {
-    for (const selectedKm of [100, 250, 1000, 100000]) {
+    for (const selectedKm of [1, 100, 1000, 150000]) {
       const ship = new ShipDynamics();
       place(ship, id, 4000);
       ship.setCruiseSpeed(selectedKm);
-      ship.setEngineMode("atmospheric");
+      ship.setLowFlightSpeed(133);
       assert.equal(ship.startLanding(), null);
       for (let i = 0; i < 3; i++) {
         const previous = ship.position.clone();
@@ -125,49 +135,62 @@ test("automatic descent obeys the user's cruise ceiling and preserves it in airl
         const speedKm = ship.velocity.length() * world.unitsKm;
         assert(speedKm <= selectedKm + 1e-8);
         assert(ship.position.distanceTo(previous) * world.unitsKm <= selectedKm * 0.05 + 1e-6);
-        assert.equal(ship.engine.id, "atmospheric");
+        assert.equal(ship.engineMode, propulsionBand(selectedKm).id);
         if (selectedKm <= 1000) {
           assert(Math.abs(speedKm - selectedKm) < 1e-8,
             `${id}: a distant descent must actually reach the selected ${selectedKm} km/s ceiling`);
         } else {
-          assert(speedKm > 1000, "the selected atmospheric engine must not impose its former speed limit");
+          assert(speedKm > 1000, "the low-altitude preset must not apply above 10 km");
           if (i === 0) assert(speedKm > 2500, "automatic descent must not retain the former 2500 km/s engineering ceiling");
         }
       }
       const saved = ship.snapshot();
       assert(validateFlightState(saved));
       assert.equal(saved.cruiseSpeedKm, selectedKm);
+      assert.equal(saved.lowFlightSpeedMps, 133);
       const restored = new ShipDynamics();
       assert(restored.restore(saved));
       assert.deepEqual(restored.snapshot(), saved);
-      assert.equal(restored.engine.id, "atmospheric");
+      assert.equal(restored.engineMode, propulsionBand(selectedKm).id);
     }
   }
 });
 
-test("automatic near-terrain descent and takeoff safely use speeds below the user's minimum selectable cruise ceiling", () => {
+test("automatic low-altitude descent and takeoff use the selected 1, 133 and 1000 m/s speeds in air and vacuum", () => {
   for (const id of ["earth", "moon"]) {
-    for (const selectedKm of [100, 1000]) {
+    for (const selectedMps of [1, 133, 1000]) {
       const ship = new ShipDynamics();
-      place(ship, id, 0.5);
-      ship.setCruiseSpeed(selectedKm);
-      ship.setEngineMode("planetary");
+      place(ship, id, 5);
+      ship.setCruiseSpeed(150000);
+      ship.setLowFlightSpeed(selectedMps);
+      const startAltitude = ship.environment.groundAltitudeKm;
       assert.equal(ship.startLanding(), null);
-      let previousSpeedKm = 1, slowed = false;
+      for (let i = 0; i < 20; i++) {
+        const previous = ship.position.clone();
+        ship.step(0.05, emptyInput());
+        assert(Math.abs(ship.velocity.length() * world.unitsKm * 1000 - selectedMps) < 1e-6);
+        assert(Math.abs(ship.position.distanceTo(previous) * world.unitsKm * 1000 - selectedMps * 0.05) < 0.001,
+          `${id}: each low-altitude descent step must actually move at the selected ${selectedMps} m/s`);
+      }
+      assert(Math.abs((startAltitude - ship.environment.groundAltitudeKm) * 1000 - selectedMps) < 0.001);
+      ship.cancelLanding();
+      place(ship, id, 0.02);
+      assert.equal(ship.startLanding(), null);
+      let previousSpeedKm = selectedMps / 1000, approaching = false;
       for (let i = 0; i < 1000 && ship.landingPhase !== "landed"; i++) {
         const before = ship.environment;
         const previous = ship.position.clone();
         ship.step(0.05, emptyInput());
         const speedKm = ship.velocity.length() * world.unitsKm;
         const after = ship.environment;
-        assert(speedKm < 1);
+        assert(speedKm <= selectedMps / 1000 + 1e-8);
         assert(speedKm <= previousSpeedKm + 1e-8);
         assert(ship.position.distanceTo(previous) * world.unitsKm <= previousSpeedKm * 0.05 + 1e-6);
         assert(after.groundAltitudeKm <= before.groundAltitudeKm + 1e-6);
-        if (speedKm < 0.05 && speedKm > 0) slowed = true;
+        if (speedKm > 0 && speedKm < 0.05) approaching = true;
         previousSpeedKm = speedKm;
       }
-      assert(slowed, `${id}: approach must slow before contact`);
+      assert(approaching, `${id}: approach must remain slow before contact`);
       assert.equal(ship.landedBody, id);
       assert.equal(ship.velocity.length(), 0);
       assert(ship.environment.groundAltitudeKm < 1e-6);
@@ -175,88 +198,105 @@ test("automatic near-terrain descent and takeoff safely use speeds below the use
       const restored = new ShipDynamics();
       assert(restored.restore(saved));
       assert.deepEqual(restored.snapshot(), saved);
+      assert.equal(restored.lowFlightSpeedMps, selectedMps);
       assert.equal(restored.takeOff(), null);
-      let climbedAboveOldCap = false;
-      for (let i = 0; i < 1000 && restored.landingPhase === "ascending"; i++) {
+      const takeoffAltitude = restored.environment.groundAltitudeKm;
+      for (let i = 0; i < 20; i++) {
         const previous = restored.position.clone();
-        const previousSpeedKm = restored.velocity.length() * world.unitsKm;
         restored.step(0.05, emptyInput());
         const speedKm = restored.velocity.length() * world.unitsKm;
-        assert(speedKm > 0 && speedKm < 100);
-        if (speedKm > 0.5) climbedAboveOldCap = true;
-        assert(restored.position.distanceTo(previous) * world.unitsKm <= Math.max(previousSpeedKm, speedKm) * 0.05 + 1e-6);
-        assert.equal(restored.engine.id, "planetary");
-        assert.equal(restored.cruiseSpeedKm, selectedKm);
+        assert(speedKm > 0 && speedKm <= selectedMps / 1000 + 1e-8);
+        assert(restored.position.distanceTo(previous) * world.unitsKm <= selectedMps / 1000 * 0.05 + 1e-6);
+        assert.equal(restored.engineMode, propulsionBand(150000).id);
+        assert.equal(restored.cruiseSpeedKm, 150000);
       }
-      assert.equal(restored.landingPhase, "manual");
-      assert(restored.environment.groundAltitudeKm >= 2);
-      assert(climbedAboveOldCap, "automatic takeoff must not retain the former 0.5 km/s engineering ceiling");
+      const climbMetres = (restored.environment.groundAltitudeKm - takeoffAltitude) * 1000;
+      assert(climbMetres > 0 && climbMetres <= selectedMps + 0.001);
+      if (selectedMps === 1) {
+        assert(Math.abs(climbMetres - 1) < 0.001,
+          `${id}: minimum-speed takeoff must actually climb 1 m in 1 s`);
+        assert.equal(restored.landingPhase, "ascending");
+      } else {
+        for (let i = 0; i < 1000 && restored.landingPhase === "ascending"; i++) {
+          const previous = restored.position.clone();
+          restored.step(0.05, emptyInput());
+          assert(restored.velocity.length() * world.unitsKm <= selectedMps / 1000 + 1e-8);
+          assert(restored.position.distanceTo(previous) * world.unitsKm <= selectedMps / 1000 * 0.05 + 1e-6);
+        }
+        assert.equal(restored.landingPhase, "manual");
+        assert(restored.environment.groundAltitudeKm >= 2);
+      }
     }
   }
 });
 
-test("automatic mountain descent crosses the former 10 km boundary without changing the user's engine or speed ceiling", () => {
+test("a long automatic descent step splits travel at 10 km above actual terrain and finishes at the low-altitude speed", () => {
+  // The existing centimetre margin handles subtraction at AU-scale coordinates.
+  const boundaryKm = 10 + 1e-5;
   const normal = mappedMountainNormal();
   assert(terrainHeightKm("earth", normal.toArray()) > 4,
-    "use a mountain where the old 10 km ground boundary lies above the radial shell");
-  for (const engineId of ["atmospheric", "orbital", "planetary", "interstellar"]) {
-    const ship = new ShipDynamics();
-    place(ship, "earth", 11.125, normal);
-    ship.setCruiseSpeed(100);
-    assert.equal(ship.setEngineMode(engineId), null);
-    assert.equal(ship.startLanding(), null);
-    let crossed = false, lowSteps = 0;
-    for (let i = 0; i < 30 && lowSteps < 10; i++) {
-      const before = ship.environment;
+    "the mountain's ground boundary must lie above the old reference-sphere shell");
+  for (const id of ["earth", "moon"]) {
+    for (const selectedMps of [1, 133, 1000]) {
+      const ship = new ShipDynamics();
+      place(ship, id, 10.025, normal);
+      ship.setCruiseSpeed(1);
+      ship.setLowFlightSpeed(selectedMps);
+      assert.equal(ship.startLanding(), null);
+      ship.velocity.copy(normal).multiplyScalar(-1 / world.unitsKm);
+      const beforeAltitude = ship.environment.groundAltitudeKm;
       const previous = ship.position.clone();
-      const previousSpeedKm = ship.velocity.length() * world.unitsKm;
-      ship.step(0.05, emptyInput());
+      const outsideKm = beforeAltitude - boundaryKm;
+      const outsideSeconds = outsideKm / 1;
+      assert(outsideSeconds > 0 && outsideSeconds < 0.05);
+      const expectedTravelKm = outsideKm + selectedMps / 1000 * (0.25 - outsideSeconds);
+      ship.step(0.25, emptyInput());
       const after = ship.environment;
       const travelledKm = ship.position.distanceTo(previous) * world.unitsKm;
-      const speedKm = ship.velocity.length() * world.unitsKm;
-      assert(before.atmospheric && after.atmospheric);
-      assert(after.groundAltitudeKm <= before.groundAltitudeKm + 1e-6);
-      assert(Math.abs(travelledKm - (before.groundAltitudeKm - after.groundAltitudeKm)) < 1e-6,
-        "each position change must match the continuous altitude change");
-      assert.equal(ship.engine.id, engineId);
-      assert.equal(ship.cruiseSpeedKm, 100);
-      assert(speedKm > 1 && speedKm <= 100);
-      assert(travelledKm <= 100 * 0.05 + 1e-6);
-      if (before.groundAltitudeKm > 10 && after.groundAltitudeKm <= 10) {
-        crossed = true;
-        assert(after.altitudeKm > 14,
-          "the former ground boundary must be tested independently of radial altitude");
-        assert(speedKm > previousSpeedKm * 0.9, "crossing 10 km must not introduce an artificial slowdown");
-        assert(travelledKm > 0.05, "the former low-altitude cap must not limit the crossing frame");
+      assert.equal(after.atmospheric, id === "earth");
+      assert(after.groundAltitudeKm < 10);
+      assert(Math.abs(travelledKm - expectedTravelKm) < 1e-6,
+        `${id}: the long step must use space speed up to the centimetre-safe boundary and low speed for the remaining time`);
+      assert(Math.abs(after.groundAltitudeKm - (beforeAltitude - expectedTravelKm)) < 1e-6,
+        "the landing position must match the integrated travel across both speed zones");
+      assert(Math.abs(ship.velocity.length() * world.unitsKm * 1000 - selectedMps) < 1e-6,
+        "the endpoint velocity must use the low-altitude preset");
+      assert.equal(ship.engineMode, propulsionBand(1).id);
+      if (id === "earth") {
+        assert(after.altitudeKm > 14, "mountain terrain must activate low speed above the old radial shell");
       }
-      if (after.groundAltitudeKm < 10) lowSteps++;
+      const lowStartAltitude = after.groundAltitudeKm;
+      for (let i = 0; i < 20; i++) ship.step(0.05, emptyInput());
+      assert(Math.abs((lowStartAltitude - ship.environment.groundAltitudeKm) * 1000 - selectedMps) < 0.001,
+        "sustained descent below the boundary must actually use the selected low-altitude speed");
     }
-    assert(crossed, "automatic descent must cross the former 10 km ground boundary");
-    assert.equal(lowSteps, 10);
   }
 });
 
-test("restoring near-terrain vacuum flight preserves the user's selected engine and cruise ceiling", () => {
-  for (const normal of [new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0)]) {
+test("landed legacy saves migrate low-altitude speed and clamp space presets without moving the terrain anchor", () => {
+  for (const [legacyCruiseKm, expectedCruiseKm] of [[-30, 1], [0.5, 1], [170000, 150000]]) {
     const ship = new ShipDynamics();
-    place(ship, "moon", 10, normal);
-    assert.equal(ship.environment.atmospheric, false);
-    assert(Math.abs(ship.environment.groundAltitudeKm - 10) < 1e-6);
-    ship.orientation.setFromUnitVectors(new THREE.Vector3(0, 0, -1), normal);
-    ship.setCruiseSpeed(2500);
-    ship.setEngineMode("atmospheric");
-    ship.velocity.copy(normal).multiplyScalar(50000 / world.unitsKm);
+    place(ship, "earth", 0.00001);
+    assert.equal(ship.startLanding(), null);
+    ship.step(0.05, emptyInput());
+    assert.equal(ship.landedBody, "earth");
+    const saved = ship.snapshot();
+    const legacy = { ...saved, cruiseSpeedKm: legacyCruiseKm, atmosphericSpeedMps: 133 };
+    delete legacy.lowFlightSpeedMps;
     const restored = new ShipDynamics();
-    assert(restored.restore(ship.snapshot()));
-    assert(Math.abs(restored.velocity.length() * world.unitsKm - 2500) < 1e-8);
-    assert.equal(restored.engine.id, "atmospheric");
-    assert.equal(restored.cruiseSpeedKm, 2500);
-    const previous = restored.position.clone();
-    restored.step(0.05, { ...emptyInput(), throttle: 1, boost: true });
-    assert(restored.velocity.length() * world.unitsKm > 1000);
-    assert(restored.velocity.length() * world.unitsKm <= 2500 + 1e-8);
-    assert(restored.position.distanceTo(previous) * world.unitsKm <= 2500 * 0.05 + 1e-6);
-    assert.equal(restored.engine.id, "atmospheric");
+    assert(restored.restore(legacy));
+    assert.equal(restored.cruiseSpeedKm, expectedCruiseKm);
+    assert.equal(restored.lowFlightSpeedMps, 133);
+    assert.equal(restored.engineMode, propulsionBand(expectedCruiseKm).id);
+    assert.equal(restored.landingPhase, "landed");
+    assert.equal(restored.velocity.length(), 0);
+    assert.deepEqual(restored.position.toArray(), saved.position);
+    assert.deepEqual(restored.orientation.toArray(), saved.orientation);
+    const migrated = restored.snapshot();
+    assert.equal(migrated.worldLayoutVersion, saved.worldLayoutVersion);
+    assert.equal(migrated.lowFlightSpeedMps, 133);
+    assert.equal("atmosphericSpeedMps" in migrated, false);
+    assert(validateFlightState(migrated));
   }
 });
 

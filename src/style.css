@@ -2213,8 +2213,6 @@ dialog h2 {
 .flight-ui #flight-exit:hover { background: #2b6c57; border-color: #c9ffde; }
 .flight-ui[data-mode="walking"] .flight-navigation,
 .flight-ui[data-landed="true"] .flight-navigation { padding: 10px 14px; }
-.flight-ui[data-mode="walking"] .flight-navigation > :not(#flight-target-label):not(#flight-target):not(#flight-land) { display: none; }
-.flight-ui[data-landed="true"]:not([data-mode="walking"]) .flight-navigation > :not(#flight-land) { display: none; }
 .flight-ui[data-mode="walking"] .flight-navigation h3 { margin: 9px 0 8px; font-size: 18px; }
 .flight-ui[data-mode="walking"] .walking-panel { top: 302px; }
 .flight-ui[data-mode="walking"] #flight-land { color: #d8f3e7; border-color: #8dd7b477; }

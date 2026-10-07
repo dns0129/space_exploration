@@ -9,7 +9,8 @@ export interface WalkingState {
   grounded: boolean;
   camera?: "first" | "third";
 }
-export type EngineMode = "atmospheric" | "orbital" | "planetary" | "interstellar";
+import type { EngineMode } from "./propulsion.mjs";
+export type { EngineMode } from "./propulsion.mjs";
 export interface FlightState {
   version: 2;
   worldLayoutVersion?: number;
@@ -24,6 +25,7 @@ export interface FlightState {
   elapsed: number;
   engineMode?: EngineMode;
   cruiseSpeedKm?: number;
+  lowFlightSpeedMps?: number;
   landedBody?: BodyId;
   walking?: WalkingState;
   systemId: SystemId;
@@ -44,7 +46,7 @@ export interface WorldConfig {
     warpTargetRadiusFactor: number;
   };
   engines: {
-    id: "atmospheric" | "orbital" | "planetary" | "interstellar";
+    id: EngineMode;
     name: string;
     accelerationKm: number;
     boostAccelerationKm: number;

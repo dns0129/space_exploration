@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import { surfaceProfile, terrainHeightKm, legacyTerrainHeightKm, TERRAIN_VERSION, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
+import { propulsionBand } from "../shared/propulsion.mjs";
 import { WalkingDynamics } from "../src/walking-dynamics.ts";
 
 const vector = value => new THREE.Vector3().fromArray(value);
@@ -43,6 +44,8 @@ test("historical landed and walking saves retain their surface location and clea
       const migrated = validateFlightState(original);
       assert(migrated, `${body.id} valid historical save migrates`);
       assert.equal(migrated.terrainVersion, TERRAIN_VERSION);
+      assert.equal(migrated.engineMode, propulsionBand(migrated.cruiseSpeedKm).id);
+      assert.equal(migrated.lowFlightSpeedMps, 133);
       assert.deepEqual(original, snapshot, "normalization must not mutate the stored save");
       assert.deepEqual(validateFlightState(migrated), migrated, `${body.id} migration is idempotent`);
       const oldFeet = radialFeet(original, body), feet = radialFeet(migrated, body);
@@ -133,8 +136,8 @@ test("swept physical contact follows a mapped mountain above the old 125-metre e
   ship.assist = false;
   ship.setCruiseSpeed(100);
   ship.position.fromArray(body.position).addScaledVector(normal,
-    body.radius + (peak + LANDING_CLEARANCE_KM + 1) / world.unitsKm);
-  ship.velocity.copy(normal).multiplyScalar(-100 / world.unitsKm);
+    body.radius + (peak + LANDING_CLEARANCE_KM + 0.025) / world.unitsKm);
+  ship.velocity.copy(normal).multiplyScalar(-1 / world.unitsKm);
   ship.step(0.05, emptyInput());
   assert.equal(ship.collision, body.id, "physical contact must include terrain above the obsolete envelope");
   assert(ship.environment.groundAltitudeKm < 0.001, "contact stops at the mapped mountain surface");
