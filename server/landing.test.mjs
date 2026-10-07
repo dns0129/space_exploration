@@ -126,30 +126,92 @@ test("automatic low-altitude descent and takeoff obey the selected 1 and 133 m/s
   }
 });
 
-test("automatic atmospheric entry preserves a selected 133 m/s limit on the entry frame and subsequent descent", () => {
-  const ship = new ShipDynamics();
-  place(ship, "earth", 200);
-  ship.setAtmosphericSpeed(133);
-  assert.equal(ship.startLanding(), null);
-  let entry = false, atmosphericSteps = 0;
-  for (let i = 0; i < 120; i++) {
-    const before = ship.environment;
-    const previous = ship.position.clone();
-    ship.step(0.05, emptyInput());
-    const after = ship.environment;
-    if (after.atmospheric) {
-      if (!before.atmospheric) entry = true;
-      assert(ship.velocity.length() * world.unitsKm * 1000 <= 133 + 1e-6);
-      if (before.atmospheric) {
-        atmosphericSteps++;
-        assert(ship.position.distanceTo(previous) * world.unitsKm * 1000 <= 133 * 0.05 + 1e-5);
-      } else {
-        assert(after.altitudeKm >= 160 - 133 * 0.05 / 1000 - 1e-6);
+test("automatic atmospheric entry uses 1000 m/s above 10 km regardless of the selected low-speed preset", () => {
+  for (const selectedMps of [1, 133]) {
+    const ship = new ShipDynamics();
+    place(ship, "earth", 200);
+    ship.setAtmosphericSpeed(selectedMps);
+    assert.equal(ship.startLanding(), null);
+    let entry = false, atmosphericSteps = 0;
+    for (let i = 0; i < 120; i++) {
+      const before = ship.environment;
+      const previous = ship.position.clone();
+      ship.step(0.05, emptyInput());
+      const after = ship.environment;
+      if (after.atmospheric) {
+        if (!before.atmospheric) entry = true;
+        assert(after.groundAltitudeKm > 10);
+        assert.equal(after.lowFlight, false);
+        assert.equal(ship.engine.id, "orbital");
+        assert.equal(ship.atmosphericSpeedMps, selectedMps);
+        assert(ship.velocity.length() * world.unitsKm <= 1 + 1e-8);
+        if (before.atmospheric) {
+          atmosphericSteps++;
+          assert(Math.abs(ship.velocity.length() * world.unitsKm - 1) < 1e-8,
+            "the low-speed preset must not slow upper-atmosphere descent");
+          assert(ship.position.distanceTo(previous) * world.unitsKm <= 0.05 + 1e-6);
+        } else {
+          assert(after.altitudeKm >= 160 - 0.05 - 1e-6,
+            "the atmospheric part of the entry step must obey the 1 km/s cap");
+        }
       }
     }
+    assert(entry, "the simulation must reach the atmospheric boundary");
+    assert(atmosphericSteps > 20, "validate sustained descent after the entry boundary");
   }
-  assert(entry, "the simulation must reach the atmospheric boundary");
-  assert(atmosphericSteps > 20, "validate sustained descent after the entry boundary");
+});
+
+test("automatic descent switches from 1000 m/s to the selected speed at 10 km above mountain terrain without jumping", () => {
+  const normal = new THREE.Vector3(0, 0, 1);
+  assert(terrainHeightKm("earth", normal.toArray()) > 4,
+    "use a mountain where the 10 km ground boundary lies well above the old radial shell");
+  for (const selectedMps of [1, 133]) {
+    const ship = new ShipDynamics();
+    place(ship, "earth", 11.125, normal);
+    ship.setAtmosphericSpeed(selectedMps);
+    assert.equal(ship.startLanding(), null);
+    let crossed = false, upperSteps = 0, lowSteps = 0, lowStartAltitude;
+    for (let i = 0; i < 80 && lowSteps < 20; i++) {
+      const before = ship.environment;
+      const previous = ship.position.clone();
+      ship.step(0.05, emptyInput());
+      const after = ship.environment;
+      const travelledKm = ship.position.distanceTo(previous) * world.unitsKm;
+      const lowBefore = before.groundAltitudeKm <= 10 + 1e-6;
+      const lowAfter = after.groundAltitudeKm <= 10 + 1e-6;
+      assert(before.atmospheric && after.atmospheric);
+      assert(after.groundAltitudeKm <= before.groundAltitudeKm + 1e-6);
+      assert(Math.abs(travelledKm - (before.groundAltitudeKm - after.groundAltitudeKm)) < 1e-6,
+        "each position change must match the continuous altitude change");
+      assert.equal(ship.engine.id, lowAfter ? "atmospheric" : "orbital");
+      assert.equal(after.lowFlight, lowAfter);
+      assert.equal(ship.atmosphericSpeedMps, selectedMps);
+      if (!lowAfter) {
+        upperSteps++;
+        assert(Math.abs(ship.velocity.length() * world.unitsKm - 1) < 1e-8);
+        assert(Math.abs(travelledKm - 0.05) < 1e-6);
+      } else {
+        assert(after.altitudeKm > 14,
+          "low-speed control must follow mountain terrain rather than radial altitude");
+        assert(ship.velocity.length() * world.unitsKm * 1000 <= selectedMps + 1e-6);
+        if (!lowBefore) {
+          crossed = true;
+          lowStartAltitude = after.groundAltitudeKm;
+          assert(travelledKm <= before.groundAltitudeKm - 10 + selectedMps / 1000 * 0.05 + 1e-6,
+            "the crossing frame must limit travel below the 10 km ground boundary");
+          assert(after.groundAltitudeKm >= 10 - selectedMps / 1000 * 0.05 - 1e-6);
+        } else {
+          lowSteps++;
+          assert(Math.abs(travelledKm * 1000 - selectedMps * 0.05) < 0.001,
+            "descent must actually move at the selected low-altitude speed");
+        }
+      }
+    }
+    assert(upperSteps > 20, "validate sustained 1 km/s descent before the ground boundary");
+    assert(crossed, "automatic descent must cross the actual 10 km ground boundary");
+    assert.equal(lowSteps, 20);
+    assert(Math.abs((lowStartAltitude - ship.environment.groundAltitudeKm) * 1000 - selectedMps) < 0.001);
+  }
 });
 
 test("airless worlds still obey the 10 km limit above their actual generated terrain", () => {
@@ -159,7 +221,9 @@ test("airless worlds still obey the 10 km limit above their actual generated ter
     assert.equal(ship.environment.atmospheric, false);
     assert(Math.abs(ship.environment.groundAltitudeKm - 10) < 1e-6);
     ship.orientation.setFromUnitVectors(new THREE.Vector3(0, 0, -1), normal);
-    assert(ship.startOrbitalEngine(), "surface height, not the reference sphere, controls launch eligibility");
+    assert.match(ship.startOrbitalEngine() ?? "", /10,000/,
+      "the 10 km ground boundary must still block orbital launch");
+    assert.equal(ship.engine.id, "atmospheric");
     ship.setAtmosphericSpeed(80);
     ship.velocity.set(50000 / world.unitsKm, 50000 / world.unitsKm, 50000 / world.unitsKm);
     const restored = new ShipDynamics();

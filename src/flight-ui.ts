@@ -42,7 +42,7 @@ export class FlightInterface {
       `<section id="flight-ui" class="flight-ui" aria-label="飞船驾驶台" hidden>
   <div class="flight-title"><span class="eyebrow">REAL SCALE / 星际航行</span><h2>VOYAGER <b>01</b></h2><span id="flight-system" class="flight-system">当前位置 · 太阳系</span><span id="flight-status">手动驾驶 · 引擎待命</span></div>
   <div class="flight-toolbar"><button id="flight-camera" aria-pressed="false">切换外部视角 <kbd>C</kbd></button><button id="flight-assist" aria-pressed="true">驾驶辅助：开</button><button id="flight-pause" aria-pressed="false">暂停航行</button><button id="flight-save">保存航行</button><button id="flight-resume" disabled>恢复存档</button><select id="flight-quality" aria-label="航行画质"><option value="ultra">超清</option><option value="high">高清</option><option value="standard">标准</option></select></div>
-  <aside class="flight-navigation"><span class="eyebrow" id="flight-target-label">导航目标 / DESTINATION</span><h3 id="flight-target">地球</h3><p><strong id="flight-distance">—</strong><small id="flight-distance-unit"> km</small></p><small id="flight-distance-au"></small><div><button id="flight-align">对准目标</button><button id="flight-jump">启动跃迁 <kbd>J</kbd></button></div><button id="flight-land">自动着陆（L）</button><button id="flight-orbital">启动近地轨道引擎 <kbd>O</kbd></button><details id="flight-propulsion" class="flight-propulsion"><summary>推力航速与引擎档位</summary><label for="flight-low-speed">大气 / 低空航速（m/s）</label><div class="flight-low-speed-fields"><input id="flight-low-speed" type="range" min="1" max="1000" step="1" value="1000" aria-label="大气与低空航速"><input id="flight-low-speed-number" type="number" min="1" max="1000" step="1" value="1000" aria-label="大气与低空航速米每秒"></div><small>1–1,000 m/s · W 施加推力，空格停稳</small><label for="flight-engine-mode">太空引擎档位</label><select id="flight-engine-mode" aria-label="太空引擎档位"><option value="standard">常规 · 最高 10,000 km/s</option><option value="interstellar">星际 · 最高 100,000 km/s</option></select><small id="flight-orbital-hint">离地超过 10,000 m，朝向太空后按 O</small></details><small class="flight-nav-note">真实距离 · 1 AU ≈ 1.496 亿 km</small></aside>
+  <aside class="flight-navigation"><span class="eyebrow" id="flight-target-label">导航目标 / DESTINATION</span><h3 id="flight-target">地球</h3><p><strong id="flight-distance">—</strong><small id="flight-distance-unit"> km</small></p><small id="flight-distance-au"></small><div><button id="flight-align">对准目标</button><button id="flight-jump">启动跃迁 <kbd>J</kbd></button></div><button id="flight-land">自动着陆（L）</button><button id="flight-orbital">启动近地轨道引擎 <kbd>O</kbd></button><details id="flight-propulsion" class="flight-propulsion"><summary>推力航速与引擎档位</summary><label for="flight-low-speed">离地 10,000 m 内低空航速（m/s）</label><div class="flight-low-speed-fields"><input id="flight-low-speed" type="range" min="1" max="1000" step="1" value="1000" aria-label="离地一万米内低空航速"><input id="flight-low-speed-number" type="number" min="1" max="1000" step="1" value="1000" aria-label="离地一万米内低空航速米每秒"></div><small id="flight-low-speed-hint">1–1,000 m/s · 仅离地 10,000 m 内生效</small><label for="flight-engine-mode">太空引擎档位</label><select id="flight-engine-mode" aria-label="太空引擎档位"><option value="standard">常规 · 最高 10,000 km/s</option><option value="interstellar">星际 · 最高 100,000 km/s</option></select><small id="flight-orbital-hint">离地超过 10,000 m，朝向太空后按 O</small></details><small class="flight-nav-note">真实距离 · 1 AU ≈ 1.496 亿 km</small></aside>
   <aside class="warp-engine" id="warp-engine" data-phase="ready" aria-label="跃迁引擎"><span class="eyebrow">HYPERDRIVE / 跃迁引擎</span><strong id="warp-label">引擎就绪</strong><div class="warp-track"><i id="warp-progress"></i></div><small id="warp-hint">选择目的地，按 J 蓄能启航</small><button id="warp-cancel" hidden>中止跃迁</button></aside>
   <aside id="flight-surface" class="flight-surface" data-phase="manual" aria-label="着陆系统"><span class="eyebrow">SURFACE / 着陆系统</span><strong id="flight-surface-state">手动航行</strong><b id="flight-surface-altitude">— m</b><small id="flight-atmosphere">真空环境</small><small id="flight-landing-hint">L 自动着陆</small></aside>
   <aside id="walking-panel" class="walking-panel" data-active="false" data-grounded="true" aria-label="地表探索仪表" hidden><span class="eyebrow">EXPLORER / 地表探索</span><strong id="walking-planet">地球</strong><div class="walking-telemetry"><div><span>当地重力</span><b id="walking-gravity">— m/s²</b><small id="walking-gravity-relative">— 地球 g</small></div><div><span>移动速度</span><b id="walking-speed">0.0 m/s</b><small id="walking-grounded">在飞船内</small></div><div><span>距离飞船</span><b id="walking-distance">0.0 m</b><small>飞船停留原地</small></div></div><button id="flight-exit">离开飞船 <kbd>E</kbd></button><p id="walking-hint">着陆后可步行探索当地地形</p></aside>
@@ -243,7 +243,7 @@ export class FlightInterface {
     const error = this.scene?.startOrbitalFlight();
     if (error) { this.notify(error); return; }
     this.pause(false);
-    this.notify("近地轨道引擎已启动，按 W 飞向太空；大气内仍最高 1,000 m/s");
+    this.notify("近地轨道引擎已启动，按 W 飞向太空；大气层内上限 1 km/s");
   }
   private explore() {
     if (!this.active || !this.scene) return;
@@ -383,7 +383,7 @@ export class FlightInterface {
     $("#flight-landing-hint").textContent = stats.landingPhase === "landed" ? "E 离舱探索 · L / R 起飞 · 可保存地表位置"
       : stats.landingPhase === "descending" || stats.landingPhase === "ascending" ? "空格或手动操纵中止 · 暂停冻结进度"
       : stats.landingBlockReason ?? "L 自动着陆 · 近地自动限速";
-    const nearGround = stats.environment.profile.solid && stats.environment.groundAltitudeKm <= 10;
+    const nearGround = stats.environment.lowFlight;
     const zone = nearGround ? "近地精细驾驶" : stats.environment.atmospheric ? "大气层" : stats.environment.escaping ? "向太空离地" : stats.environment.restricted ? "安全区" : stats.engineMode === "interstellar" ? "手动高档" : "常规";
     $("#flight-engine").textContent = activeWarp ? "跃迁引擎" : `${stats.engine.name} · ${zone}`;
     $("#flight-ui").dataset.environment = stats.environment.atmospheric ? "atmosphere" : stats.environment.restricted ? "near" : "space";
@@ -392,13 +392,14 @@ export class FlightInterface {
       ? "按航程自动调速"
       : stats.landingPhase !== "manual" ? "自动着陆与起飞"
       : stats.environment.lowFlight ? `1–1,000 m/s · 当前上限 ${number(stats.speedLimitKm * 1000)} m/s`
+      : stats.environment.atmospheric ? `${number(stats.speedLimitKm)} km/s · 大气层内上限`
       : `${number(stats.engine.minSpeedKm)}–${number(stats.engine.maxSpeedKm)} km/s`;
     const orbitalButton = $<HTMLButtonElement>("#flight-orbital");
     orbitalButton.disabled = !!stats.orbitalBlockReason;
     orbitalButton.title = stats.orbitalBlockReason ?? "朝太空启动近地轨道引擎（O）";
     orbitalButton.textContent = stats.orbitalEngineActive ? "近地轨道引擎已启动" : "启动近地轨道引擎（O）";
     $("#flight-orbital-hint").textContent = stats.orbitalEngineActive
-      ? stats.environment.atmospheric ? "轨道引擎就绪 · 大气内仍最高 1,000 m/s" : "轨道引擎已启动 · 按 W 向太空加速"
+      ? stats.environment.atmospheric ? "轨道引擎已启动 · 大气层内上限 1 km/s" : "轨道引擎已启动 · 按 W 向太空加速"
       : stats.orbitalBlockReason ?? "离地超过 10,000 m，朝向太空后按 O";
     const modeSelect = $<HTMLSelectElement>("#flight-engine-mode");
     modeSelect.disabled = activeWarp || stats.landingPhase !== "manual";
@@ -406,6 +407,9 @@ export class FlightInterface {
     const lowSpeed = $<HTMLInputElement>("#flight-low-speed");
     const lowNumber = $<HTMLInputElement>("#flight-low-speed-number");
     lowSpeed.disabled = lowNumber.disabled = activeWarp || stats.landingPhase !== "manual";
+    $("#flight-low-speed-hint").textContent = stats.environment.lowFlight
+      ? "1–1,000 m/s · 离地 10,000 m 内生效；W 推进，空格停稳"
+      : "仅离地 10,000 m 内生效 · 当前暂存低速预设，其他引擎最低档 1 km/s";
     if (document.activeElement !== lowSpeed) lowSpeed.value = String(stats.atmosphericSpeedMps);
     if (document.activeElement !== lowNumber) lowNumber.value = String(stats.atmosphericSpeedMps);
     if (this.warpPhase === "arrival" && stats.warpPhase === "cooldown") this.notify("跃迁完成，已减速抵达目标附近");
@@ -435,9 +439,9 @@ export class FlightInterface {
         ? labels[stats.warpPhase]
       : stats.collision
         ? "安全护盾已制动 · 请转向离开"
-        : nearGround ? "近地精细飞行 · 自动限速"
+        : nearGround ? `近地精细飞行 · 当前上限 ${number(stats.speedLimitKm * 1000)} m/s`
         : stats.environment.atmospheric
-          ? "大气层飞行 · 最高 1,000 m/s"
+          ? "大气层飞行 · 近地轨道档 1 km/s"
         : stats.environment.escaping
           ? "近地轨道引擎 · 正在飞向太空"
         : stats.environment.restricted
