@@ -2,7 +2,7 @@
 
 Development-only asset tool: Python, NumPy and Pillow. Every source is pinned to a
 Git revision and SHA-256. The game loads the saved JPEG files and needs no Python.
-Usage: python3 scripts/prepare-body-textures.py [cache-directory]
+Usage: python3 scripts/prepare-body-textures.py [cache-directory] [output-file ...]
 """
 from pathlib import Path
 import hashlib
@@ -40,10 +40,14 @@ SOURCES = {
         "a14aeba3c6ad7a56f989bb32008dec548077aeded420495b34df98f2dc14ba91", SSS + " (4k_venus_atmosphere.jpg)", "CC-BY-4.0", "observed", {"quality": 85}),
     "mars-real.jpg": (SSS_8K + "Mars.jpg", SSS_8K_PAGE + "Mars.jpg",
         "4cc52149924abc6ae507d63032f994e1d42a55cb82c09e002d1a567ff66c23ee", SSS + " (8k_mars.jpg, byte-identical upstream)", "CC-BY-4.0", "observed", {"width": 4096, "quality": 85}),
+    "mars-real-8k.jpg": (SSS_8K + "Mars.jpg", SSS_8K_PAGE + "Mars.jpg",
+        "4cc52149924abc6ae507d63032f994e1d42a55cb82c09e002d1a567ff66c23ee", SSS + " (8k_mars.jpg, byte-identical upstream)", "CC-BY-4.0", "observed", {"quality": 90}),
     "uranus-real.jpg": (SSS_MIRROR + "2k_uranus.jpg", SSS_MIRROR_PAGE + "2k_uranus.jpg",
         "d15239d46f82d3ea13d2b260b5b29b2a382f42f2916dae0694d0387b1204a09d", SSS + " (2k_uranus.jpg; no larger openly licensed map)", "CC-BY-4.0", "observed", {"quality": 85}),
     "moon-real.jpg": (SSS_8K + "lune.jpg", SSS_8K_PAGE + "lune.jpg",
         "d1875bcec83588ca25e4802e576f6bb9f88b39e1e403cb41ff55867419c54796", SSS + " (8k_moon.jpg, byte-identical upstream)", "CC-BY-4.0", "observed", {"width": 4096, "quality": 85}),
+    "moon-real-8k.jpg": (SSS_8K + "lune.jpg", SSS_8K_PAGE + "lune.jpg",
+        "d1875bcec83588ca25e4802e576f6bb9f88b39e1e403cb41ff55867419c54796", SSS + " (8k_moon.jpg, byte-identical upstream)", "CC-BY-4.0", "observed", {"quality": 90}),
     "io-real.jpg": (CELESTIA + "hires/io.png", CELESTIA_PAGE + "hires/io.png",
         "7c06333e3a738cb0921877c7d8be51a0ec42a6a72c9199d9b56377889cb132c4", "ItzImcool; NASA/JPL-Caltech/ASI/USGS; NASA/JPL/SwRI/MSSS/Gerald Eichstädt/Jason Perry/John Rogers; AstroChara", "CC-BY-4.0", "observed", {"quality": 85}),
     "europa-real.jpg": (CELESTIA + "hires/europa.jpg", CELESTIA_PAGE + "hires/europa.jpg",
@@ -160,6 +164,8 @@ def fill_unimaged(pixels: np.ndarray) -> tuple[np.ndarray, float]:
 def prepare(name: str, data: bytes, operation: dict) -> tuple[bytes, list[str], tuple[int, int]]:
     changes = []
     image = Image.open(io.BytesIO(data))
+    if name in {"mars-real-8k.jpg", "moon-real-8k.jpg"}:
+        assert image.size == (8192, 4096), f"{name} requires a native 8192x4096 source; no enlargement is permitted"
     if not operation:
         return data, ["unchanged"], image.size
     source_size, source_mode = image.size, image.mode
@@ -182,9 +188,14 @@ def prepare(name: str, data: bytes, operation: dict) -> tuple[bytes, list[str], 
 
 
 def main():
+    selected = sys.argv[2:] or list(SOURCES)
+    unknown = set(selected) - SOURCES.keys()
+    if unknown:
+        raise SystemExit(f"Unknown output file(s): {', '.join(sorted(unknown))}")
     manifest_path = OUTPUT / "provenance.json"
     manifest = json.loads(manifest_path.read_text())
-    for name, (url, page, expected, credit, license_name, kind, operation) in SOURCES.items():
+    for name in dict.fromkeys(selected):
+        url, page, expected, credit, license_name, kind, operation = SOURCES[name]
         data = fetch(url, expected)
         output, changes, size = prepare(name, data, operation)
         (OUTPUT / name).write_bytes(output)

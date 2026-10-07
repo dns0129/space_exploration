@@ -869,5 +869,27 @@
     "height": 4096,
     "sourceSha256": "1fd005ddd6d53364cc5106e0121b83fd3bca236b1503f6b51f5501d9d51eafaf",
     "sha256": "1fd005ddd6d53364cc5106e0121b83fd3bca236b1503f6b51f5501d9d51eafaf"
+  },
+  "mars-real-8k.jpg": {
+    "source": "https://github.com/renoultdavid/textures/blob/68b6d34056efb1065207f0b5e139d5998cc0a575/Mars.jpg",
+    "credit": "Solar System Scope (8k_mars.jpg, byte-identical upstream)",
+    "license": "CC-BY-4.0",
+    "kind": "observed",
+    "changes": "encoded as JPEG quality 90",
+    "width": 8192,
+    "height": 4096,
+    "sourceSha256": "4cc52149924abc6ae507d63032f994e1d42a55cb82c09e002d1a567ff66c23ee",
+    "sha256": "fe009f2001ab1bba7436767002cca9c550c47b7e6214821b047f79ed9fa89176"
+  },
+  "moon-real-8k.jpg": {
+    "source": "https://github.com/renoultdavid/textures/blob/68b6d34056efb1065207f0b5e139d5998cc0a575/lune.jpg",
+    "credit": "Solar System Scope (8k_moon.jpg, byte-identical upstream)",
+    "license": "CC-BY-4.0",
+    "kind": "observed",
+    "changes": "encoded as JPEG quality 90",
+    "width": 8192,
+    "height": 4096,
+    "sourceSha256": "d1875bcec83588ca25e4802e576f6bb9f88b39e1e403cb41ff55867419c54796",
+    "sha256": "e765ef951f97f6731fcdbb9bce588fc4c6a69dcb2dadc68bf855db383acecdbc"
   }
 }

@@ -62,7 +62,7 @@ const browser = await chromium.launch({
   ],
 });
 try {
-  for (const mobile of [false, true]) {
+  for (const mobile of process.argv.includes("--mobile") ? [true] : [false, true]) {
     const name = mobile ? "mobile" : "desktop";
     const context = await browser.newContext({
       ...(mobile
@@ -121,7 +121,8 @@ try {
     );
     await page.screenshot({
       path: resolve(output, `home-${name}.png`),
-      fullPage: true,
+      // Full-page capture resets touch emulation in system Chromium; retain it before opening the game.
+      fullPage: !mobile,
     });
     await page.getByRole("link", { name: "观测海王星", exact: true }).click();
     await expect(page.locator("#canvas-host")).toHaveAttribute(
@@ -134,6 +135,13 @@ try {
     for (let i = 0; i < shot.data.length; i += 4)
       if (shot.data[i] + shot.data[i + 1] + shot.data[i + 2] > 240) pixels++;
     assert(pixels > 5000, "Online game must render actual planetary pixels");
+    for (const id of ["mars", "moon"]) {
+      if (id === "mars") await page.locator('button[data-body="mars"]').click();
+      else await page.locator("#satellite-target").selectOption(id);
+      await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", id);
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-map", `${id}-real${mobile ? "" : "-8k"}.jpg`);
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-resolution", mobile ? "4096x2048" : "8192x4096");
+    }
     await page.getByRole("link", { name: "星际探索首页", exact: true }).click();
     await page.getByRole("link", { name: "立即启航", exact: true }).click();
     await expect(page.locator("#canvas-host")).toHaveAttribute(

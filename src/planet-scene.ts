@@ -465,6 +465,7 @@ export class SolarScene {
     this.planet.clear();
     this.planet.add(model.group);
     this.currentModel = model;
+    this.publishSurfaceResolution(model);
     this.useSystemBackground(getBody(id).systemId ?? "solar");
     this.controls.maxDistance = id === "saturn" ? 12 : 7;
     this.targetPosition = null;
@@ -480,6 +481,17 @@ export class SolarScene {
     onProgress(100);
     if (!this.frame) this.animate(0);
     return true;
+  }
+
+  private publishSurfaceResolution(model: PlanetModel) {
+    const texture = model.mapUniforms?.detailMap.value;
+    if (texture) {
+      this.renderer.domElement.dataset.surfaceMap = texture.name;
+      this.renderer.domElement.dataset.surfaceResolution = `${texture.image.width}x${texture.image.height}`;
+    } else {
+      delete this.renderer.domElement.dataset.surfaceMap;
+      delete this.renderer.domElement.dataset.surfaceResolution;
+    }
   }
 
   private loadSpaceTextures(): Promise<void> {
@@ -533,24 +545,38 @@ export class SolarScene {
     if (surfaceMap?.compactFile && (this.compactTextures || this.renderer.capabilities.maxTextureSize < surfaceMap.width)) {
       file = surfaceMap.compactFile;
     }
-    const texture = await new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
+    const loader = new THREE.TextureLoader();
+    let texture: THREE.Texture;
+    try {
+      texture = await loader.loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
+    } catch (error) {
+      if (!surfaceMap?.compactFile || file === surfaceMap.compactFile || this.destroyed) throw error;
+      // Optional native 8K imagery can fail without replacing the complete 4K surface with noise.
+      await this.waitForSpaceWork();
+      if (this.destroyed) throw error;
+      file = surfaceMap.compactFile;
+      texture = await loader.loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
+    }
     await this.waitForSpaceWork();
     if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
     const image = texture.image as HTMLImageElement;
     await image.decode?.().catch(() => undefined);
     await this.waitForSpaceWork();
     if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
-    if (surface && this.compactTextures && !surfaceMap?.compactFile && image.width > 2048) {
-      // Low-memory devices keep 2K copies: a quarter of the GPU memory of a 4K map.
+    const maximumWidth = Math.min(this.renderer.capabilities.maxTextureSize,
+      surface && this.compactTextures && !surfaceMap?.compactFile ? 2048 : Infinity);
+    if (image.width > maximumWidth) {
+      // Respect GPU limits; ordinary compact surfaces keep their existing low-memory 2K copies.
       const canvas = document.createElement("canvas");
-      canvas.width = 2048;
-      canvas.height = Math.round(2048 * image.height / image.width);
+      canvas.width = maximumWidth;
+      canvas.height = Math.max(1, Math.round(maximumWidth * image.height / image.width));
       const context = canvas.getContext("2d")!;
       context.imageSmoothingQuality = "high";
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
       texture.image = canvas;
     }
     texture.colorSpace = THREE.SRGBColorSpace;
+    texture.name = file;
     texture.anisotropy = surface ? this.surfaceAnisotropy : Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
     if (surface) texture.wrapS = THREE.RepeatWrapping;
     texture.needsUpdate = true;
@@ -607,6 +633,7 @@ export class SolarScene {
         if (model.surfaceMap?.file === file && model.mapUniforms?.detailMap.value !== texture) {
           const immediate = !this.flying && model === this.currentModel;
           setSurfaceMap(model, texture, immediate ? 1 : 0);
+          if (immediate) this.publishSurfaceResolution(model);
           if (!immediate) this.mapFades.add(model);
         }
     }
@@ -634,7 +661,11 @@ export class SolarScene {
     for (const [file, entry] of resident) {
       if (resident.filter(([, item]) => item.texture).length <= limit || now - entry.used < 8000) break;
       for (const model of this.allModels())
-        if (model.surfaceMap?.file === file) { setSurfaceMap(model, null, 0); this.mapFades.delete(model); }
+        if (model.surfaceMap?.file === file) {
+          setSurfaceMap(model, null, 0);
+          this.mapFades.delete(model);
+          if (!this.flying && model === this.currentModel) this.publishSurfaceResolution(model);
+        }
       this.textures.delete(entry.texture!);
       entry.texture!.dispose();
       entry.texture = undefined;

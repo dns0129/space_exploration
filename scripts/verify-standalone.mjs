@@ -90,6 +90,11 @@ try {
       await page.getByRole("button", { name: "重置视角" }).click();
       console.log("Offline Earth: embedded 8K maps and native 16K tiles rendered without network requests");
     }
+    if (id === "mars" || id === "moon") {
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-map", `${id}-real-8k.jpg`);
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-resolution", "8192x4096");
+      console.log(`Offline ${id}: native 8K imagery loaded without network requests`);
+    }
     const shot = PNG.sync.read(await page.locator("canvas").screenshot());
     let surface = 0;
     for (let i = 0; i < shot.data.length; i += 4) {

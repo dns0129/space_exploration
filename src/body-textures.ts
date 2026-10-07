@@ -18,7 +18,7 @@ export interface SurfaceMap {
   offset?: number;
   /** Loaded with the sky and kept resident; other maps load when the body is approached or observed. */
   core?: boolean;
-  /** Native 4K alternate for an 8K surface on compact devices or smaller GPU limits. */
+  /** Native 4K alternate for compact devices, smaller GPU limits or an unavailable 8K map. */
   compactFile?: string;
 }
 
@@ -35,12 +35,12 @@ export const SURFACE_MAPS: Partial<Record<BodyId, SurfaceMap>> = {
   sun: { file: "sun-real.jpg", width: 4096, relief: 0, grain: 0.03, core: true },
   mercury: { ...rock("mercury-real.jpg"), core: true },
   venus: { file: "venus-real.jpg", width: 4096, relief: 0, grain: 0.04, streaks: true, core: true },
-  mars: { ...rock("mars-real.jpg", 4096, 0.005, 0.1), core: true },
+  mars: { ...rock("mars-real-8k.jpg", 8192, 0.005, 0.1), compactFile: "mars-real.jpg" },
   jupiter: gas("jupiter-real.jpg"),
   saturn: gas("saturn-real.jpg"),
   uranus: gas("uranus-real.jpg", 2048),
   neptune: gas("neptune-real.jpg"),
-  moon: rock("moon-real.jpg"),
+  moon: { ...rock("moon-real-8k.jpg", 8192), compactFile: "moon-real.jpg" },
   io: rock("io-real.jpg", 4096, 0.004, 0.1),
   europa: rock("europa-real.jpg", 4096, 0.003, 0.08),
   ganymede: rock("ganymede-real.jpg", 4096, 0.005),
