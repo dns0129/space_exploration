@@ -7,6 +7,7 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { SURFACE_MAPS } from "./body-textures";
 import type { SurfaceMap } from "./body-textures";
 import { PROCEDURAL_DETAIL_WIDTH, proceduralBodyProfile } from "./procedural-body";
+import { SATURN_RING_INNER, SATURN_RING_OUTER, saturnRingOptics } from "./saturn-rings";
 
 export interface PlanetModel {
   body: CelestialBody;
@@ -92,13 +93,6 @@ export const noise = /* glsl */ `
       result += -0.22*(1.0-smoothstep(0.0,0.94,d))+0.1*exp(-pow((d-1.0)*12.0,2.0));
     }
     return result;
-  }
-  float ringDensity(float r, float footprint) {
-    // Average lines smaller than a pixel to keep distant rings from shimmering.
-    float fine = 0.68+0.12*sin(r*330.0)*exp(-0.5*pow(footprint*330.0,2.0))+0.1*sin(r*790.0)*exp(-0.5*pow(footprint*790.0,2.0));
-    float broad = 0.6+0.22*sin(r*34.0)+0.13*sin(r*83.0);
-    float cassini = smoothstep(1.93,1.945,r)*(1.0-smoothstep(2.005,2.02,r));
-    return clamp(fine*broad*smoothstep(1.12,1.25,r)*(1.0-smoothstep(2.25,2.3,r))*(1.0-cassini*0.99),0.0,0.95);
   }
 `;
 
@@ -223,6 +217,9 @@ const planetFragment = /* glsl */ `
   varying vec3 vAxisZ;
   ${noise}
   ${mapSampling}
+  #if BODY_KIND == 4
+    ${saturnRingOptics}
+  #endif
   void main() {
     vec3 p = normalize(vLocalPosition);
     float height = 0.0;
@@ -381,16 +378,14 @@ const planetFragment = /* glsl */ `
     float diffuse = max(dot(normal,sunDirection),0.0)*smoothstep(-0.12,0.04,dot(geometric,sunDirection));
     #if BODY_KIND == 4
       float planeAngle = dot(sunDirection,planetAxis);
-      if(abs(planeAngle)>0.001) {
-        vec3 relative = (vWorldPosition-planetCenter)/bodyRadius;
-        float t = -dot(relative,planetAxis)/planeAngle;
-        float r = length(relative+sunDirection*t);
-        float footprint = max(fwidth(r), solarAngularRadius * abs(t) / max(abs(planeAngle), 0.02));
-        // Optical thickness at grazing incidence gives long, continuous ring shadows.
-        if(t>0.0 && r>1.12 && r<2.3) {
-          float opticalDepth = ringDensity(r, footprint) * ringsEnabled * 1.65 / max(abs(planeAngle), 0.12);
-          diffuse *= exp(-opticalDepth);
-        }
+      float safeAngle = (planeAngle<0.0 ? -1.0 : 1.0)*max(abs(planeAngle),0.001);
+      vec3 relative = (vWorldPosition-planetCenter)/bodyRadius;
+      float t = -dot(relative,planetAxis)/safeAngle;
+      float r = length(relative+sunDirection*t);
+      // Derivatives are evaluated before branching, including at the terminator.
+      float ringFootprint = max(fwidth(r),solarAngularRadius*abs(t)/max(abs(planeAngle),0.015));
+      if(t>0.0 && abs(planeAngle)>0.001) {
+        diffuse *= mix(1.0,ringTransmittance(r,ringFootprint,abs(planeAngle)),ringsEnabled);
       }
     #endif
     #include <logdepthbuf_fragment>
@@ -474,30 +469,75 @@ const ringFragment = /* glsl */ `
   uniform vec3 planetCenter;
   uniform float bodyRadius;
   uniform float solarAngularRadius;
+  uniform float planetFlattening;
   varying vec3 vWorldPosition;
   varying vec3 vLocalPosition;
   ${noise}
+  ${saturnRingOptics}
+  float particlePhase(float cosine, float asymmetry) {
+    return (1.0-asymmetry*asymmetry)/pow(max(1.0+asymmetry*asymmetry
+      -2.0*asymmetry*cosine,0.04),1.5);
+  }
   void main() {
     float radius = length(vLocalPosition);
-    float density = ringDensity(radius,fwidth(radius));
-    if(density<0.015) discard;
-    vec3 color = mix(vec3(0.38,0.33,0.26),vec3(0.89,0.81,0.66),density);
+    float footprint = max(fwidth(radius),0.000001);
+    float tau = ringOpticalDepth(radius,footprint);
+    // Subtle non-axisymmetric clumps break perfect concentric lines. Unresolved
+    // grains average out; kilometre-sized rocks would be misleading at this scale.
+    vec3 grainPosition = vec3(vLocalPosition.xy*1100.0,radius*2100.0);
+    float grainFootprint = max(length(dFdx(grainPosition)),length(dFdy(grainPosition)));
+    float grain = (noise3(grainPosition)-0.5)*exp(-0.5*grainFootprint*grainFootprint);
+    tau *= 1.0+grain*0.22;
+    // Ice albedo and dust contamination are independent of optical depth.
+    vec3 color = mix(vec3(0.40,0.34,0.27),vec3(0.72,0.69,0.61),smoothstep(1.56,1.62,radius));
+    color = mix(color,vec3(0.62,0.60,0.54),smoothstep(2.01,2.12,radius));
+    float iceVariation = 0.09*ringLine(radius,61.0,1.2,footprint)
+      + 0.045*ringLine(radius,163.0,0.5,footprint)
+      + 0.055*ringLine(radius,509.0,2.5,footprint)
+      + 0.035*ringLine(radius,1481.0,0.3,footprint);
+    vec3 clumpPosition = vec3(vLocalPosition.xy*180.0,radius*380.0);
+    float clumpFootprint = max(length(dFdx(clumpPosition)),length(dFdy(clumpPosition)));
+    float clumps = (noise3(clumpPosition)-0.5)*exp(-0.5*clumpFootprint*clumpFootprint);
+    color *= 1.0+iceVariation+clumps*0.10+grain*0.12;
     // Evaluate closest approach in the oblate planet's unit-sphere space.
     // The finite solar disk and pixel footprint soften the far end of the shadow.
     vec3 relative = (vWorldPosition-planetCenter)/bodyRadius;
-    vec3 q = relative + planetAxis * dot(relative,planetAxis) * (1.0/0.902-1.0);
-    vec3 ray = sunDirection + planetAxis * dot(sunDirection,planetAxis) * (1.0/0.902-1.0);
+    vec3 q = relative + planetAxis * dot(relative,planetAxis) * (1.0/planetFlattening-1.0);
+    vec3 ray = sunDirection + planetAxis * dot(sunDirection,planetAxis) * (1.0/planetFlattening-1.0);
     float along = max(0.0, -dot(q,ray)/dot(ray,ray));
     float clearance = length(q+ray*along);
     float penumbra = max(fwidth(clearance)*0.75, solarAngularRadius*along*length(ray));
     penumbra = max(penumbra, 0.00001);
     float visibility = smoothstep(1.0-penumbra,1.0+penumbra,clearance);
-    float incidence = abs(dot(sunDirection,planetAxis));
     vec3 viewDirection = normalize(cameraPosition-vWorldPosition);
-    float phase = pow(max(dot(-sunDirection,viewDirection),0.0),5.0);
-    float light = 0.045 + visibility * (0.28 + incidence*0.8 + phase*0.12);
+    float lightSide = dot(sunDirection,planetAxis);
+    float viewSide = dot(viewDirection,planetAxis);
+    float mu0 = max(abs(lightSide),0.015);
+    float mu = max(abs(viewSide),0.015);
+    float opacity = 1.0-exp(-tau/mu);
+    if(opacity<0.0001) discard;
+    // Integrate single scattering through a thin particulate slab, separately
+    // for reflected sunlight and light transmitted to the unlit side.
+    float reflection = mu0/(mu0+mu)*(1.0-exp(-tau*(1.0/mu0+1.0/mu)));
+    float inverseDifference = 1.0/mu-1.0/mu0;
+    float transmission;
+    if(abs(inverseDifference)<0.01) {
+      float meanMu = (mu+mu0)*0.5;
+      transmission = tau/meanMu*exp(-tau/meanMu);
+    } else {
+      transmission = (exp(-tau/mu0)-exp(-tau/mu))/(mu*inverseDifference);
+    }
+    float cosine = dot(-sunDirection,viewDirection);
+    float phase = 0.54+0.30*particlePhase(cosine,-0.25)+0.16*particlePhase(cosine,0.65);
+    float scattering = lightSide*viewSide>0.0 ? reflection : transmission;
+    // Weak planetshine falls with radius and vanishes over Saturn's night side.
+    float planetshine = 0.012*max(dot(normalize(relative),sunDirection),0.0)/(radius*radius);
+    vec3 radiance = color*(visibility*scattering*phase*1.10
+      + opacity*(0.002+planetshine));
     #include <logdepthbuf_fragment>
-    gl_FragColor = vec4(color*light,density*0.95);
+    // The slab integral already includes extinction. Premultiplied blending adds
+    // this radiance once and attenuates the background by the remaining opacity.
+    gl_FragColor = vec4(radiance,opacity);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -671,18 +711,21 @@ export function createPlanetModel(
   }
   if (body.id === "saturn") {
     const rings = new THREE.Mesh(
-      new THREE.RingGeometry(1.12, 2.3, 320),
+      new THREE.RingGeometry(SATURN_RING_INNER, SATURN_RING_OUTER, 512),
       new THREE.ShaderMaterial({
         vertexShader: modelVertex,
         fragmentShader: ringFragment,
         uniforms: {
           sunDirection: { value: sunDirection },
           solarAngularRadius: proceduralUniforms.solarAngularRadius,
+          planetFlattening: { value: body.flattening },
           planetAxis: { value: axis },
           planetCenter: { value: placement.center },
           bodyRadius: { value: placement.radius },
         },
         side: THREE.DoubleSide,
+        forceSinglePass: true,
+        premultipliedAlpha: true,
         transparent: true,
         depthWrite: false,
       }),
