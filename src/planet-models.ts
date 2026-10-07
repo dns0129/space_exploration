@@ -685,10 +685,10 @@ export function createPlanetModel(
           strength: { value: solar ? 0.95 : atmosphereStrength(body.id) },
           uTime,
         },
-        side: THREE.BackSide,
+        side: solar ? THREE.BackSide : THREE.FrontSide,
         transparent: true,
         depthWrite: false,
-        blending: THREE.AdditiveBlending,
+        blending: solar ? THREE.AdditiveBlending : THREE.NormalBlending,
       }),
     );
     halo.scale.y = body.flattening;

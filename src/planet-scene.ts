@@ -196,8 +196,6 @@ const surfaceFragment = /* glsl */ `
     color += vec3(0.75, 0.87, 1.0) * specular * water * smoothstep(0.0, 0.15, daylight) * (0.12+fresnel*0.35);
     float visibleCloud = sampleMap(cloudMap, cloudUv, cloudSize, gx, gy, seam).r * cloudsEnabled;
     color = mix(color,vec3(0.92,0.96,1.0)*(0.035+max(daylight,0.0)*1.1),visibleCloud*flatClouds*0.82);
-    float rim = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
-    color += vec3(0.035, 0.22, 0.55) * rim * smoothstep(-0.3, 0.6, daylight) * 0.35;
     #include <logdepthbuf_fragment>
     gl_FragColor = vec4(color, 1.0);
     #include <tonemapping_fragment>
@@ -983,8 +981,8 @@ export class SolarScene {
           planetCenter: { value: group.position }, bodyRadius: { value: 1 },
           atmosphereColor: { value: new THREE.Color(surfaceProfile("earth").sky) },
           atmosphereHeight: { value: EARTH.atmosphereKm! / EARTH.radiusKm }, strength: { value: atmosphereStrength("earth") }, uTime: { value: 0 } },
-        side: THREE.BackSide,
-        blending: THREE.AdditiveBlending,
+        side: THREE.FrontSide,
+        blending: THREE.NormalBlending,
         transparent: true,
         depthWrite: false,
       }),

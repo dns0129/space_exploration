@@ -66,9 +66,10 @@ export class SurfaceScene {
           cloud.a *= cloudVolume;
           solarTransmission = 1.0 - cloud.a * 0.96;
           float combined = atmosphere.a + cloud.a * (1.0 - atmosphere.a);
-          // Clouds keep their shape even beneath a dense blue daytime sky.
-          atmosphere.rgb = mix(atmosphere.rgb, cloud.rgb, cloud.a * 0.88 / max(combined, 0.001));
-          atmosphere.a = max(combined, cloud.a);
+          // Composite radiance, so opaque cloud banks retain their own light.
+          atmosphere.rgb = (cloud.rgb * cloud.a + atmosphere.rgb * atmosphere.a * (1.0 - cloud.a))
+            / max(combined, 0.00001);
+          atmosphere.a = combined;
         }
         // The local sky owns its sun, so it needs no solar-system sphere layer.
         float horizonDip = sqrt(max(altitude * (2.0 * radius + altitude), 0.0)) / (radius + altitude);

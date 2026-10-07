@@ -19,7 +19,7 @@ test("地球实际渲染，观察控制和图层工作正常", async ({ page }, 
   await expect(page.getByRole("heading", { name: "地球 EARTH" })).toBeVisible();
   await expect(
     page.getByRole("navigation", { name: "太阳系天体" }).getByRole("button"),
-  ).toHaveCount(9);
+  ).toHaveCount(11);
   await expect(
     page.getByRole("button", { name: "火星，切换观测" }),
   ).toBeEnabled();
