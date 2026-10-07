@@ -11,7 +11,10 @@ const skyVertex = /* glsl */ `
   varying vec3 vDirection;
   void main() {
     vDirection = position;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    // A sky direction has no world position. Ignore both camera translation
+    // and the parent's metre conversion used by the walking render pass.
+    vec4 clip = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0);
+    gl_Position = vec4(clip.xy, clip.w * 0.999, clip.w);
   }
 `;
 
@@ -108,11 +111,6 @@ export class GalaxySky {
     this.mesh.name = "native-panorama-galaxy";
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = -1000;
-    this.mesh.onBeforeRender = (_renderer, _scene, camera) => {
-      // Keep the shell at infinity even with the floating flight origin.
-      camera.getWorldPosition(this.mesh.position);
-      this.mesh.updateMatrixWorld(true);
-    };
   }
 
   /** The caller owns panorama texture loading and disposal. */

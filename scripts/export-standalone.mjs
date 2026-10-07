@@ -31,9 +31,9 @@ const rasterDefinitions = (() => {
     }
   } finally { closeSync(file); }
 })();`);
-// Canonical height fields are embedded in shared code. Old DEM PNGs and the
-// replaced per-system panorama remain in public provenance, but are not loaded.
-const retiredTextures = new Set(["earth-terrain-4k.png", "earth-terrain-8k.png", "centauri-milky-way-4k.jpg"]);
+// Shared collision heights are embedded in code. Original Earth DEM images
+// remain in use; retired AI detail and the replaced panorama are omitted.
+const retiredTextures = new Set(["surface-material-atlas.jpg", "earth-terrain-8k.png", "centauri-milky-way-4k.jpg"]);
 const textures = {};
 for (const file of (await readdir(join(project, "public/textures"))).filter((file) => /\.(jpg|png)$/.test(file) && !retiredTextures.has(file)).sort()) {
   const bytes = await readFile(join(project, "public/textures", file));
@@ -60,7 +60,7 @@ const result = await build({
         if (!code.includes(location))
           throw new Error("Texture loader changed; update the export adapter.");
         return {
-          code: `const inlineTextureAssets = ${JSON.stringify(textures)};\n` + code.replaceAll(location, "inlineTextureAssets[file]"),
+          code: `const inlineTextureAssets = ${JSON.stringify(textures)};\ninlineTextureAssets["earth-terrain-8k.png"] = inlineTextureAssets["earth-terrain-4k.png"];\n` + code.replaceAll(location, "inlineTextureAssets[file]"),
           map: null,
         };
       },

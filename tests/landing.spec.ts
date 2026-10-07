@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
-import { terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
+import { terrainHeightKm, terrainMapNormal, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 
 test("地表实际渲染，L 连续降落、暂停、保存恢复与起飞，桌面和触屏均可操作", async ({ page }, info) => {
   test.setTimeout(180000);
@@ -9,10 +9,13 @@ test("地表实际渲染，L 连续降落、暂停、保存恢复与起飞，桌
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
   const world = await (await page.request.get("/api/world")).json();
   const earth = world.bodies.find((body: any) => body.id === "earth");
-  const height = terrainHeightKm("earth", [0, 0, -1]) + LANDING_CLEARANCE_KM + 0.06;
+  // The restored photography depicts the Pacific at the old checkpoint.
+  // Land on the sunlit, imaged Hilo forest so this checks actual ground colour.
+  const outward = terrainMapNormal("earth", [0.06888888888888892, 0.6094444444444445]);
+  const height = terrainHeightKm("earth", outward) + LANDING_CLEARANCE_KM + 0.06;
   await page.request.get("/api/flight/save");
   expect((await page.request.post("/api/flight/save", { data: {
-    version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] - earth.radius - height / world.unitsKm],
+    version: 2, worldLayoutVersion: world.layoutVersion, position: earth.position.map((value: number, i: number) => value + outward[i] * (earth.radius + height / world.unitsKm)),
     velocity: [0, 0, 0], orientation: [0, 0, 0, 1], target: "earth", camera: "chase", assist: true, elapsed: 0,
   } })).ok()).toBe(true);
   await page.goto("/");
