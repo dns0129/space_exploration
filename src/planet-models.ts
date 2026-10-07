@@ -692,6 +692,8 @@ export function createPlanetModel(
       }),
     );
     halo.scale.y = body.flattening;
+    // Composite atmospheric extinction and scattering after the transparent cloud deck.
+    if (body.id === "venus" || body.id === "neptune") halo.renderOrder = 1;
     const atmosphere = new THREE.Group();
     atmosphere.add(halo);
     group.add(atmosphere);
