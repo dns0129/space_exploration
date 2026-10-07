@@ -4,17 +4,19 @@ import * as THREE from "three";
 
 function average(image: PNG) {
   const sum = [0, 0, 0];
-  let count = 0;
+  let count = 0, greenSquared = 0;
   for (let y = Math.floor(image.height * 0.2); y < image.height * 0.65; y++)
     for (let x = Math.floor(image.width * 0.25); x < image.width * 0.75; x++) {
       const index = (y * image.width + x) * 4;
       for (let channel = 0; channel < 3; channel++) sum[channel] += image.data[index + channel];
+      greenSquared += image.data[index + 1] ** 2;
       count++;
     }
-  return sum.map(value => value / count);
+  const means = sum.map(value => value / count);
+  return [...means, Math.sqrt(Math.max(0, greenSquared / count - means[1] ** 2))];
 }
 
-test("100 km 大气可见、随高度连续变浓，越过边界不跳变，夜面与无大气卫星保留暗空", async ({ page }, info) => {
+test("高空朝外保留暗空，地平线散射随下降变浓，边界连续且夜面与无大气卫星保持暗空", async ({ page }, info) => {
   test.setTimeout(240000);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -60,17 +62,22 @@ test("100 km 大气可见、随高度连续变浓，越过边界不跳变，夜�
       await page.locator("#flight-camera").click();
       await expect(page.locator("#flight-ui")).toHaveAttribute("data-environment", "atmosphere");
       const chase = PNG.sync.read(await page.locator("canvas").screenshot({ style: ".flight-ui, .destination-selectors { visibility: hidden !important; }" }));
-      expect(average(chase)[2], "外部镜头在 100 km 仍应看到大气").toBeGreaterThan(35);
+      if (name !== "entry")
+        expect(average(chase)[2], "外部镜头在 100 km 朝地平线或地表仍应看到大气").toBeGreaterThan(35);
       await page.screenshot({ path: info.outputPath(`atmosphere-${name}-chase.png`) });
     }
   }
   const blue = (name: string) => images.get(name)![2];
-  expect(blue("entry") - blue("space"), "100 km 时朝外的视野应有可见散射").toBeGreaterThan(25);
-  expect(blue("low") - blue("entry"), "向下飞行时天空应逐渐变浓").toBeGreaterThan(25);
+  expect(blue("entry") - blue("space"), "100 km 朝外不能被厚蓝光膜覆盖").toBeLessThan(8);
+  expect(blue("horizon") - blue("entry"), "高空散射应集中在长光程的地平线").toBeGreaterThan(8);
+  expect(blue("low") - blue("entry"), "向下飞行时天空应逐渐变浓").toBeGreaterThan(15);
   expect(Math.abs(blue("edge-out") - blue("edge-in")), "大气边界两侧应连续").toBeLessThan(8);
-  expect(blue("entry") - blue("night"), "夜面不能出现白昼的蓝天").toBeGreaterThan(25);
-  expect(blue("low") - blue("moon"), "无大气天体不应产生蓝色天空").toBeGreaterThan(50);
-  expect(images.get("entry-down")![1], "独立星球场景在100km俯视必须保留完整地表与云层，不能形成黑洞").toBeGreaterThan(35);
+  expect(blue("low") - blue("night"), "夜面不能出现低空白昼的蓝天").toBeGreaterThan(15);
+  expect(blue("low") - blue("moon"), "无大气天体不应产生蓝色天空").toBeGreaterThan(15);
+  // Dark ocean should retain texture contrast, without a bright blue coating
+  // artificially lifting the average brightness of the entire ground view.
+  expect(images.get("entry-down")![1], "100km 俯视必须保留可见地表与云层").toBeGreaterThan(20);
+  expect(images.get("entry-down")![3], "俯视地表保留云层明暗，不能只剩同色光膜").toBeGreaterThan(3);
   expect(errors).toEqual([]);
 });
 
