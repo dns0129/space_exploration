@@ -32,8 +32,8 @@ export class SurfaceScene {
     groundMapBlend: { value: 0 },
     groundCloudMapBlend: { value: 0 },
   };
-  private readonly light = new THREE.DirectionalLight(0xffead1, 2.2);
-  private readonly ambient = new THREE.HemisphereLight(0xcbdce8, 0x3a3028, 0.8);
+  private readonly light = new THREE.DirectionalLight(0xffffff, 2.2);
+  private readonly ambient = new THREE.HemisphereLight(0xd9d9d9, 0x323232, 0.8);
   private readonly skyMaterial = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, depthTest: false,
     uniforms: { rotation: { value: new THREE.Matrix3() }, up: { value: new THREE.Vector3() },
@@ -161,7 +161,7 @@ export class SurfaceScene {
     this.terrainUniforms.groundMapBlend.value = 1;
     this.terrainUniforms.groundCloudMapBlend.value = THREE.MathUtils.smoothstep(env.altitudeKm, 18, 36);
     this.light.position.copy(sun).multiplyScalar(10);
-    this.light.color.copy(sunlight.color);
+    this.light.color.set(0xffffff);
     this.light.intensity = 2.2 * day;
     this.ambient.intensity = 0.12 + day * 0.55;
     this.ambient.position.copy(env.outward);
