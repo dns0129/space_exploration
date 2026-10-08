@@ -14,13 +14,18 @@ test("belt particles occupy the main belt and station sits 400 km above Earth", 
   assert(Math.abs((offset.length() - earth.radius) * world.unitsKm - 400) < 1e-5);
   assert.equal(surfaceProfile(station.id).solid, false);
   assert(Math.abs(Math.hypot(...ceres.position) * world.unitsKm / world.auKm - 2.77) < 1e-8);
-  const belt = createAsteroidBelt(world.unitsKm, world.auKm, ceres.position);
+  const belt = createAsteroidBelt(world.unitsKm, world.auKm);
   const positions = belt.children[0].geometry.getAttribute("position");
   for (let i = 0; i < positions.count; i++) {
     const au = Math.hypot(positions.getX(i), positions.getY(i), positions.getZ(i)) * world.unitsKm / world.auKm;
-    assert(au >= 2.1 && au <= 3.3);
+    const { semimajorAxes, eccentricities } = belt.children[0].geometry.userData.orbits;
+    const a = semimajorAxes[i], e = eccentricities[i];
+    assert(a >= 2.1 && a <= 3.3);
+    assert(au >= a * (1 - e) - 1e-6 && au <= a * (1 + e) + 1e-6);
+    const diameterKm = belt.children[0].geometry.getAttribute("diameter").getX(i) * world.unitsKm;
+    assert(diameterKm >= 1.999 && diameterKm <= 200.001);
   }
-  assert.equal(belt.children[1].count, 180);
+  assert.equal(belt.children.length, 1, "no artificial Ceres rock swarm");
   const model = createStationModel({ id: station.id });
   const bounds = new THREE.Box3().setFromObject(model.group, true);
   assert(bounds.min.x >= -1 && bounds.max.x <= 1);

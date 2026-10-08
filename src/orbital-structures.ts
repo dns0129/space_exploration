@@ -61,6 +61,8 @@ export function createAsteroidBelt(unitsKm: number, auKm: number) {
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const diameters = new Float32Array(count);
+  const semimajorAxes = new Float64Array(count);
+  const eccentricities = new Float64Array(count);
   for (let i = 0; i < count; i++) {
     let a: number;
     // Major Jupiter resonances: 3:1, 5:2, 7:3 and 2:1.
@@ -68,6 +70,8 @@ export function createAsteroidBelt(unitsKm: number, auKm: number) {
       [[2.50, 0.025], [2.82, 0.018], [2.96, 0.014], [3.27, 0.025]]
         .some(([center, width]) => Math.abs(a - center) < width));
     const eccentricity = 0.03 + random() ** 1.5 * 0.25;
+    semimajorAxes[i] = a;
+    eccentricities[i] = eccentricity;
     const meanAnomaly = random() * Math.PI * 2;
     let eccentricAnomaly = meanAnomaly;
     // Kepler's equation: uniform mean anomaly gives correct dwell time.
@@ -88,6 +92,7 @@ export function createAsteroidBelt(unitsKm: number, auKm: number) {
     colors.set([albedo, albedo * 0.96, albedo * 0.90], i * 3);
   }
   const geometry = new THREE.BufferGeometry();
+  geometry.userData.orbits = { semimajorAxes, eccentricities };
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute("diameter", new THREE.BufferAttribute(diameters, 1));

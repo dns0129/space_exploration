@@ -90,16 +90,21 @@ test("moving parent planets preserves every satellite's local offset and the sta
 });
 
 test("belt spans independent orbital planes while keeping the main belt bounds and Kirkwood gaps", () => {
-  const ceres = bodyById("ceres"), belt = createAsteroidBelt(world.unitsKm, world.auKm, ceres.position);
+  const ceres = bodyById("ceres"), belt = createAsteroidBelt(world.unitsKm, world.auKm);
   const positions = belt.children[0].geometry.getAttribute("position");
-  let north = 0, south = 0, beyondFiveDegrees = 0, beyondFifteenDegrees = 0;
+  let north = 0, south = 0, beyondFiveDegrees = 0, beyondFifteenDegrees = 0, crossingGap = 0;
   try {
     for (let i = 0; i < positions.count; i++) {
       const x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
       const radius = Math.hypot(x, y, z), au = radius * world.unitsKm / world.auKm;
-      assert(au >= 2.1 - 1e-6 && au <= 3.3 + 1e-6, "three-dimensional main belt bounds");
-      for (const [gap, width] of [[2.5, 0.025], [2.82, 0.025], [2.95, 0.02]])
-        assert(Math.abs(au - gap) >= width - 1e-6, `Kirkwood gap at ${gap} AU`);
+      const { semimajorAxes, eccentricities } = belt.children[0].geometry.userData.orbits;
+      const a = semimajorAxes[i], e = eccentricities[i];
+      assert(a >= 2.1 && a <= 3.3);
+      assert(e >= 0.03 && e <= 0.28);
+      assert(au >= a * (1 - e) - 1e-6 && au <= a * (1 + e) + 1e-6, "elliptical radial bounds");
+      for (const [gap, width] of [[2.5, 0.025], [2.82, 0.018], [2.96, 0.014], [3.27, 0.025]])
+        assert(Math.abs(a - gap) >= width - 1e-6, `semimajor-axis Kirkwood gap at ${gap} AU`);
+      if (Math.abs(au - 2.5) < 0.025) crossingGap++;
       const latitude = Math.asin(Math.abs(y) / radius) / radians;
       assert(latitude <= 30.001, "sparse high-inclination particles remain bounded");
       if (y > 0) north++; else if (y < 0) south++;
@@ -109,12 +114,8 @@ test("belt spans independent orbital planes while keeping the main belt bounds a
     assert(north > positions.count * 0.35 && south > positions.count * 0.35, "both sides of the ecliptic are populated");
     assert(beyondFiveDegrees > positions.count * 0.2, "belt is a three-dimensional distribution");
     assert(beyondFifteenDegrees > positions.count * 0.002 && beyondFifteenDegrees < positions.count * 0.05, "high latitudes form a sparse tail");
-    const matrix = new THREE.Matrix4(), center = vec(ceres.position);
-    for (let i = 0; i < belt.children[1].count; i++) {
-      belt.children[1].getMatrixAt(i, matrix);
-      const distanceKm = new THREE.Vector3().setFromMatrixPosition(matrix).distanceTo(center) * world.unitsKm;
-      assert(distanceKm > 650 && distanceKm < 18000, "local rocks follow the inclined Ceres waypoint");
-    }
+    assert(crossingGap > 100, "eccentric orbits cross resonance radii without artificial empty rings");
+    assert.equal(belt.children.length, 1, "no local swarm around Ceres");
   } finally {
     for (const object of belt.children) {
       object.geometry.dispose();
