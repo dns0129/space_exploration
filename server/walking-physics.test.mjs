@@ -194,3 +194,102 @@ test("100 km and 700 km walking restores generate local collision vertices only 
     restored.reset();
   }
 });
+
+function slopeCameraScene() {
+  const body = world.bodies.find(candidate => candidate.id === "naiad");
+  const up = new THREE.Vector3(Math.sin(4.8), Math.cos(1.4), Math.cos(4.8)).normalize();
+  const radial = up.clone().multiplyScalar(surfaceRadiusM(world, body, up.toArray()));
+  const physics = new WalkingPhysics(world, body.id);
+  physics.ensureTerrain(radial, radial, true);
+  const patch = physics.terrainPatch, side = Math.sqrt(patch.vertices.length / 3);
+  const center = ((side - 1) / 2 * side + (side - 1) / 2) * 3;
+  const slope = offset => new THREE.Vector3().fromArray(patch.vertices, center + offset)
+    .sub(new THREE.Vector3().fromArray(patch.vertices, center - offset)).dot(up);
+  const gradient = patch.right.clone().multiplyScalar(slope(3)).addScaledVector(patch.forward, slope(side * 3));
+  assert(gradient.length() > 2, "fixture has an actual steep triangle mesh, rather than an analytic camera floor");
+  const eye = up.clone().multiplyScalar(1.65);
+  const target = eye.clone().addScaledVector(gradient.normalize(), 5).addScaledVector(up, 0.7);
+  return { physics, eye, target, up };
+}
+
+test("camera sphere and boom retract before real sloping terrain and queries never step or change physical state", () => {
+  const { physics, eye, target } = slopeCameraScene();
+  try {
+    const beforeEye = eye.toArray(), beforeTarget = target.toArray();
+    const beforeWorld = physics.world.takeSnapshot(), beforeTimestep = physics.world.timestep;
+    physics.world.step = () => { throw new Error("camera queries must not advance the physics world"); };
+    const safe = physics.constrainCamera(eye, target);
+    const boom = target.clone().sub(eye), safeBoom = safe.clone().sub(eye);
+    assert(safeBoom.length() > 0.1 && safeBoom.length() < boom.length() - 1);
+    assert(safeBoom.clone().cross(boom).length() < 0.00001, "retraction follows the eye-to-camera boom");
+    let terrain;
+    physics.world.forEachCollider(candidate => { if (candidate.shapeType() === RAPIER.ShapeType.TriMesh) terrain = candidate; });
+    const closest = terrain.projectPoint(safe, false);
+    assert(safe.distanceTo(closest.point) >= 0.219, "the camera sphere keeps a real mesh contact gap");
+    assert.equal(physics.world.intersectionWithShape(safe, { x: 0, y: 0, z: 0, w: 1 }, new RAPIER.Ball(0.2),
+      undefined, undefined, physics.collider), null);
+    const clearBoom = physics.world.castShape(eye, { x: 0, y: 0, z: 0, w: 1 }, safeBoom,
+      new RAPIER.Ball(0.2), 0, 1, true, undefined, undefined, physics.collider);
+    assert.equal(clearBoom, null, "the complete camera boom stays outside terrain, not only its endpoint");
+    assert.deepEqual(eye.toArray(), beforeEye);
+    assert.deepEqual(target.toArray(), beforeTarget);
+    assert.equal(physics.world.timestep, beforeTimestep);
+    assert.deepEqual(physics.world.takeSnapshot(), beforeWorld, "pure scene queries preserve rigid-body pose and velocities");
+  } finally { physics.dispose(); }
+});
+
+test("unobstructed camera targets remain exact, the suit is ignored, and zero-length near-ground cameras use the mesh", () => {
+  const body = world.bodies.find(candidate => candidate.id === "earth"), up = new THREE.Vector3(0, 0, -1);
+  const radial = up.clone().multiplyScalar(surfaceRadiusM(world, body, up.toArray()));
+  const physics = new WalkingPhysics(world, body.id);
+  try {
+    physics.ensureTerrain(radial, radial, true);
+    physics.setFeet(new THREE.Vector3(), up,
+      new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up));
+    const eye = up.clone().multiplyScalar(1.65), target = eye.clone().add(new THREE.Vector3(5, 0, 0)).addScaledVector(up, 0.7);
+    assert.deepEqual(physics.constrainCamera(eye, target).toArray(), target.toArray());
+    assert.deepEqual(physics.constrainCamera(eye, eye).toArray(), eye.toArray(), "a first-person camera ignores its own capsule");
+    const touching = up.clone().multiplyScalar(0.1);
+    const repaired = physics.constrainCamera(touching, touching);
+    assert(repaired.dot(up) >= 0.219 && repaired.dot(up) < 0.23,
+      "a sphere initially intersecting ground is separated by actual mesh contact, without moving the player");
+  } finally { physics.dispose(); }
+});
+
+test("camera collision results remain continuous across a floating-origin shift without stepping gameplay", () => {
+  const { physics, eye, target } = slopeCameraScene();
+  try {
+    const before = physics.constrainCamera(eye, target);
+    const shift = new THREE.Vector3(300, -120, 90);
+    physics.shiftOrigin(shift);
+    const afterWorld = physics.world.takeSnapshot();
+    physics.world.step = () => { throw new Error("rebased camera queries must not step the world"); };
+    const after = physics.constrainCamera(eye.clone().sub(shift), target.clone().sub(shift));
+    assert(after.clone().add(shift).distanceTo(before) < 0.0001,
+      "the same visible camera point survives a rebase within 0.1 mm");
+    assert.deepEqual(physics.world.takeSnapshot(), afterWorld);
+  } finally { physics.dispose(); }
+});
+
+test("walking camera wrapper queries restored Rapier terrain on the restore frame and preserves saved motion", () => {
+  const ship = landed("earth"), walker = new WalkingDynamics();
+  assert.equal(walker.disembark(ship), null);
+  walker.step(0.02, { ...emptyInput(), brake: true, throttle: 1 });
+  const state = walker.snapshot(), restored = new WalkingDynamics();
+  restored.restore(state, ship);
+  try {
+    assert(restored.active && !restored.grounded);
+    const eye = restored.localPositionM.clone().addScaledVector(restored.outward, 1.65);
+    const target = restored.localPositionM.clone().addScaledVector(restored.outward, -3)
+      .addScaledVector(restored.terrainPatch.right, 4);
+    const before = restored.snapshot(), shipBefore = ship.snapshot(), frameBefore = restored.localFrame.revision;
+    const safe = restored.constrainCamera(eye, target);
+    assert(safe.distanceTo(target) > 1, "restored terrain blocks the camera before the first walking step");
+    assert(safe.distanceTo(eye) > 0.1);
+    assert.deepEqual(restored.snapshot(), before);
+    assert.deepEqual(ship.snapshot(), shipBefore);
+    assert.equal(restored.localFrame.revision, frameBefore);
+    assert.deepEqual(before.offsetM, state.offsetM);
+    assert.deepEqual(before.velocityMps, state.velocityMps);
+  } finally { walker.reset(); restored.reset(); }
+});

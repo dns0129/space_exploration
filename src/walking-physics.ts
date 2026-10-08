@@ -19,6 +19,9 @@ export const WALKING_PATCH_HALF_EXTENT_M = 48;
 export const WALKING_PATCH_SPACING_M = 0.5;
 const PATCH_REFRESH_DISTANCE_M = 16;
 const GROUND_RAY_EDGE_BIAS_M = 0.00001;
+export const CAMERA_COLLISION_RADIUS_M = 0.2;
+const CAMERA_TERRAIN_GAP_M = 0.02;
+const CAMERA_SWEEP_RETREAT_M = 0.001;
 
 /** Vertices are in the same metre frame as the character and are used verbatim by rendering. */
 export interface WalkingTerrainPatch {
@@ -189,6 +192,32 @@ export class WalkingPhysics {
       if (adjacent) { total += adjacent.timeOfImpact - 2; hits++; }
     }
     return hits ? total / hits : Number.POSITIVE_INFINITY;
+  }
+
+  /** Query-only camera sphere sweep in the current floating metre frame. */
+  constrainCamera(eyeM: THREE.Vector3, desiredM: THREE.Vector3, radiusM = CAMERA_COLLISION_RADIUS_M) {
+    if (!this.terrainCollider) return desiredM.clone();
+    const radius = Number.isFinite(radiusM) && radiusM > 0 ? radiusM : CAMERA_COLLISION_RADIUS_M;
+    const sphere = new RAPIER.Ball(radius), rotation = { x: 0, y: 0, z: 0, w: 1 };
+    const start = eyeM.clone();
+    // The camera sphere extends slightly beyond the suit at eye height. Resolve
+    // an initial overlap against the actual mesh, including a zero-length boom,
+    // without moving the character or advancing Rapier/gameplay time.
+    for (let i = 0; i < 4; i++) {
+      const contact = this.terrainCollider.contactShape(sphere, start, rotation, CAMERA_TERRAIN_GAP_M);
+      if (!contact || contact.distance >= CAMERA_TERRAIN_GAP_M) break;
+      const normal = new THREE.Vector3().copy(contact.normal1);
+      if (normal.lengthSq() < 1e-12) break;
+      start.addScaledVector(normal.normalize(), CAMERA_TERRAIN_GAP_M - contact.distance + CAMERA_SWEEP_RETREAT_M);
+    }
+    const boom = desiredM.clone().sub(start), length = boom.length();
+    if (length < 1e-8) return start;
+    const hit = this.world.castShape(start, rotation, boom, sphere, CAMERA_TERRAIN_GAP_M, 1, true,
+      undefined, undefined, this.collider, this.character,
+      collider => collider.handle === this.terrainCollider!.handle);
+    if (!hit) return desiredM.clone();
+    const fraction = THREE.MathUtils.clamp(hit.time_of_impact - CAMERA_SWEEP_RETREAT_M / length, 0, 1);
+    return start.addScaledVector(boom, fraction);
   }
 
   private refreshQueries() {

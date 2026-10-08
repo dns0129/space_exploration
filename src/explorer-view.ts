@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { createShip } from "./ship-model";
 import type { ShipDynamics } from "./ship-dynamics";
 import type { WalkingDynamics } from "./walking-dynamics";
-import { sampleSurface, METRES_PER_KILOMETRE } from "../shared/spatial-frame.mjs";
+import { METRES_PER_KILOMETRE } from "../shared/spatial-frame.mjs";
 import { LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 
 /** Metre-scale surface assets share the terrain depth buffer and the floating metre origin used by Rapier. */
@@ -123,13 +123,6 @@ export class ExplorerView {
     const eye = feet.clone().addScaledVector(up, 1.65);
     const destination = view === "first" ? eye : eye.clone().addScaledVector(forward, -5).addScaledVector(up, 0.7);
     camera.position.lerp(destination, immediate || view === "first" ? 1 : 1 - Math.exp(-dt * 12));
-    // Sample the shared height function so the follow camera cannot dip below a hill.
-    const body = ship.config.bodies.find(body => body.id === walker.bodyId)!;
-    const parkedRadialM = ship.bodyRadialM;
-    const cameraRadialM = parkedRadialM.add(camera.position).sub(shipLocal);
-    const groundSample = sampleSurface(ship.config, body, cameraRadialM.toArray());
-    if (groundSample.clearanceM < 0.35)
-      camera.position.addScaledVector(new THREE.Vector3().fromArray(groundSample.normal), 0.35 - groundSample.clearanceM);
     if (view === "third") {
       // Retract the follow camera before a landing strut or hull can cover the explorer.
       this.lander.group.updateWorldMatrix(true, true);
@@ -147,6 +140,10 @@ export class ExplorerView {
       });
       if (hit) camera.position.copy(eye).addScaledVector(ray, Math.max(0.35, hit.distance - 0.25));
     }
+    // Resolve the final interpolated camera against the exact visible Rapier
+    // triangles, including hills along the eye-to-camera boom. A separate
+    // analytical floor cannot detect an intervening ridge or its triangle edges.
+    camera.position.copy(walker.constrainCamera(eye, camera.position));
     camera.up.copy(up);
     camera.lookAt(eye.clone().addScaledVector(forward, 8));
     if (Math.abs(camera.fov - 65) > 0.01 || camera.near !== 0.03) {

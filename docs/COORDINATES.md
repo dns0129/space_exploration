@@ -10,7 +10,7 @@
 | `src/surface-scene.ts`、`src/explorer-view.ts`、`src/planet-scene.ts` | 米制近景相机、可见碰撞地形、人物/飞船位置及物理资源生命周期 |
 | `shared/flight-state.mjs`、`.d.mts`、`src/flight-store.ts` | 精确体参考存档、旧档迁移和渲染繁忙时可靠读取 |
 | `server/spatial-frame.test.mjs`、`server/walking-physics.test.mjs`、`server/coordinate-save.test.mjs` | 精度、碰撞、重定位及存档边界验证；原有着陆/步行/轨道迁移测试同时更新 |
-| `tests/scale-management.spec.ts`、`tests/flight-store.spec.ts` | 真实渲染网格、相机连续性及存档网络期限验证 |
+| `tests/scale-management.spec.ts`、`tests/walking-camera.spec.ts`、`tests/flight-store.spec.ts` | 真实渲染网格、相机碰撞及连续性、存档网络期限验证 |
 | `package.json`、`package-lock.json`、`tsconfig.json`、`scripts/export-standalone.mjs`、`THIRD_PARTY_NOTICES.md` | 固定 Rapier 版本、直接 TS 测试导入、离线导出及依赖许可 |
 
 ## 坐标约定
@@ -61,6 +61,8 @@ v_relative = R⁻¹ (v_universe_mps − V_center) − ω × r
 
 人物碰撞采用圆角胶囊。坡面上的胶囊接触会让径向脚底高于该点解析地形，存档允许落地状态最多 0.20 m 的正向接触间隙；地下容差仍为 0.015 m，不能用恢复存档将人物放入地形。
 
+跟随相机从人物眼睛到插值后的镜头位置，对同一个 Rapier 地形网格做半径 **0.20 m** 的球形扫掠，并保留 **0.02 m** 接触间隙，遇到山坡时回缩镜头。第一人称的零长度查询也使用真实网格处理接触。查询排除人物胶囊，不推进物理时间、不改变人物速度；浮动原点平移及恢复后立即使用当前局部米制坐标。镜头不再使用另一个解析地面高度来修正位置。
+
 ## 存档与兼容
 
 存档保留 `systemId`、系统内世界位置/速度和必要的体参考信息。新增 `coordinateVersion: 1` 与 `referenceFrame`：太空帧为 `{ kind: "system" }`；体参考帧为 `{ kind: "body-fixed", bodyId, radialM }`。`radialM` 以米保存飞船相对天体中心的位置，轴与系统轴平行，避免存取期间丢失近处位置精度；兼容的 `position` 仍保存系统内世界位置。两者必须在浮点舍入允许范围内一致，损坏的数据不会被静默用另一个位置替代。
@@ -77,4 +79,4 @@ v_relative = R⁻¹ (v_universe_mps − V_center) − ω × r
 
 本次测试场景、误差断言和离线包校验见 [SCALE-VALIDATION.md](SCALE-VALIDATION.md)。
 
-Rapier 目前处理人物与地表碰撞；24 m 的停泊飞船模型保留现有返舱距离判断，没有新增完整船体碰撞网格。跟随相机防穿地沿用同一解析高度场，与 0.5 m 三角形内插地面可能有小量差异。
+Rapier 目前处理人物与地表碰撞；24 m 的停泊飞船模型保留现有返舱距离判断，没有新增完整船体碰撞网格。相机对船体仍沿用可见模型的射线回缩，地形则采用真实碰撞网格的球形扫掠。

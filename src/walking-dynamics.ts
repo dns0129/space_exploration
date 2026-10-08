@@ -5,7 +5,7 @@ import { surfaceProfile } from "../shared/surface.mjs";
 import { FloatingOriginFrame, SpatialScale, surfaceRadiusM } from "../shared/spatial-frame.mjs";
 import type { BodyId } from "./solar-system";
 import type { FlightInput, ShipDynamics } from "./ship-dynamics";
-import { WalkingPhysics } from "./walking-physics.ts";
+import { WalkingPhysics, CAMERA_COLLISION_RADIUS_M } from "./walking-physics.ts";
 import type { WalkingTerrainPatch } from "./walking-physics.ts";
 export { initializeWalkingPhysics } from "./walking-physics.ts";
 
@@ -55,6 +55,11 @@ export class WalkingDynamics {
   get terrainPatch(): WalkingTerrainPatch | undefined { return this.physics?.terrainPatch; }
   get collisionCount() { return this.physics?.collisionCount ?? 0; }
   get collisionGroundClearanceM() { return this.physics?.groundDistanceM(this.localPositionM, this.outward) ?? 0; }
+
+  /** Eye, target and result are local metres; this never moves the walker or steps physics. */
+  constrainCamera(eyeM: THREE.Vector3, desiredM: THREE.Vector3, radiusM = CAMERA_COLLISION_RADIUS_M): THREE.Vector3 {
+    return this.physics?.constrainCamera(eyeM, desiredM, radiusM) ?? desiredM.clone();
+  }
 
   disembark(ship: ShipDynamics): string | null {
     if (this.active) return "已经在地表探索中";
