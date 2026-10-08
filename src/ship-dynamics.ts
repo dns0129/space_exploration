@@ -309,7 +309,19 @@ export class ShipDynamics {
     // Assisted near-ground flight counters local gravity; inertial flight must use lift.
     if (!this.assist && environment.profile.solid && environment.groundAltitudeKm < 5)
       this.velocity.addScaledVector(environment.outward, -environment.profile.gravity / 1000 / this.config.unitsKm * dt);
-    if (input.brake || slowing) this.velocity.multiplyScalar(Math.exp(-(input.brake ? 8 : 2.8) * dt));
+    if (input.brake || slowing) {
+      this.velocity.multiplyScalar(Math.exp(-(input.brake ? 8 : 2.8) * dt));
+      if (slowing) {
+        // Exponential braking alone approaches zero asymptotically, leaving S
+        // stuck braking for seconds before reverse thrust can engage. Add a
+        // finite stopping rate in the current engine region, then reverse on
+        // the next step while S remains held.
+        const speed = this.velocity.length();
+        const stoppingRate = (environment.lowFlight ? this.lowFlightSpeedMps / 1000 : this.cruiseSpeedKm)
+          / this.config.unitsKm * 0.5;
+        this.velocity.multiplyScalar(speed ? Math.max(0, speed - stoppingRate * dt) / speed : 0);
+      }
+    }
     else if (this.assist && !acceleration.lengthSq()) {
       this.velocity.multiplyScalar(Math.exp(-0.1 * dt));
     }
@@ -321,7 +333,7 @@ export class ShipDynamics {
       }
     }
     this.clampCruiseSpeed();
-    if (Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z) < 0.000000001) this.velocity.set(0, 0, 0);
+    if (Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z) * this.config.unitsKm < 0.000000001) this.velocity.set(0, 0, 0);
     const previous = this.position.clone();
     this.advanceManual(dt, acceleration, powered, input.boost);
     this.resolveCollision(previous);

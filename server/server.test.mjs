@@ -1228,3 +1228,20 @@ test("ultra quality preserves a 4K viewport and restores still-image detail afte
   budget.configure("standard", 2, 3840, 2160);
   assert(3840 * 2160 * budget.ratio ** 2 <= 1_200_000.01);
 });
+
+test("holding S reverses promptly after near-surface slowdown at every engine preset", () => {
+  for (const assist of [true, false]) for (const preset of [1, 1000]) for (const dt of [1 / 120, 1 / 30, 0.05]) {
+    const ship = new ShipDynamics();
+    placeAboveGround(ship, "earth", 8);
+    ship.orientation.setFromUnitVectors(new THREE.Vector3(0, 0, -1), ship.environment.outward.clone().negate());
+    ship.assist = assist;
+    ship.lowFlightSpeedMps = preset;
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.orientation);
+    ship.velocity.copy(forward).multiplyScalar(preset / 1000 / world.unitsKm);
+    const start = ship.position.clone();
+    for (let elapsed = 0; elapsed < 2; elapsed += dt) ship.step(dt, { ...emptyInput(), throttle: -1 });
+    assert(ship.velocity.dot(forward) < 0, "continuous S must switch from braking to reverse within two seconds");
+    for (let elapsed = 0; elapsed < 2; elapsed += dt) ship.step(dt, { ...emptyInput(), throttle: -1 });
+    assert(ship.position.clone().sub(start).dot(forward) < 0, `reverse displacement assist=${assist} preset=${preset} dt=${dt}: ${ship.position.clone().sub(start).dot(forward)}`);
+  }
+});
