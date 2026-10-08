@@ -280,8 +280,8 @@ export const EXPLORATION_BODIES: readonly CelestialBody[] = [
     flattening: 0.93, distanceFromSunMillionKm: 414.386, orbitalPeriodDays: 1682,
     rotationSpeed: 0.02, surfaceStyle: 0, surfaceSeed: 127, hostStarId: "sun",
     orbitRadiusKm: 414386101.839, tags: ["主小行星带", "谷神星航标"],
-    description: "火星与木星之间的岩石航区。<br>以谷神星为导航入口，探索不规则岩块。<br>带区粒子与近景岩群为可视化示意，非真实密度。",
-    caption: "MAIN BELT / 2.1–3.3 AU · ILLUSTRATIVE DENSITY", layers: ["stars"],
+    description: "火星与木星之间的岩石航区。<br>以谷神星为导航入口，天体之间是广阔空旷的太空。<br>椭圆轨道统计示意，按真实尺寸与距离显示；非实测目录。",
+    caption: "MAIN BELT / 2.1–3.3 AU · STATISTICAL ORBITS", layers: ["stars"],
   },
   {
     id: "earth-station", name: "近地轨道空间站", english: "TERRA ORBITAL STATION",

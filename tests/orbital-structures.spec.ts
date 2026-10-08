@@ -4,6 +4,9 @@ test("小行星带与空间站可观测、导航、跃迁和恢复", async ({ pa
   test.setTimeout(180000);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => {
+    if (message.type() === "error") errors.push(message.text());
+  });
   await page.goto("/#planet=earth-station");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await expect(page.locator("h1")).toContainText("近地轨道空间站");

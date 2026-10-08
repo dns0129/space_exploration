@@ -1148,7 +1148,7 @@ export class SolarScene {
     if (placement) await this.loadSurfaceMap(id);
     if (this.destroyed || version !== this.selectionVersion) return false;
     if (!this.asteroidBelt) {
-      this.asteroidBelt = createAsteroidBelt(config.unitsKm, config.auKm, config.bodies.find(body => body.id === "ceres")!.position);
+      this.asteroidBelt = createAsteroidBelt(config.unitsKm, config.auKm);
       this.flightRoot.add(this.asteroidBelt);
     }
     this.dynamics = dynamics;
