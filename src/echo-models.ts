@@ -3,6 +3,8 @@ import type { PlanetModel } from "./planet-models";
 import type { CelestialBody } from "./solar-system";
 import { echoSurfaceColor, echoTerrainTexture } from "./echo-surface";
 import { terrainHeightField } from "../shared/surface.mjs";
+import { configurePulsarModel } from "./pulsar-model";
+import { configureShatteredModel } from "./shattered-model";
 
 type Placement = { center: THREE.Vector3; radius: number };
 type ShaderSources = { vertex: string; noise: string; atmosphere: string };
@@ -34,48 +36,7 @@ export function createEchoModel(body: CelestialBody, sun: THREE.Vector3,
   const model: PlanetModel = { body, group, surface, layers: {},
     spinning: [{ object: surface, rate: body.rotationSpeed }], timeUniforms: [time] };
   if (body.id === "echo-pulsar") {
-    material.fragmentShader = `${common} void main() {
-      vec3 p = normalize(vLocalPosition);
-      float plasma = fbm(p * 13.0 + vec3(0.0, uTime * 0.04, 8.0));
-      float magnetic = pow(0.5 + 0.5 * sin(p.y * 42.0 + plasma * 8.0), 6.0);
-      float limb = pow(max(dot(normalize(vNormal), normalize(cameraPosition-vWorldPosition)), 0.0), 0.35);
-      vec3 color = mix(vec3(0.15, 0.65, 1.9), vec3(2.6, 3.6, 4.2), plasma * 0.7 + magnetic * 0.3);
-      color *= (0.65 + limb * 0.55) * (0.94 + 0.06 * sin(uTime * 2.1));
-      ${ending} }`;
-    const magnetosphere = new THREE.Group();
-    magnetosphere.rotation.z = 0.42;
-    for (const sign of [-1, 1]) {
-      const beamMaterial = new THREE.ShaderMaterial({
-        vertexShader: sources.vertex,
-        fragmentShader: `${common} void main() {
-          float along = vUv.y;
-          float azimuth = pow(0.5 + 0.5 * cos(vUv.x * 6.2831853), 2.0);
-          float envelope = sin(along * 3.14159265) * (0.5 + azimuth * 0.5);
-          float thread = 0.78 + 0.22 * sin(along * 38.0 - uTime * 2.1);
-          float pulse = 0.80 + 0.20 * sin(uTime * 1.8 + along * 3.0);
-          vec3 color = mix(vec3(0.08, 0.32, 0.95), vec3(0.55, 1.55, 2.5), along);
-          #include <logdepthbuf_fragment>
-          float softEdge = pow(abs(dot(normalize(vNormal), normalize(cameraPosition-vWorldPosition))), 0.85);
-          gl_FragColor = vec4(color, envelope * thread * pulse * softEdge * 0.30);
-          #include <tonemapping_fragment>
-          #include <colorspace_fragment>
-        }`, uniforms, side: THREE.DoubleSide, forceSinglePass: true,
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-      });
-      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.035, 2.45, 48, 16, true), beamMaterial);
-      beam.position.y = sign * 1.85;
-      if (sign < 0) beam.rotation.z = Math.PI;
-      magnetosphere.add(beam);
-    }
-    const halo = new THREE.Mesh(new THREE.SphereGeometry(1.19, 64, 48),
-      new THREE.ShaderMaterial({ vertexShader: sources.vertex, fragmentShader: sources.atmosphere,
-        defines: { SOLAR_CORONA: 1 }, uniforms: { ...uniforms,
-          atmosphereColor: { value: new THREE.Color("#78d4ff") }, atmosphereHeight: { value: 0.19 }, strength: { value: 0.70 } },
-        side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-    magnetosphere.add(halo);
-    group.add(magnetosphere);
-    model.layers.atmosphere = magnetosphere;
-    model.spinning.push({ object: magnetosphere, rate: 0.09 });
+    configurePulsarModel(model, uniforms, sources);
   } else if (body.id === "veyl") {
     material.fragmentShader = `${common} void main() {
       vec3 p = normalize(vLocalPosition);
@@ -117,35 +78,7 @@ export function createEchoModel(body: CelestialBody, sun: THREE.Vector3,
         color += vec3(0.35, 0.55, 0.62) * glint * field.g * oceanMoon * day;
         ${ending} }`;
   } else {
-    surface.geometry.dispose();
-    surface.geometry = shatteredGeometry(body.id === "shard");
-    material.fragmentShader = `${common} varying float shell;
-      void main() {
-        vec3 p = vLocalPosition;
-        float texture = fbm(p * 12.0 + ${body.id === "shard" ? "vec3(41.0, 21.0, 87.0)" : "vec3(11.0)"});
-        float strata = 0.5 + 0.5 * sin(length(p) * 180.0 + texture * 8.0);
-        vec3 crust = mix(${body.id === "shard" ? "vec3(0.10, 0.17, 0.22), vec3(0.50, 0.67, 0.75)" : "vec3(0.095, 0.08, 0.075), vec3(0.43, 0.32, 0.23)"}, texture);
-        crust *= (0.8 + strata * 0.25) * (0.025 + max(dot(normalize(vNormal), sunDirection), 0.0) * 1.1);
-        vec3 inner = mix(vec3(0.22, 0.025, 0.008), vec3(2.1, 0.45, 0.035), pow(texture, 2.5));
-        inner *= 0.76 + 0.24 * strata;
-        vec3 color = mix(inner, crust, shell);
-        ${ending} }`;
-    material.vertexShader = sources.vertex.replace("void main()", "attribute float aShell; varying float shell; void main()")
-      .replace("vUv = uv;", "vUv = uv; shell = aShell;");
-    const rubble = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0),
-      new THREE.MeshStandardMaterial({ color: body.id === "shard" ? "#7f6d67" : "#96765c", roughness: 0.95 }), 96);
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < rubble.count; i++) {
-      const angle = i * 2.399963;
-      const r = 0.77 + (Math.sin(i * 13.41) * 0.5 + 0.5) * 0.17;
-      dummy.position.set(Math.cos(angle) * r, Math.sin(i * 4.17) * 0.24, Math.sin(angle) * r);
-      dummy.rotation.set(i * 1.7, i * 0.9, i * 2.1);
-      dummy.scale.setScalar(0.006 + (Math.sin(i * 12.79) * 0.5 + 0.5) * 0.032);
-      dummy.updateMatrix(); rubble.setMatrixAt(i, dummy.matrix);
-    }
-    rubble.rotation.set(0.38, 0.0, -0.26);
-    group.add(rubble);
-    model.spinning.push({ object: rubble, rate: 0.008 });
+    configureShatteredModel(model, uniforms, sources);
   }
   if (body.id === "veyl" || body.id === "echo-thalassa") {
     const atmosphere = new THREE.Mesh(new THREE.SphereGeometry(1.025, 80, 56),
@@ -157,46 +90,4 @@ export function createEchoModel(body: CelestialBody, sun: THREE.Vector3,
     group.add(atmosphere); model.layers.atmosphere = atmosphere;
   }
   return model;
-}
-
-/** Closed radial wedges separate physically; glowing cut faces are actual geometry. */
-function shatteredGeometry(small: boolean): THREE.BufferGeometry {
-  const sphere = new THREE.IcosahedronGeometry(small ? 0.65 : 0.70, 4);
-  const source = sphere.getAttribute("position");
-  const sectors = small ? 9 : 11;
-  const directions = Array.from({ length: sectors }, (_, i) => {
-    const y = 1 - (i + 0.5) * 2 / sectors, r = Math.sqrt(1 - y * y), angle = i * (small ? 2.72 : 2.399963) + (small ? 0.73 : 0);
-    return new THREE.Vector3(Math.cos(angle) * r, y, Math.sin(angle) * r);
-  });
-  const positions: number[] = [], normals: number[] = [], shell: number[] = [], uv: number[] = [];
-  function face(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, outer: boolean, offset: THREE.Vector3) {
-    const flat = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
-    for (const v of [a, b, c]) {
-      positions.push(...v.clone().add(offset).toArray());
-      normals.push(...(outer ? v.clone().normalize() : flat).toArray());
-      shell.push(outer ? 1 : 0); uv.push(0, 0);
-    }
-  }
-  for (let i = 0; i < source.count; i += 3) {
-    const a = new THREE.Vector3().fromBufferAttribute(source, i);
-    const b = new THREE.Vector3().fromBufferAttribute(source, i + 1);
-    const c = new THREE.Vector3().fromBufferAttribute(source, i + 2);
-    const center = a.clone().add(b).add(c).normalize();
-    let region = 0, score = -Infinity;
-    directions.forEach((direction, index) => { const dot = direction.dot(center); if (dot > score) { score = dot; region = index; } });
-    // A missing sector reveals the interior instead of an intact sphere with painted cracks.
-    if (region === (small ? 6 : 2) || small && region === 0) continue;
-    const offset = directions[region].clone().multiplyScalar((small ? 0.20 : 0.12) + (region % 3) * (small ? 0.02 : 0.035));
-    const inner = directions[region].clone().multiplyScalar(0.11);
-    face(a, b, c, true, offset);
-    face(a, inner, b, false, offset); face(b, inner, c, false, offset); face(c, inner, a, false, offset);
-  }
-  sphere.dispose();
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
-  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
-  geometry.setAttribute("aShell", new THREE.Float32BufferAttribute(shell, 1));
-  geometry.computeBoundingSphere();
-  return geometry;
 }
