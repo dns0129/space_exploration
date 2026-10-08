@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { PROCEDURAL_DETAIL_WIDTH } from "./procedural-body";
 import { SHATTERED_FRACTURE_GLSL } from "./shattered-geometry";
+import { SHATTERED_LAVA_GLSL } from "./shattered-lava";
 
 type ShaderSources = { vertex: string; noise: string; atmosphere: string };
 
@@ -39,8 +40,8 @@ export function createShatteredMaterial(uniforms: Record<string, THREE.IUniform>
       }
       vec4 rockMicrostructure(vec3 p, float footprint) {
         vec4 detail = vec4(0.0);
-        float frequency=4096.0/6.2831853, amplitude=1.0;
-        for(int i=0; i<4; i++) {
+        float frequency=512.0/6.2831853, amplitude=1.0;
+        for(int i=0; i<7; i++) {
           if(frequency > ${(PROCEDURAL_DETAIL_WIDTH / (Math.PI * 2) * 1.00001).toFixed(7)}) break;
           if(frequency*6.2831853 > rockDetailLimit*1.00001) break;
           float weight=clamp(1.5-footprint*frequency*2.0,0.0,1.0)*rockDetailEnabled;
@@ -48,7 +49,7 @@ export function createShatteredMaterial(uniforms: Record<string, THREE.IUniform>
             vec4 n=rockNoiseGradient(p*frequency+rockSeed+float(i)*17.31);
             detail+=vec4(n.x-0.5,n.yzw)*weight*amplitude;
           }
-          frequency*=2.0; amplitude*=0.62;
+          frequency*=2.0; amplitude*=0.80;
         }
         return detail;
       }
@@ -65,6 +66,7 @@ export function createShatteredMaterial(uniforms: Record<string, THREE.IUniform>
         }
         return vec2(sqrt(second)-sqrt(nearest),sqrt(nearest));
       }
+      ${SHATTERED_LAVA_GLSL}
       vec3 rockBRDF(vec3 base, vec3 n, vec3 light, vec3 view, float roughness, float metal) {
         vec3 halfVector=normalize(light+view);
         float nl=max(dot(n,light),0.0), nv=max(dot(n,view),0.001);
@@ -74,21 +76,26 @@ export function createShatteredMaterial(uniforms: Record<string, THREE.IUniform>
         float distribution=a2/(3.14159265*denominator*denominator+0.0001);
         float k=(roughness+1.0)*(roughness+1.0)/8.0;
         float geometry=(nl/(nl*(1.0-k)+k))*(nv/(nv*(1.0-k)+k));
-        vec3 f0=mix(vec3(0.04),base,metal);
+        vec3 f0=mix(vec3(0.022),base,metal);
         vec3 fresnel=f0+(1.0-f0)*pow(1.0-vh,5.0);
         vec3 specular=distribution*geometry*fresnel/max(4.0*nl*nv,0.001);
-        return ((1.0-fresnel)*(1.0-metal)*base+specular*3.14159265)*pow(nl,1.12)*1.6;
+        return ((1.0-fresnel)*(1.0-metal)*base+specular*1.15)*pow(nl,1.08)*1.6;
       }
       void main() {
         vec3 p=vLocalPosition, radial=normalize(p);
         float footprint=max(length(dFdx(p)),length(dFdy(p)));
+        vec3 view=normalize(cameraPosition-vWorldPosition);
+        vec3 viewLocal=vec3(dot(view,vAxisX),dot(view,vAxisY),dot(view,vAxisZ));
+        float innerMantle=1.0-smoothstep(0.04,0.16,vShell);
+        vec4 lava=vec4(0.0);
+        if(innerMantle>0.5) lava=moltenBasalt(p,viewLocal,footprint);
         float province=fbm(radial*2.8+vec3(rockSeed,18.0,5.0));
         float iron=fbm(radial*5.2+vec3(4.0,rockSeed,51.0));
         float mineral=fbm(radial*9.0+vec3(67.0,2.0,rockSeed));
         float grit=fbm(p*95.0+rockSeed);
         vec3 charcoal=vec3(0.035,0.047,0.045), limestone=vec3(0.24,0.26,0.21);
         vec3 base=mix(charcoal,limestone,smoothstep(0.34,0.61,province));
-        base=mix(base,vec3(0.24,0.067,0.036),smoothstep(0.45,0.61,iron)*0.85);
+        base=mix(base,vec3(0.19,0.063,0.039),smoothstep(0.43,0.64,iron)*0.72);
         base=mix(base,vec3(0.19,0.24,0.054),smoothstep(0.57,0.68,mineral)*0.45);
         float fault=shatteredFault(radial,isSatellite);
         float damage=shatteredDamage(radial,isSatellite);
@@ -109,7 +116,7 @@ export function createShatteredMaterial(uniforms: Record<string, THREE.IUniform>
         base*=0.48+smoothstep(0.24,0.72,flakes)*0.56+grit*0.30+strata*0.10;
         base*=1.0-pits*0.5;
         vec4 micro=rockMicrostructure(p,footprint);
-        base*=1.0+micro.x*0.45;
+        base*=clamp(1.0+micro.x*1.15,0.25,1.7);
 
         vec3 n=normalize(vNormal);
         if(!gl_FrontFacing) n=-n;
@@ -117,31 +124,28 @@ export function createShatteredMaterial(uniforms: Record<string, THREE.IUniform>
         vec3 dx=dFdx(vWorldPosition)/bodyRadius, dy=dFdy(vWorldPosition)/bodyRadius;
         vec3 rx=cross(dy,n), ry=cross(n,dx);
         float det=dot(dx,rx);
-        float height=grit*0.0022+flakes*0.0025-cracks*0.0005-pits*0.0017+strata*0.00022;
+        float height=grit*0.0011+flakes*0.0015-cracks*0.0007-pits*0.0011+strata*0.00017
+          +lava.a*innerMantle*0.0011;
         vec3 gradient=sign(det)*(dFdx(height)*rx+dFdy(height)*ry);
         n=normalize(max(abs(det),0.000000000001)*n-gradient);
         vec3 microSlope=vAxisX*micro.y+vAxisY*micro.z+vAxisZ*micro.w;
-        n=normalize(n-(microSlope-n*dot(n,microSlope))*0.30);
-        vec3 light=normalize(sunDirection), view=normalize(cameraPosition-vWorldPosition);
-        float day=max(dot(n,light),0.0);
+        n=normalize(n-(microSlope-n*dot(n,microSlope))*0.25);
+        vec3 light=normalize(sunDirection);
         float shell=smoothstep(0.35,0.9,vShell);
         float cut=1.0-shell;
         float depth=1.0-smoothstep(0.925,0.98,length(p));
         float occlusion=mix(0.52,1.0,smoothstep(0.005,0.06,fault))*mix(0.65,1.0,shell);
-        base=mix(base,vec3(0.018,0.011,0.008)*(0.55+grit*0.7),cut);
-        float roughness=clamp(0.86-mineral*0.18+micro.x*0.09,0.58,0.94);
-        vec3 color=rockBRDF(base,n,light,view,roughness,0.07*mineral)*occlusion;
+        vec3 cutRock=mix(vec3(0.008,0.009,0.008),vec3(0.032,0.027,0.021),flakes)
+          *(0.66+strata*0.25+micro.x*0.65);
+        base=mix(base,cutRock,cut);
+        float roughness=clamp(0.97-mineral*0.07+micro.x*0.035,0.88,1.0);
+        vec3 color=rockBRDF(base,n,light,view,roughness,0.0)*occlusion;
         color+=base*0.018*occlusion;
 
-        float lava=fbm(p*12.0+vec3(rockSeed,41.0,15.0));
-        float pools=smoothstep(0.43,0.68,lava);
-        float emberCracks=cracks*damage*nearRift*0.10;
-        float innerMantle=1.0-smoothstep(0.04,0.16,vShell);
-        float molten=cut*(0.22+pools*0.78)*(0.16+depth*0.84)
-          *mix(0.16,1.0,innerMantle)*(0.12+nearRift*0.88)+shell*emberCracks;
-        vec3 ember=mix(vec3(0.42,0.002,0.0003),vec3(2.5,0.12,0.002),pools);
-        color+=ember*molten*(0.98+0.02*sin(uTime*0.45+lava*12.0));
-        color+=vec3(0.025,0.001,0.0)*cut*nearRift;
+        color+=lava.rgb*innerMantle;
+        float wallEmbers=cut*(1.0-innerMantle)*nearRift*depth;
+        color+=vec3(0.12,0.006,0.0005)*wallEmbers*(0.3+cracks*0.7);
+        color+=vec3(0.32,0.009,0.0005)*shell*cracks*damage*nearRift*0.12;
         #include <logdepthbuf_fragment>
         gl_FragColor=vec4(max(color,vec3(0.0)),1.0);
         #include <tonemapping_fragment>

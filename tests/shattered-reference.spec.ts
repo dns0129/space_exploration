@@ -28,7 +28,10 @@ test("碎裂天体保留球壳轮廓，真实缺口露出红橙内层并随绕�
     const bodies: { id: string; visiblePixels: number; hotPixels: number; rockPixels: number;
       exposedPixels: number; mantleDifference: number; viewDifference: number; silhouetteRoundness: number;
       openingAxisRatio: number; rockTones: number; debrisPixels: number; debrisTones: number;
-      detail32MeanDifference: number; detail32ChangedPixels: number; glError: number }[] = [];
+      detail32MeanDifference: number; detail32ChangedPixels: number; moltenDarkFraction: number;
+      moltenBrightFraction: number; moltenContrast: number; thinMoltenFraction: number;
+      nearRiftRockPixels: number; nearRiftRockDetailDifference: number; rockUnstableFraction: number;
+      glError: number }[] = [];
     function capture(name: string) {
       renderer.setRenderTarget(target);
       renderer.render(scene, camera);
@@ -105,6 +108,89 @@ test("碎裂天体保留球壳轮廓，真实缺口露出红橙内层并随绕�
       camera.position.set(0, 0.20, 3.55);
       camera.lookAt(0, 0, 0);
       camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(true);
+      // Find a genuinely open, central rift from rendered pixels, then raycast
+      // the real mantle. This targets the user's problematic fracture close-up
+      // rather than measuring only a convenient intact patch on the left.
+      let openingPixel = -1, openingScore = Infinity;
+      for (let y = Math.round(size * 0.30); y < size * 0.70; y++) for (let x = Math.round(size * 0.20); x < size * 0.80; x++) {
+        const i = (y * size + x) * 4;
+        if (bodyOnly[i + 3] <= 240 || hollow[i + 3] >= 10) continue;
+        const margin = [-2, 0, 2].every(oy => [-2, 0, 2].every(ox => hollow[((y + oy) * size + x + ox) * 4 + 3] < 10));
+        if (!margin) continue;
+        const score = (x - size / 2) ** 2 + (y - size / 2) ** 2;
+        if (score < openingScore) { openingScore = score; openingPixel = y * size + x; }
+      }
+      if (openingPixel < 0) throw new Error(`${id} 前视中央缺口中没有可测量的真实熔融层`);
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(((openingPixel % size) + 0.5) / size * 2 - 1,
+        (Math.floor(openingPixel / size) + 0.5) / size * 2 - 1), camera);
+      const hit = raycaster.intersectObject(mantle, false)[0];
+      if (!hit) throw new Error(`${id} 可见裂带像素没有实际熔融层几何`);
+      const approach = camera.position.clone().sub(hit.point).normalize();
+      camera.near = 0.0001;
+      camera.position.copy(hit.point).addScaledVector(approach, 0.12);
+      camera.lookAt(hit.point);
+      camera.updateProjectionMatrix();
+      const nearRiftProduction = capture(`${id}-near-rift-production`);
+      // Hide the mantle for the rock checks, so moving lava cannot be mistaken
+      // for noisy rock grains; render the same real crust before/after time.
+      mantle.visible = false; debris.visible = false;
+      const nearRiftRock = capture(`${id}-near-rift-rock-detail`);
+      const detailEnabled = material.uniforms.rockDetailEnabled;
+      if (!detailEnabled) throw new Error(`${id} 缺少可校验的岩石程序微细节开关`);
+      detailEnabled.value = 0;
+      const nearRiftRockPlain = capture(`${id}-near-rift-rock-detail-disabled`);
+      detailEnabled.value = 1;
+      const savedTimes = model.timeUniforms.map(uniform => uniform.value);
+      model.timeUniforms.forEach(uniform => { uniform.value += 23; });
+      const nearRiftRockLater = capture(`${id}-near-rift-rock-time-shift`);
+      model.timeUniforms.forEach((uniform, index) => { uniform.value = savedTimes[index]; });
+      let nearRiftRockPixels = 0, rockDetailDifference = 0, unstableRockPixels = 0;
+      for (let i = 0; i < nearRiftRock.length; i += 4) {
+        const r = nearRiftRock[i], g = nearRiftRock[i + 1], b = nearRiftRock[i + 2];
+        if (nearRiftRock[i + 3] < 240 || r + g + b < 45 || r > g * 1.65) continue;
+        // Removing the mantle can expose the far side of a double-sided shell.
+        // Accept only rock pixels also visible in the intact production shot.
+        if (Math.abs(r - nearRiftProduction[i]) + Math.abs(g - nearRiftProduction[i + 1])
+          + Math.abs(b - nearRiftProduction[i + 2]) > 3) continue;
+        nearRiftRockPixels++;
+        rockDetailDifference += Math.abs(r - nearRiftRockPlain[i]) + Math.abs(g - nearRiftRockPlain[i + 1])
+          + Math.abs(b - nearRiftRockPlain[i + 2]);
+        if (Math.max(Math.abs(r - nearRiftRockLater[i]), Math.abs(g - nearRiftRockLater[i + 1]),
+          Math.abs(b - nearRiftRockLater[i + 2])) > 3) unstableRockPixels++;
+      }
+      const nearRiftRockDetailDifference = rockDetailDifference / Math.max(1, nearRiftRockPixels * 3);
+      const rockUnstableFraction = unstableRockPixels / Math.max(1, nearRiftRockPixels);
+      mantle.visible = true; debris.visible = true;
+      const mantleParent = mantle.parent!;
+      scene.attach(mantle);
+      model.group.visible = false;
+      const molten = capture(`${id}-near-rift-isolated-molten-layer`);
+      model.group.visible = true;
+      mantleParent.attach(mantle);
+      const moltenValues: number[] = [], brightMask = new Uint8Array(size * size);
+      let moltenDark = 0, moltenBright = 0, thinMolten = 0;
+      for (let i = 0; i < molten.length; i += 4) {
+        if (molten[i + 3] < 240) continue;
+        const r = molten[i], g = molten[i + 1], b = molten[i + 2];
+        const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        moltenValues.push(luminance);
+        if (r < 100 && luminance < 45) moltenDark++;
+        if (r > 145 && r > g * 1.8 && r > b * 3) { moltenBright++; brightMask[i / 4] = 1; }
+      }
+      for (let y = 4; y < size - 4; y++) for (let x = 4; x < size - 4; x++) {
+        const i = y * size + x;
+        if (brightMask[i] && (!brightMask[i - 4] || !brightMask[i + 4] || !brightMask[i - size * 4] || !brightMask[i + size * 4])) thinMolten++;
+      }
+      moltenValues.sort((a, b) => a - b);
+      const moltenDarkFraction = moltenDark / moltenValues.length, moltenBrightFraction = moltenBright / moltenValues.length;
+      const moltenContrast = moltenValues[Math.floor(moltenValues.length * 0.90)] - moltenValues[Math.floor(moltenValues.length * 0.10)];
+      const thinMoltenFraction = thinMolten / Math.max(1, moltenBright);
+      camera.near = 0.1;
+      camera.position.set(0, 0.20, 3.55);
+      camera.lookAt(0, 0, 0);
+      camera.updateProjectionMatrix();
       model.surface.rotation.y = Math.PI * 0.48;
       const side = capture(`${id}-reference-orbit`);
       let visiblePixels = 0, hotPixels = 0, rockPixels = 0, exposedPixels = 0, mantleDifference = 0, viewDifference = 0;
@@ -149,6 +235,8 @@ test("碎裂天体保留球壳轮廓，真实缺口露出红橙内层并随绕�
       bodies.push({ id, visiblePixels, hotPixels, rockPixels, exposedPixels, mantleDifference, viewDifference,
         silhouetteRoundness, openingAxisRatio, rockTones: rockTones.size, debrisPixels, debrisTones: debrisTones.size,
         detail32MeanDifference, detail32ChangedPixels,
+        moltenDarkFraction, moltenBrightFraction, moltenContrast, thinMoltenFraction,
+        nearRiftRockPixels, nearRiftRockDetailDifference, rockUnstableFraction,
         glError: renderer.getContext().getError() });
       scene.remove(model.group);
       const materials = new Set<THREE.Material>();
@@ -177,7 +265,7 @@ test("碎裂天体保留球壳轮廓，真实缺口露出红橙内层并随绕�
     // The reference is a narrow longitudinal rupture in a surviving sphere.
     // Combine area with directional shape instead of requiring the old broad,
     // round excavated cap's absolute opening area.
-    expect(body.exposedPixels, `${body.id} 岩壳必须具有真实贯通缺口`).toBeGreaterThan(3_500);
+    expect(body.exposedPixels, `${body.id} 岩壳必须具有真实贯通缺口`).toBeGreaterThan(3_000);
     expect(body.exposedPixels / body.visiblePixels, `${body.id} 真实裂带应覆盖至少2.5%的投影面积`).toBeGreaterThan(0.025);
     expect(body.openingAxisRatio, `${body.id} 缺口应形成撕裂带，不能退化为圆形火山口`).toBeGreaterThan(1.35);
     expect(body.mantleDifference, `${body.id} 内层应从岩壳下方真实显露`).toBeGreaterThan(2_000);
@@ -186,6 +274,14 @@ test("碎裂天体保留球壳轮廓，真实缺口露出红橙内层并随绕�
     expect(body.debrisTones, `${body.id} 碎块应有岩石材质层次，不能是单色几何体`).toBeGreaterThan(15);
     expect(body.detail32MeanDifference, `${body.id} 32K采样频率应在近景新增真实可见的程序微细节`).toBeGreaterThan(0.25);
     expect(body.detail32ChangedPixels, `${body.id} 最高细节层应改变足够多实际渲染像素`).toBeGreaterThan(2_000);
+    expect(body.moltenDarkFraction, `${body.id} 熔融层自身应有暗凝固壳，不能靠外壳阴影冒充`).toBeGreaterThan(0.15);
+    expect(body.moltenBrightFraction, `${body.id} 暗凝固壳之间应存在亮红橙隙`).toBeGreaterThan(0.025);
+    expect(body.moltenBrightFraction, `${body.id} 熔融层不能成为一整面均匀红膜`).toBeLessThan(0.65);
+    expect(body.moltenContrast, `${body.id} 近裂带熔岩需要明暗层次`).toBeGreaterThan(45);
+    expect(body.thinMoltenFraction, `${body.id} 亮熔岩应包含窄隙，不能只有模糊大色块`).toBeGreaterThan(0.20);
+    expect(body.nearRiftRockPixels, `${body.id} 近裂带还应真实看到断壁岩壳`).toBeGreaterThan(1_000);
+    expect(body.nearRiftRockDetailDifference, `${body.id} 断壁近景应显示实际粗糙微细节`).toBeGreaterThan(0.5);
+    expect(body.rockUnstableFraction, `${body.id} 静止镜头的岩石颗粒不应随时间闪动`).toBeLessThan(0.005);
   }
 });
 

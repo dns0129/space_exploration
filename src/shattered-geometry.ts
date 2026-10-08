@@ -1,57 +1,148 @@
 import * as THREE from "three";
 
-/** Both the real openings and the material's finer fracture damage use this map. */
-export const SHATTERED_FRACTURE_GLSL = /* glsl */ `
-  vec3 shatteredCoordinates(vec3 p, float small) {
-    vec3 q = normalize(p);
-    q.x *= 1.0 - small * 2.0;
-    q.y = mix(q.y, -q.y, small);
-    return q;
-  }
-  float shatteredMainPath(vec3 q) {
-    return 0.14 + 0.18 * q.y + 0.056 * sin(q.y * 8.0 + q.z * 2.0)
-      + 0.021 * sin(q.y * 23.0 - q.z * 7.0);
-  }
-  float shatteredFault(vec3 p, float small) {
-    vec3 q = shatteredCoordinates(p, small);
-    float path = shatteredMainPath(q);
-    float width = 0.012 + 0.007 * (0.5 + 0.5 * sin(q.y * 13.0 + q.z * 7.0))
-      + 0.043 * exp(-pow((q.y + 0.12) / 0.32, 2.0));
-    float d = abs(q.x - path) - width;
-    if (q.x > path + 0.012 && q.z > -0.48) {
-      float branchA = q.y - (0.39 - 0.43 * q.x + 0.025 * sin(q.x * 16.0 + q.z * 4.0));
-      float branchB = q.y - (-0.25 + 0.32 * q.x + 0.030 * sin(q.x * 17.0 - q.z * 3.0));
-      d = min(d, abs(branchA) - 0.010);
-      d = min(d, abs(branchB) - 0.012);
-      if (q.x > 0.40) d = min(d, abs(q.x - (0.58 + 0.075 * sin(q.y * 7.0 + q.z * 3.0))) - 0.006);
+type Curve = readonly (readonly [number, number])[];
+// Unequal, non-repeating fault events. CPU geometry and GLSL are generated from
+// the same knots; no periodic sine wave determines the fracture silhouette.
+const CURVES = {
+  Main: [[-1, -.08], [-.86, -.16], [-.72, -.12], [-.63, .025], [-.53, -.045], [-.39, .08], [-.25, .015],
+    [-.12, .205], [.015, .155], [.12, .285], [.27, .18], [.37, .32], [.48, .235], [.63, .36], [.75, .27], [.89, .40], [1, .31]],
+  MainWidth: [[-1, .013], [-.85, .025], [-.73, .008], [-.675, -.008], [-.62, .021], [-.51, .014], [-.4, .048],
+    [-.27, .026], [-.15, .062], [-.035, .033], [.08, .015], [.20, .041], [.32, .017], [.43, .012], [.49, -.012],
+    [.55, .018], [.68, .031], [.81, .008], [.91, .018], [1, .010]],
+  Warp: [[-1, .034], [-.62, -.019], [-.27, .041], [.10, -.026], [.43, .018], [.72, -.011], [1, .029]],
+  A: [[-1, .68], [0, .59], [.12, .51], [.22, .46], [.31, .49], [.42, .27], [.48, .33], [.57, .18], [.68, .22], [.76, .05], [.87, .13], [1.08, .035]],
+  AWidth: [[-1, .004], [.1, .008], [.22, .012], [.37, .006], [.45, .017], [.54, -.006], [.60, .005], [.71, .014], [.82, .006], [.96, -.004], [1.1, .005]],
+  B: [[-1, -.63], [0, -.54], [.15, -.47], [.24, -.50], [.33, -.31], [.44, -.37], [.54, -.18], [.62, -.23], [.76, -.06], [.87, -.13], [1.1, -.01]],
+  BWidth: [[-1, .006], [.15, .009], [.31, .016], [.42, .005], [.51, .012], [.63, -.004], [.71, .008], [.86, .013], [1.1, .004]],
+  Side: [[-1, .59], [-.51, .67], [-.38, .79], [-.26, .73], [-.10, .86], [.03, .73], [.18, .79], [.29, .71], [.45, .84], [.61, .75], [.8, .86], [1, .84]],
+  SideWidth: [[-1, -.01], [-.43, .004], [-.31, .011], [-.16, -.005], [-.04, .004], [.13, .007], [.28, .002], [.40, -.003], [.53, .008], [.64, .002], [1, -.01]],
+} satisfies Record<string, Curve>;
+function curve(t: number, knots: Curve) {
+  if (t <= knots[0][0]) return knots[0][1];
+  for (let i = 1; i < knots.length; i++) {
+    if (t < knots[i][0]) {
+      const a = knots[i - 1], b = knots[i];
+      return THREE.MathUtils.lerp(a[1], b[1], (t - a[0]) / (b[0] - a[0]));
     }
+  }
+  return knots[knots.length - 1][1];
+}
+function fractureHash(i: number, seed: number) {
+  let n = ((i * 37 + seed * 17) % 251 + 251) % 251;
+  n = (n * n * 13 + 19) % 251;
+  return n / 250;
+}
+function fractureNoise(t: number, seed: number) {
+  const i = Math.floor(t);
+  return THREE.MathUtils.lerp(fractureHash(i, seed), fractureHash(i + 1, seed), t - i);
+}
+const FRACTURE_NOISE_MEAN = Array.from({ length: 251 }, (_, i) => fractureHash(i, 0)).reduce((sum, n) => sum + n, 0) / 251;
+function edgeRoughness(q: THREE.Vector3, seed: number) {
+  return (fractureNoise(q.y * 29 + q.z * 17 + q.x * 11, seed) - FRACTURE_NOISE_MEAN) * 0.008
+    + (fractureNoise(q.y * 73 - q.z * 41 + q.x * 29, seed + 7) - FRACTURE_NOISE_MEAN) * 0.0038
+    + (fractureNoise(q.y * 179 + q.z * 83 - q.x * 61, seed + 19) - FRACTURE_NOISE_MEAN) * 0.0016;
+}
+function roughBand(delta: number, width: number, q: THREE.Vector3, seed: number) {
+  if (width <= 0.003) return Math.abs(delta) - width;
+  const envelope = THREE.MathUtils.smoothstep(width, 0.003, 0.016);
+  const rough = edgeRoughness(q, seed + (delta < 0 ? 31 : 83));
+  return Math.abs(delta) - width - envelope * rough;
+}
+const glslNumber = (n: number) => n.toFixed(7);
+function curveGLSL(name: string, knots: Curve) {
+  let code = `float shatteredCurve${name}(float t) { if(t <= ${glslNumber(knots[0][0])}) return ${glslNumber(knots[0][1])};`;
+  for (let i = 1; i < knots.length; i++) {
+    const a = knots[i - 1], b = knots[i];
+    code += `if(t < ${glslNumber(b[0])}) return mix(${glslNumber(a[1])}, ${glslNumber(b[1])}, (t-(${glslNumber(a[0])}))/${glslNumber(b[0] - a[0])});`;
+  }
+  return `${code} return ${glslNumber(knots[knots.length - 1][1])}; }`;
+}
+
+/** Both the true openings and the finer material damage use exactly this map. */
+export const SHATTERED_FRACTURE_GLSL = /* glsl */ `
+  ${Object.entries(CURVES).map(([name, knots]) => curveGLSL(name, knots)).join("\n")}
+  float shatteredHash(float i, float seed) {
+    float n=mod(i*37.0+seed*17.0,251.0);
+    return mod(n*n*13.0+19.0,251.0)/250.0;
+  }
+  float shatteredNoise(float t, float seed) {
+    float i=floor(t); return mix(shatteredHash(i,seed),shatteredHash(i+1.0,seed),fract(t));
+  }
+  float shatteredEdgeRoughness(vec3 q, float seed) {
+    const float mean=${FRACTURE_NOISE_MEAN.toFixed(10)};
+    return (shatteredNoise(q.y*29.0+q.z*17.0+q.x*11.0,seed)-mean)*0.008
+      +(shatteredNoise(q.y*73.0-q.z*41.0+q.x*29.0,seed+7.0)-mean)*0.0038
+      +(shatteredNoise(q.y*179.0+q.z*83.0-q.x*61.0,seed+19.0)-mean)*0.0016;
+  }
+  float shatteredRoughBand(float delta, float width, vec3 q, float seed) {
+    if(width<=0.003) return abs(delta)-width;
+    float envelope=smoothstep(0.003,0.016,width);
+    float rough=shatteredEdgeRoughness(q,seed+(delta<0.0?31.0:83.0));
+    return abs(delta)-width-envelope*rough;
+  }
+  vec3 shatteredCoordinates(vec3 p, float small) {
+    vec3 q=normalize(p); q.x*=1.0-small*2.0; q.y=mix(q.y,-q.y,small); return q;
+  }
+  float shatteredMainPath(vec3 q) { return shatteredCurveMain(q.y)+shatteredCurveWarp(q.z); }
+  float shatteredFault(vec3 p, float small) {
+    vec3 q=shatteredCoordinates(p,small);
+    float seed=11.0+small*36.0, warp=shatteredCurveWarp(q.z);
+    float path=shatteredMainPath(q)+0.004*(shatteredNoise(q.y*47.0+q.z*13.0,seed)-0.5);
+    float width=shatteredCurveMainWidth(q.y+warp*0.3)*(0.86+0.28*shatteredNoise(q.y*17.0+q.z*11.0,seed+5.0));
+    float d=shatteredRoughBand(q.x-path,width,q,seed);
+    if(q.x>path+0.008 && q.z>-0.48) {
+      float a=q.y-(shatteredCurveA(q.x)+warp*0.4+0.004*(shatteredNoise(q.x*47.0+q.z*19.0,seed+3.0)-0.5));
+      float b=q.y-(shatteredCurveB(q.x)-warp*0.7+0.004*(shatteredNoise(q.x*43.0-q.z*17.0,seed+9.0)-0.5));
+      d=min(d,shatteredRoughBand(a,shatteredCurveAWidth(q.x),q,seed+23.0));
+      d=min(d,shatteredRoughBand(b,shatteredCurveBWidth(q.x),q,seed+47.0));
+      if(q.x>0.53 && q.z>-0.20 && q.y>-0.43 && q.y<0.64) {
+        float side=q.x-(shatteredCurveSide(q.y)+warp*0.5);
+        d=min(d,shatteredRoughBand(side,shatteredCurveSideWidth(q.y),q,seed+61.0));
+      }
+    }
+    // Short dead-end splinters terminate inside the crust, independently of
+    // the three major tears. Negative widths above retain real rock bridges.
+    float forkA=abs(q.y-(-0.18+0.72*(q.x+0.08)+warp*0.3))-0.005;
+    forkA=max(forkA,max(q.x-path+0.018,path-0.26-q.x));
+    forkA=max(forkA,max(-0.39-q.y,q.y+0.06));
+    float forkB=abs(q.y-(0.67-1.2*(q.x-0.33)-warp*0.4))-0.004;
+    forkB=max(forkB,max(0.35-q.x,q.x-0.60));
+    forkB=max(forkB,max(0.42-q.y,q.y-0.76));
+    if(q.z>0.18) d=min(d,min(forkA,forkB));
     return d;
   }
   float shatteredDamage(vec3 p, float small) {
-    vec3 q = shatteredCoordinates(p, small);
-    float side = smoothstep(-0.11, 0.38, q.x - shatteredMainPath(q));
-    float seam = 1.0 - smoothstep(0.0, 0.13, shatteredFault(p, small));
-    return max(side * (0.72 + 0.28 * smoothstep(-0.5, 0.6, q.z)), seam * 0.92);
+    vec3 q=shatteredCoordinates(p,small);
+    float side=smoothstep(-0.11,0.38,q.x-shatteredMainPath(q));
+    float seam=1.0-smoothstep(0.0,0.13,shatteredFault(p,small));
+    return max(side*(0.72+0.28*smoothstep(-0.5,0.6,q.z)),seam*0.92);
   }
 `;
 
-type Sample = { q: THREE.Vector3; path: number; a: number; b: number; side: number; fault: number };
+type Sample = { q: THREE.Vector3; path: number; width: number; a: number; b: number; side: number; fault: number };
 function sampleFracture(p: THREE.Vector3, small: boolean): Sample {
   const q = p.clone().normalize();
   if (small) { q.x *= -1; q.y *= -1; }
-  const path = 0.14 + 0.18 * q.y + 0.056 * Math.sin(q.y * 8 + q.z * 2)
-    + 0.021 * Math.sin(q.y * 23 - q.z * 7);
-  const width = 0.012 + 0.007 * (0.5 + 0.5 * Math.sin(q.y * 13 + q.z * 7))
-    + 0.043 * Math.exp(-Math.pow((q.y + 0.12) / 0.32, 2));
-  const a = q.y - (0.39 - 0.43 * q.x + 0.025 * Math.sin(q.x * 16 + q.z * 4));
-  const b = q.y - (-0.25 + 0.32 * q.x + 0.030 * Math.sin(q.x * 17 - q.z * 3));
-  const side = q.x - (0.58 + 0.075 * Math.sin(q.y * 7 + q.z * 3));
-  let fault = Math.abs(q.x - path) - width;
-  if (q.x > path + 0.012 && q.z > -0.48) {
-    fault = Math.min(fault, Math.abs(a) - 0.010, Math.abs(b) - 0.012);
-    if (q.x > 0.40) fault = Math.min(fault, Math.abs(side) - 0.006);
+  const seed = small ? 47 : 11, warp = curve(q.z, CURVES.Warp);
+  const path = curve(q.y, CURVES.Main) + warp + 0.004 * (fractureNoise(q.y * 47 + q.z * 13, seed) - 0.5);
+  const width = curve(q.y + warp * 0.3, CURVES.MainWidth) * (0.86 + 0.28 * fractureNoise(q.y * 17 + q.z * 11, seed + 5));
+  const a = q.y - (curve(q.x, CURVES.A) + warp * 0.4 + 0.004 * (fractureNoise(q.x * 47 + q.z * 19, seed + 3) - 0.5));
+  const b = q.y - (curve(q.x, CURVES.B) - warp * 0.7 + 0.004 * (fractureNoise(q.x * 43 - q.z * 17, seed + 9) - 0.5));
+  const side = q.x - (curve(q.y, CURVES.Side) + warp * 0.5);
+  let fault = roughBand(q.x - path, width, q, seed);
+  if (q.x > path + 0.008 && q.z > -0.48) {
+    fault = Math.min(fault, roughBand(a, curve(q.x, CURVES.AWidth), q, seed + 23),
+      roughBand(b, curve(q.x, CURVES.BWidth), q, seed + 47));
+    if (q.x > 0.53 && q.z > -0.20 && q.y > -0.43 && q.y < 0.64) {
+      fault = Math.min(fault, roughBand(side, curve(q.y, CURVES.SideWidth), q, seed + 61));
+    }
   }
-  return { q, path, a, b, side, fault };
+  let forkA = Math.abs(q.y - (-0.18 + 0.72 * (q.x + 0.08) + warp * 0.3)) - 0.005;
+  forkA = Math.max(forkA, q.x - path + 0.018, path - 0.26 - q.x, -0.39 - q.y, q.y + 0.06);
+  let forkB = Math.abs(q.y - (0.67 - 1.2 * (q.x - 0.33) - warp * 0.4)) - 0.004;
+  forkB = Math.max(forkB, 0.35 - q.x, q.x - 0.60, 0.42 - q.y, q.y - 0.76);
+  if (q.z > 0.18) fault = Math.min(fault, forkA, forkB);
+  return { q, path, width, a, b, side, fault };
 }
 
 type Data = { positions: number[]; sources: number[]; normals: number[]; shells: number[]; uvs: number[] };
@@ -94,7 +185,7 @@ function vertex(p: THREE.Vector3, offset: THREE.Vector3, small: boolean, inner =
   const radial = p.clone().normalize();
   const r = inner ? 0.925 + 0.0015 * Math.sin(radial.x * 37 + radial.y * 23) * Math.sin(radial.z * 29) : radius(radial, small);
   const source = radial.clone().multiplyScalar(r);
-  return { position: source.clone().add(offset), source, normal: radial };
+  return { position: source.clone().add(connectedOffset(radial, offset, small)), source, normal: radial };
 }
 
 type Edge = { a: THREE.Vector3; b: THREE.Vector3; count: number; offset: THREE.Vector3 };
@@ -104,14 +195,23 @@ function walls(target: Data, edges: Map<string, Edge>, small: boolean, fragmentT
     if (edge.count !== 1) continue;
     let a = vertex(edge.a, edge.offset, small), b = vertex(edge.b, edge.offset, small);
     for (let level = 1; level <= 3; level++) {
-      const t = level / 3;
+      const t = level === 1 ? 0.22 : level === 2 ? 0.61 : 1;
       const inner = (p: THREE.Vector3): Vertex => {
         const outerR = radius(p, small);
         const innerRadius = fragmentThickness === undefined ? 0.924 : outerR - fragmentThickness;
-        const rough = Math.sin(p.x * 83 + p.y * 97 + p.z * 71 + level) * 0.0015 * Math.sin(t * Math.PI);
+        const seed = (small ? 47 : 11) + level * 7;
+        const envelope = Math.sin(t * Math.PI);
+        const rough = (fractureNoise(p.x * 39 + p.y * 57 + p.z * 23, seed) - 0.5) * 0.006 * envelope;
         const r = THREE.MathUtils.lerp(outerR, innerRadius, t) + rough;
         const source = p.clone().multiplyScalar(r);
-        return { source, position: source.clone().add(edge.offset) };
+        // Irregular, connected layer ledges replace a single straight knife
+        // wall. A shared position function keeps neighbouring edges watertight.
+        const slump = new THREE.Vector3(fractureNoise(p.x * 31 + p.y * 17 - p.z * 29, seed) - 0.5,
+          fractureNoise(p.y * 37 - p.z * 19 + p.x * 23, seed + 3) - 0.5,
+          fractureNoise(p.z * 41 + p.x * 13 - p.y * 31, seed + 9) - 0.5);
+        slump.addScaledVector(p, -slump.dot(p));
+        source.addScaledVector(slump, (fragmentThickness === undefined ? 0.011 : 0.004) * envelope);
+        return { source, position: source.clone().add(connectedOffset(p, edge.offset, small)) };
       };
       const nextA = inner(edge.a), nextB = inner(edge.b);
       face(target, a, nextA, b, 0.2);
@@ -132,6 +232,28 @@ function plateOffset(sample: Sample, small: boolean) {
   const offset = offsets[id];
   if (small) { offset.x *= -1; offset.y *= -1; }
   return { id, offset };
+}
+
+function connectedOffset(p: THREE.Vector3, base: THREE.Vector3, small: boolean) {
+  // Bridge displacement is sampled at each shared vertex, never at a face's
+  // centroid, so neighbouring shell triangles remain exactly joined.
+  if (base.lengthSq() < 1e-14) return base;
+  const sample = sampleFracture(p, small), offset = base.clone();
+  if (small) { offset.x *= -1; offset.y *= -1; }
+  if (offset.x !== -0.003) {
+    const rightBridgeOffset = new THREE.Vector3(0.011, 0.001, 0.008);
+    for (const [distance, width] of [[Math.abs(sample.a), curve(sample.q.x, CURVES.AWidth)],
+      [Math.abs(sample.b), curve(sample.q.x, CURVES.BWidth)], [Math.abs(sample.side), curve(sample.q.y, CURVES.SideWidth)]]) {
+      const influence = THREE.MathUtils.clamp((0.007 - width) / 0.012, 0, 1)
+        * THREE.MathUtils.clamp((0.09 - distance) / 0.055, 0, 1);
+      offset.lerp(rightBridgeOffset, influence);
+    }
+    const bridge = THREE.MathUtils.clamp((0.008 - sample.width) / 0.014, 0, 1)
+      * THREE.MathUtils.clamp((0.14 - Math.abs(sample.q.x - sample.path)) / 0.10, 0, 1);
+    offset.lerp(new THREE.Vector3(-0.003, 0, 0), bridge);
+  }
+  if (small) { offset.x *= -1; offset.y *= -1; }
+  return offset;
 }
 
 type Chip = { center: THREE.Vector3; extent: number; thickness: number; drift: THREE.Vector3; rotation: THREE.Quaternion };
@@ -283,10 +405,13 @@ export function createShatteredGeometries(small: boolean) {
       if (gap) boundary.push(gap);
     }
     const before = surviving;
+    const local = sampleFracture(p, small);
+    const roughEdge = p.z > 0.30 && local.width > 0.018 && Math.abs(local.q.x - local.path) < local.width + 0.026
+      && original.some(v => fault(v) > 0) && original.some(v => fault(v) < 0);
     // Only a thin crack that crosses a triangle's interior needs a local fan.
     // All other faces keep their original resolution and are linearly clipped
     // at the exact fracture function rather than removed as whole grid teeth.
-    if (boundary.length > 3 || original.every(v => fault(v) > 0) && fault(p) < 0) {
+    if (boundary.length > 3 || roughEdge || original.every(v => fault(v) > 0) && fault(p) < 0) {
       for (let edge = 0; edge < boundary.length; edge++) appendShell(clipShell([p, boundary[edge], boundary[(edge + 1) % boundary.length]]));
     } else appendShell(clipShell(original));
     if (surviving === before) removed++;
