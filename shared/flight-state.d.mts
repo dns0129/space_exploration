@@ -11,8 +11,17 @@ export interface WalkingState {
 }
 import type { EngineMode } from "./propulsion.mjs";
 export type { EngineMode } from "./propulsion.mjs";
+/** Persisted physical reference, independent of the temporary floating origin. */
+export type ReferenceFrameState = { kind: "system" } | {
+  kind: "body-fixed";
+  bodyId: BodyId;
+  /** Exact body-centred position in metres, with axes parallel to system axes. */
+  radialM: number[];
+};
 export interface FlightState {
   version: 2;
+  coordinateVersion?: 1;
+  referenceFrame?: ReferenceFrameState;
   worldLayoutVersion?: number;
   /** Surface-height revision; omitted historical saves use terrain revision 1. */
   terrainVersion?: number;
@@ -55,5 +64,7 @@ export interface WorldConfig {
   bodies: { id: BodyId; radius: number; position: number[]; previousPosition?: number[]; orbit?: { inclinationDeg: number; ascendingNodeDeg: number; longitudeDeg: number }; systemId: SystemId; kind?: "star" | "planet" | "station"; hostStarId?: BodyId; parentId?: BodyId; orbitRadiusKm?: number; atmosphereKm?: number }[];
 }
 export const world: WorldConfig;
+/** Maximum capsule foot lift above radial terrain while touching a slope. */
+export const WALKING_GROUNDED_CLEARANCE_M: number;
 export function validateFlightState(value: unknown): FlightState | null;
-export function validateWalkingState(value: unknown, flight: Pick<FlightState, "position" | "velocity" | "landedBody" | "systemId">, config?: WorldConfig): WalkingState | null;
+export function validateWalkingState(value: unknown, flight: Pick<FlightState, "position" | "velocity" | "landedBody" | "systemId" | "referenceFrame">, config?: WorldConfig): WalkingState | null;

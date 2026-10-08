@@ -11,8 +11,10 @@ import { orbitPosition } from "../shared/solar-orbits.mjs";
 import { surfaceProfile, terrainHeightField, terrainHeightKm, terrainMapNormal } from "../shared/surface.mjs";
 import { ECHO_RIFT_BODIES, getBody } from "../src/solar-system.ts";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
-import { WalkingDynamics } from "../src/walking-dynamics.ts";
+import { WalkingDynamics, initializeWalkingPhysics } from "../src/walking-dynamics.ts";
 import { createVoyagerServer } from "./server.mjs";
+
+await initializeWalkingPhysics();
 
 const ids = ["echo-pulsar", "veyl", "echo-thalassa", "cinder", "ruin", "shard"];
 const byId = id => world.bodies.find(body => body.id === id);

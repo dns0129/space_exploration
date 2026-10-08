@@ -221,6 +221,7 @@ const zip = archive([
   ],
   ["shared/world.json", await readFile(join(project, "shared/world.json"))],
   ["shared/surface.mjs", await readFile(join(project, "shared/surface.mjs"))],
+  ["shared/spatial-frame.mjs", await readFile(join(project, "shared/spatial-frame.mjs"))],
   ["shared/echo-terrain.mjs", await readFile(join(project, "shared/echo-terrain.mjs"))],
   ["shared/terrain-fields.mjs", backendTerrainModule],
   ["shared/propulsion.mjs", await readFile(join(project, "shared/propulsion.mjs"))],

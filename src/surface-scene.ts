@@ -4,19 +4,31 @@ import type { ShipDynamics } from "./ship-dynamics";
 import type { WalkingDynamics } from "./walking-dynamics";
 import { atmosphereCloudProfile, atmosphereScattering, atmosphereStrength } from "./atmosphere";
 import { entryClouds } from "./entry-clouds";
+import { SpatialScale, sampleSurface, METRES_PER_KILOMETRE } from "../shared/spatial-frame.mjs";
 import { echoSurfaceColor, echoTerrainTexture } from "./echo-surface";
 
-/** A closed surface globe with concentrated subdivision near the pilot. */
+/** Metre-space ground: a closed distant globe and the exact nearby Rapier triangles. */
 export class SurfaceScene {
   readonly group = new THREE.Group();
   readonly sky: THREE.Mesh;
   spaceVisibility = 1;
   private horizon?: THREE.Mesh;
+  private collisionGround?: THREE.Mesh;
+  private collisionRevision = -1;
+  private collisionPatch?: WalkingDynamics["terrainPatch"];
+  private readonly patchVertexOffset = { value: new THREE.Vector3() };
+  private readonly patchFlag = { value: 1 };
   private echoTerrain?: THREE.DataTexture;
   private horizonBodyId = "";
   private horizonMapBodyId = "";
   private anchor = new THREE.Vector3();
   private readonly terrainUniforms = {
+    groundVertexOffset: { value: new THREE.Vector3() },
+    groundIsPatch: { value: 0 },
+    groundPatchCenter: { value: new THREE.Vector3() },
+    groundPatchRight: { value: new THREE.Vector3() },
+    groundPatchForward: { value: new THREE.Vector3() },
+    groundPatchExtent: { value: 0 },
     groundCamera: { value: new THREE.Vector3() },
     groundFog: { value: new THREE.Color() },
     groundSun: { value: new THREE.Vector3() },
@@ -104,14 +116,18 @@ export class SurfaceScene {
     this.terrainUniforms.groundMapTint.value.copy(mapTint);
   }
   /** Space transitions only update the inexpensive sky, never local geometry. */
-  updateSky(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight, local = false) {
+  updateSky(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight, local = false, walker?: WalkingDynamics) {
     const env = ship.environment;
     const center = new THREE.Vector3().fromArray(env.body.position);
     const sun = sunlight.position.clone().normalize();
     const day = THREE.MathUtils.smoothstep(env.outward.dot(sun), -0.18, 0.12);
     this.sky.visible = (this.usesAtmosphere(ship) || local && env.profile.solid) && !ship.warping;
-    const cameraRadial = ship.position.clone().sub(center).add(camera.position);
-    const cameraAltitudeKm = Math.max(0, (cameraRadial.length() - env.body.radius) * ship.config.unitsKm);
+    const scale = new SpatialScale(ship.config.unitsKm);
+    const cameraRadial = ship.localFrame.bodyId === env.body.id ? ship.bodyRadialM
+      : new THREE.Vector3().fromArray(scale.universeDeltaToMetres(ship.position.toArray(), center.toArray()));
+    if (local) cameraRadial.add(camera.position).sub(walker?.active ? walker.localShipPositionM : ship.localPositionM);
+    else cameraRadial.addScaledVector(camera.position, scale.metresPerUnit);
+    const cameraAltitudeKm = Math.max(0, (cameraRadial.length() - env.body.radius * scale.metresPerUnit) / METRES_PER_KILOMETRE);
     const depth = env.body.atmosphereKm ? 1 - cameraAltitudeKm / env.body.atmosphereKm : 0;
     this.spaceVisibility = this.sky.visible ? 1 - day * THREE.MathUtils.smoothstep(depth, 0, 0.65) * 0.98 : 1;
     const uniforms = this.skyMaterial.uniforms;
@@ -134,7 +150,7 @@ export class SurfaceScene {
     uniforms.time.value = ship.elapsed;
   }
   update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight, walker?: WalkingDynamics) {
-    this.updateSky(ship, camera, sunlight, true);
+    this.updateSky(ship, camera, sunlight, true, walker);
     const env = ship.environment;
     const center = new THREE.Vector3().fromArray(env.body.position);
     const sun = sunlight.position.clone().normalize();
@@ -142,18 +158,22 @@ export class SurfaceScene {
     this.group.visible = (env.profile.solid || !!env.body.atmosphereKm) && !ship.warping;
     if (!this.group.visible) return;
     const walking = !!walker?.active;
-    const surfacePoint = center.clone().addScaledVector(walking ? walker!.outward : env.outward, env.body.radius);
-    // A single closed sphere owns the ground at every altitude. Recenter only
-    // its subdivision density; never overlay a separate terrain patch.
+    const scale = new SpatialScale(ship.config.unitsKm);
+    const shipLocal = walking ? walker!.localShipPositionM : ship.localPositionM;
+    const shipRadialM = ship.localFrame.bodyId === env.body.id ? ship.bodyRadialM
+      : new THREE.Vector3().fromArray(scale.universeDeltaToMetres(ship.position.toArray(), center.toArray()));
+    const surfacePoint = (walking ? walker!.outward : env.outward).clone().multiplyScalar(env.body.radius * scale.metresPerUnit);
+    // Subtract the radial anchor in double precision BEFORE uploading Float32 vertices.
     if (!this.horizon || this.horizonBodyId !== env.body.id
-      || this.anchor.distanceTo(surfacePoint) * ship.config.unitsKm > (walking ? 0.032 : 2)) {
+      || this.anchor.distanceTo(surfacePoint) > (walking ? 32 : 2000)) {
       this.anchor.copy(surfacePoint);
       this.rebuildHorizon(ship, walking ? walker!.outward : env.outward);
+      this.collisionRevision = -1;
     }
-    this.group.position.copy(this.anchor).sub(ship.position);
-    this.horizon!.position.copy(center).sub(this.anchor);
-    this.terrainUniforms.groundHorizonOffset.value.copy(this.horizon!.position).multiplyScalar(ship.config.unitsKm * 1000);
-    this.terrainUniforms.groundCamera.value.copy(camera.position).sub(this.group.position).multiplyScalar(ship.config.unitsKm * 1000);
+    this.group.position.copy(shipLocal).add(this.anchor).sub(shipRadialM);
+    this.horizon!.position.set(0, 0, 0);
+    this.terrainUniforms.groundCamera.value.copy(camera.position).sub(this.group.position);
+    this.updateCollisionGround(ship, walker);
     this.terrainUniforms.groundSun.value.copy(sun);
     this.terrainUniforms.groundFog.value.set(env.profile.sky).multiplyScalar(0.035 + day * 0.7);
     this.terrainUniforms.groundVisibility.value = 1 - THREE.MathUtils.smoothstep(env.groundAltitudeKm, 38, 70);
@@ -180,7 +200,7 @@ export class SurfaceScene {
     this.horizonBodyId = env.body.id;
     // Closed globe with dense rings near the pilot and coarser rings on the
     // far hemisphere. This changes geometry density, never surface material.
-    const geometry = new THREE.SphereGeometry(env.body.radius, 192, 160);
+    const geometry = new THREE.SphereGeometry(1, 192, 160);
     const up = outward.clone().normalize();
     const pose = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
     const vertices = geometry.getAttribute("position");
@@ -191,17 +211,20 @@ export class SurfaceScene {
       const angle = Math.PI * Math.sinh(fraction * 12) / Math.sinh(12);
       const longitude = Math.atan2(radial.z, radial.x);
       radial.set(Math.sin(angle) * Math.cos(longitude), Math.cos(angle), Math.sin(angle) * Math.sin(longitude));
-      radial.applyQuaternion(pose).multiplyScalar(env.body.radius);
+      radial.applyQuaternion(pose);
       vertices.setXYZ(i, radial.x, radial.y, radial.z);
     }
     const position = geometry.getAttribute("position");
     const colors: number[] = [];
+    const radialDirections: number[] = [];
     const ground = new THREE.Color(env.profile.solid ? env.profile.ground : env.profile.sky);
     const normal = new THREE.Vector3();
     for (let i = 0; i < position.count; i++) {
       normal.fromBufferAttribute(position, i).normalize();
       const height = terrainHeightKm(env.body.id, normal.toArray());
-      const point = normal.clone().multiplyScalar(env.body.radius + height / ship.config.unitsKm);
+      const sample = sampleSurface(ship.config, env.body, normal.toArray().map(value => value * new SpatialScale(ship.config.unitsKm).universeDistanceToMeters(env.body.radius)));
+      const point = new THREE.Vector3().fromArray(sample.surfaceRadialM).sub(this.anchor);
+      radialDirections.push(normal.x, normal.y, normal.z);
       position.setXYZ(i, point.x, point.y, point.z);
       const gasBand = Math.sin(normal.y * 55 + Math.sin(normal.x * 10 + normal.z * 8) * 1.3);
       const shade = env.profile.solid ? 0.72 + height * 3 : 0.78 + gasBand * 0.12;
@@ -209,6 +232,7 @@ export class SurfaceScene {
       if (env.body.id === "earth") color.lerp(new THREE.Color("#70834f"), 0.16);
       colors.push(color.r, color.g, color.b);
     }
+    geometry.setAttribute("surfaceRadial", new THREE.Float32BufferAttribute(radialDirections, 3));
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     geometry.computeVertexNormals();
     const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, transparent: true });
@@ -221,12 +245,14 @@ export class SurfaceScene {
         shader.uniforms.oceanMoon = { value: env.body.id === "echo-thalassa" ? 1 : 0 };
       }
       shader.vertexShader = shader.vertexShader.replace("#include <common>",
-        "#include <common>\nvarying vec3 groundPosition, groundRadial; uniform vec3 groundHorizonOffset;")
-        .replace("#include <begin_vertex>", `#include <begin_vertex>\ngroundPosition = position * ${Number(ship.config.unitsKm * 1000).toFixed(1)} + groundHorizonOffset; groundRadial = normalize(position);`);
+        "#include <common>\nvarying vec3 groundPosition, groundRadial; attribute vec3 surfaceRadial; uniform vec3 groundVertexOffset;")
+        .replace("#include <begin_vertex>", `#include <begin_vertex>\ngroundPosition = position + groundVertexOffset; groundRadial = surfaceRadial;`);
       shader.fragmentShader = shader.fragmentShader.replace("#include <common>", `#include <common>
         varying vec3 groundPosition, groundRadial; uniform vec3 groundCamera, groundFog, groundSun, groundMapTint;
         uniform sampler2D groundHorizonMap, groundHorizonCloudMap;
         uniform mat3 groundMapRotation, groundCloudRotation;
+        uniform vec3 groundPatchCenter, groundPatchRight, groundPatchForward;
+        uniform float groundPatchExtent, groundIsPatch;
         uniform float groundAtmosphere, groundMapReady, groundCloudMapReady, groundMapBlend, groundCloudMapBlend;
         ${echoMoon ? `uniform sampler2D echoTerrain; uniform float oceanMoon; ${echoSurfaceColor}` : ""}
         vec2 groundSphereUv(vec3 p) {
@@ -234,6 +260,10 @@ export class SurfaceScene {
           return vec2(fract(atan(p.z, -p.x) / 6.28318530718), 1.0 - acos(clamp(p.y, -1.0, 1.0)) / 3.14159265359);
         }`)
         .replace("#include <color_fragment>", `#include <color_fragment>
+          vec3 patchDelta = groundPosition - groundPatchCenter;
+          if (groundIsPatch < 0.5 && groundPatchExtent > 0.0
+            && abs(dot(patchDelta, groundPatchRight)) < groundPatchExtent
+            && abs(dot(patchDelta, groundPatchForward)) < groundPatchExtent) discard;
           vec3 horizonPhoto = diffuseColor.rgb;
           float horizonCover = 0.0;
           ${echoMoon ? `
@@ -269,7 +299,77 @@ export class SurfaceScene {
     this.horizon.renderOrder = -15;
     this.group.add(this.horizon);
   }
+  private updateCollisionGround(ship: ShipDynamics, walker?: WalkingDynamics) {
+    const patch = walker?.active ? walker.terrainPatch : undefined;
+    this.terrainUniforms.groundPatchExtent.value = patch?.halfExtentM ?? 0;
+    if (!patch) {
+      if (this.collisionGround) this.collisionGround.visible = false;
+      this.collisionRevision = -1;
+      this.collisionPatch = undefined;
+      return;
+    }
+    this.terrainUniforms.groundPatchCenter.value.copy(patch.centerLocalM).sub(this.group.position);
+    this.terrainUniforms.groundPatchRight.value.copy(patch.right);
+    this.terrainUniforms.groundPatchForward.value.copy(patch.forward);
+    if (this.collisionPatch !== patch || this.collisionRevision !== patch.revision) {
+      this.collisionGround?.geometry.dispose();
+      if (!this.collisionGround) {
+        const source = this.horizon!.material as THREE.MeshStandardMaterial;
+        const material = source.clone();
+        material.onBeforeCompile = (shader, renderer) => {
+          source.onBeforeCompile(shader, renderer);
+          shader.uniforms.groundVertexOffset = this.patchVertexOffset;
+          shader.uniforms.groundIsPatch = this.patchFlag;
+        };
+        material.customProgramCacheKey = () => `rapier-ground-${this.horizonBodyId}`;
+        this.collisionGround = new THREE.Mesh(new THREE.BufferGeometry(), material);
+        this.collisionGround.name = "rapier-collision-ground";
+        this.collisionGround.frustumCulled = false;
+        this.collisionGround.renderOrder = -14;
+        this.group.add(this.collisionGround);
+      } else {
+        // Reuse the current globe's material hook when crossing to a different body.
+        const source = this.horizon!.material as THREE.MeshStandardMaterial;
+        (this.collisionGround.material as THREE.Material).onBeforeCompile = (shader, renderer) => {
+          source.onBeforeCompile(shader, renderer);
+          shader.uniforms.groundVertexOffset = this.patchVertexOffset;
+          shader.uniforms.groundIsPatch = this.patchFlag;
+        };
+        (this.collisionGround.material as THREE.Material).needsUpdate = true;
+      }
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(patch.vertices.length);
+      const radials = new Float32Array(patch.vertices.length);
+      const colors = new Float32Array(patch.vertices.length);
+      const environment = ship.environment;
+      const ground = new THREE.Color(environment.profile.ground);
+      const radial = new THREE.Vector3();
+      for (let i = 0; i < positions.length; i += 3) {
+        radial.fromArray(patch.vertices, i).sub(patch.centerLocalM);
+        positions.set(radial.toArray(), i);
+        radial.add(patch.centerRadialM).normalize();
+        radials.set(radial.toArray(), i);
+        const height = terrainHeightKm(environment.body.id, radial.toArray());
+        const color = ground.clone().multiplyScalar(0.72 + height * 3);
+        if (environment.body.id === "earth") color.lerp(new THREE.Color("#70834f"), 0.16);
+        colors.set(color.toArray(), i);
+      }
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute("surfaceRadial", new THREE.BufferAttribute(radials, 3));
+      geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      geometry.setIndex(new THREE.BufferAttribute(patch.indices, 1));
+      geometry.computeVertexNormals();
+      this.collisionGround.geometry = geometry;
+      this.collisionRevision = patch.revision;
+      this.collisionPatch = patch;
+    }
+    this.collisionGround!.visible = true;
+    this.collisionGround!.position.copy(patch.centerLocalM).sub(this.group.position);
+    this.patchVertexOffset.value.copy(this.collisionGround!.position);
+  }
   dispose() {
+    this.collisionGround?.geometry.dispose();
+    (this.collisionGround?.material as THREE.Material | undefined)?.dispose();
     this.echoTerrain?.dispose();
     this.horizon?.geometry.dispose();
     (this.horizon?.material as THREE.Material | undefined)?.dispose();

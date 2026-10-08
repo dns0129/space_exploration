@@ -2,9 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
-import { WalkingDynamics, BOARD_DISTANCE_M, SUIT_MIN_FALL_ACCELERATION_MPS2 } from "../src/walking-dynamics.ts";
-import { world, validateFlightState } from "../shared/flight-state.mjs";
+import { WalkingDynamics, BOARD_DISTANCE_M, SUIT_MIN_FALL_ACCELERATION_MPS2, initializeWalkingPhysics } from "../src/walking-dynamics.ts";
+import { world, validateFlightState, WALKING_GROUNDED_CLEARANCE_M } from "../shared/flight-state.mjs";
 import { surfaceProfile, terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
+
+await initializeWalkingPhysics();
 
 function landed(id, normal = new THREE.Vector3(0, 0, -1)) {
   const ship = new ShipDynamics();
@@ -28,6 +30,13 @@ function step(walker, seconds, input = emptyInput()) {
     walker.step(Math.min(0.01, seconds - elapsed), input);
 }
 function save(ship, walker) { return { ...ship.snapshot(), walking: walker.snapshot() }; }
+function assertSupported(walker, id = walker.bodyId) {
+  // A real capsule rests slightly above radial terrain on slopes. Both mesh
+  // error and the Rapier contact gap are bounded, without allowing penetration.
+  assert(walker.groundClearanceM >= -0.015, id);
+  assert(walker.groundClearanceM <= WALKING_GROUNDED_CLEARANCE_M, id);
+  assert(Math.abs(walker.groundClearanceM - walker.collisionGroundClearanceM) < 0.015, id);
+}
 
 test("disembarking requires a landed solid world; boarding requires ground contact and a nearby unchanged ship", () => {
   const walker = new WalkingDynamics(), ship = new ShipDynamics();
@@ -38,7 +47,7 @@ test("disembarking requires a landed solid world; boarding requires ground conta
   assert.equal(walker.disembark(landedShip), null);
   assert.equal(walker.active, true);
   assert(walker.distanceToShipM < BOARD_DISTANCE_M);
-  assert(Math.abs(walker.groundClearanceM) < 1e-6);
+  assertSupported(walker);
   assert.deepEqual(landedShip.snapshot(), parked, "exit must not move or reorient the ship");
   assert(walker.disembark(landedShip));
   walker.step(0.01, { ...emptyInput(), brake: true });
@@ -59,8 +68,8 @@ test("all solid worlds walk over the shared curved terrain with radial orientati
     const { ship, walker } = outside(body.id, new THREE.Vector3(0.4, 0.7, -0.5).normalize());
     for (let i = 0; i < 30; i++) {
       walker.step(0.05, { ...emptyInput(), throttle: 1, strafe: 0.7, yaw: 0.2, boost: true });
-      assert(walker.groundClearanceM >= -1e-6, body.id);
-      if (walker.grounded) assert(Math.abs(walker.groundClearanceM) < 1e-6, body.id);
+      assert(walker.groundClearanceM >= -0.015, body.id);
+      if (walker.grounded) assertSupported(walker, body.id);
       assert(new THREE.Vector3(0, 1, 0).applyQuaternion(walker.orientation).dot(walker.outward) > 0.999999, body.id);
       assert(validateFlightState(save(ship, walker)), body.id);
     }
@@ -115,7 +124,7 @@ test("low gravity changes horizontal acceleration, braking and airborne steering
   assert(horizontalAir < grounded.speedMps * 0.2, "air steering cannot cancel inertia as quickly as grounded walking");
 });
 
-test("walking stops at a steep uphill slope and leaving a steep downhill edge begins a gravity-driven fall", () => {
+test("steep slopes block uphill walking and allow gravity-driven downhill motion", () => {
   let sample;
   const body = world.bodies.find(candidate => candidate.id === "naiad");
   for (let i = 0; i < 100 && !sample; i++) {
@@ -136,8 +145,8 @@ test("walking stops at a steep uphill slope and leaving a steep downhill edge be
   walker.orientation.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), direction, walker.outward));
   const initial = walker.offsetM.clone();
   step(walker, 0.5, { ...emptyInput(), throttle: 1 });
-  assert(walker.grounded);
-  assert(walker.offsetM.distanceTo(initial) < 0.001, "cannot climb a slope over 50 degrees");
+  assert(walker.offsetM.clone().sub(initial).dot(direction) < 0.001, "cannot climb a slope over 50 degrees");
+  assert(walker.groundClearanceM >= -0.015, "slope collision prevents terrain penetration");
   walker.restore({ ...walker.snapshot(), orientation: new THREE.Quaternion().setFromRotationMatrix(
     new THREE.Matrix4().lookAt(new THREE.Vector3(), direction.clone().negate(), walker.outward)).toArray() }, ship);
   walker.step(0.01, { ...emptyInput(), throttle: 1 });
@@ -167,9 +176,12 @@ test("metre-scale walking stays precise on distant moons and frame subdivision p
   const before = walker.offsetM.clone();
   walker.step(0.25, { ...emptyInput(), throttle: 1 });
   assert(walker.offsetM.distanceTo(before) > 0.01, "small movement must survive AU-scale coordinates");
-  assert(Math.abs(walker.groundClearanceM) < 1e-6);
+  assertSupported(walker);
   for (let i = 0; i < 20; i++) walker.step(0.25, { ...emptyInput(), throttle: 1, yaw: 1, boost: true });
-  assert(Math.abs(walker.groundClearanceM) < 1e-6);
+  assert(walker.groundClearanceM >= -0.015);
+  assert(Math.abs(walker.groundClearanceM - walker.collisionGroundClearanceM) < 0.015);
+  if (walker.grounded) assertSupported(walker);
+  else assert(walker.velocity.dot(walker.outward) < 0, "low-gravity motion over an edge falls back toward the terrain");
   assert(walker.position.toArray().every(Number.isFinite));
   const offset = walker.offsetM.toArray();
   walker.step(Number.NaN, emptyInput());

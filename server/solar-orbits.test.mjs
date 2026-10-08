@@ -2,12 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { orbitPosition } from "../shared/solar-orbits.mjs";
-import { world, validateFlightState } from "../shared/flight-state.mjs";
+import { world, validateFlightState, WALKING_GROUNDED_CLEARANCE_M } from "../shared/flight-state.mjs";
 import { terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import moons from "../shared/moons.json" with { type: "json" };
 import { createAsteroidBelt } from "../src/orbital-structures.ts";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
-import { WalkingDynamics } from "../src/walking-dynamics.ts";
+import { WalkingDynamics, initializeWalkingPhysics } from "../src/walking-dynamics.ts";
+
+await initializeWalkingPhysics();
 
 // J2000 mean ecliptic references, independently fixed here to catch data drift.
 const references = {
@@ -188,7 +190,12 @@ test("old landed and walking saves restore on moved terrain without changing loc
         walker.restore(saved.walking, restored);
         assert(walker.active, `${id} migrated walker restores`);
         closeVector(walker.offsetM.toArray(), old.walking.offsetM, `${id} walking local offset`, 1e-7);
-        assert(Math.abs(walker.groundClearanceM) < 0.015, `${id} walker remains on terrain`);
+        assert(walker.groundClearanceM >= -0.015 && walker.groundClearanceM <= WALKING_GROUNDED_CLEARANCE_M,
+          `${id} rounded capsule remains above the analytic terrain within its slope contact allowance`);
+        assert(walker.collisionGroundClearanceM >= -0.015
+          && walker.collisionGroundClearanceM <= WALKING_GROUNDED_CLEARANCE_M,
+        `${id} restored feet remain supported above the actual Rapier terrain`);
+        assert.equal(walker.grounded, saved.walking.grounded, `${id} restore retains ground contact state`);
       }
     }
   }

@@ -2,9 +2,10 @@ import * as THREE from "three";
 import { createShip } from "./ship-model";
 import type { ShipDynamics } from "./ship-dynamics";
 import type { WalkingDynamics } from "./walking-dynamics";
-import { terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
+import { sampleSurface, METRES_PER_KILOMETRE } from "../shared/spatial-frame.mjs";
+import { LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 
-/** Metre-scale surface assets share the terrain depth buffer and a ship-relative origin. */
+/** Metre-scale surface assets share the terrain depth buffer and the floating metre origin used by Rapier. */
 export class ExplorerView {
   readonly group = new THREE.Group();
   private readonly astronaut = new THREE.Group();
@@ -16,6 +17,8 @@ export class ExplorerView {
   private stride = 0;
   private photoMode = false;
   private readonly cameraRay = new THREE.Raycaster();
+  private readonly previousShipLocalM = new THREE.Vector3();
+  private hasLocalCamera = false;
   private movementHeading = new THREE.Quaternion();
 
   constructor() {
@@ -78,11 +81,17 @@ export class ExplorerView {
       view: "first" | "third", dt: number, paused: boolean, immediate = false) {
     this.group.visible = walker.active;
     if (!walker.active) return;
-    const unitsM = ship.config.unitsKm * 1000;
     const up = walker.outward;
-    const feet = walker.offsetM.clone().multiplyScalar(1 / unitsM);
+    const feet = walker.localPositionM.clone();
+    const shipLocal = walker.localShipPositionM;
+    // Translate the follow camera in the same operation as every physics body.
+    // Interpolating across a rebase would otherwise draw a one-frame camera jump.
+    if (this.hasLocalCamera && !immediate)
+      camera.position.add(shipLocal.clone().sub(this.previousShipLocalM));
+    this.previousShipLocalM.copy(shipLocal);
+    this.hasLocalCamera = true;
     this.astronaut.position.copy(feet);
-    this.astronaut.scale.setScalar(1 / unitsM);
+    this.astronaut.scale.setScalar(1);
     this.astronaut.visible = view === "third";
     const motion = walker.velocity.clone().projectOnPlane(up);
     if (motion.lengthSq() > 0.04) {
@@ -94,32 +103,33 @@ export class ExplorerView {
     this.legs.forEach((leg, i) => { leg.rotation.x = (i ? -1 : 1) * step; });
     this.arms.forEach((arm, i) => { arm.rotation.x = walker.grounded ? (i ? 1 : -1) * step * 0.7 : -0.45; });
     const shipUp = ship.environment.outward;
-    const ground = shipUp.clone().multiplyScalar(-LANDING_CLEARANCE_KM / ship.config.unitsKm);
+    const ground = shipLocal.clone().addScaledVector(shipUp, -LANDING_CLEARANCE_KM * METRES_PER_KILOMETRE);
     // Flight uses a deliberately enlarged hull. This deployable 24 m lander represents the surface airlock.
-    const landerScale = 24 / (this.lander.hullLength * unitsM);
+    const landerScale = 24 / this.lander.hullLength;
     this.lander.group.scale.setScalar(landerScale);
     this.lander.group.quaternion.copy(ship.orientation);
     this.lander.group.position.copy(ground).addScaledVector(shipUp, this.lander.landingFootOffset * landerScale);
-    this.beacon.scale.setScalar(1 / unitsM);
+    this.beacon.scale.setScalar(1);
     this.beacon.visible = !this.photoMode;
-    this.beacon.position.copy(ground).addScaledVector(shipUp, 0.08 / unitsM);
+    this.beacon.position.copy(ground).addScaledVector(shipUp, 0.08);
     this.beacon.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), shipUp);
-    this.shadow.position.copy(feet).addScaledVector(up, (0.035 - walker.groundClearanceM) / unitsM);
+    this.shadow.position.copy(feet).addScaledVector(up, (0.035 - walker.groundClearanceM));
     this.shadow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), up);
-    this.shadow.scale.setScalar(1 / unitsM);
+    this.shadow.scale.setScalar(1);
     this.shadow.visible = walker.groundClearanceM < 8;
 
     const look = walker.orientation.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), walker.pitch));
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(look);
-    const eye = feet.clone().addScaledVector(up, 1.65 / unitsM);
-    const destination = view === "first" ? eye : eye.clone().addScaledVector(forward, -5 / unitsM).addScaledVector(up, 0.7 / unitsM);
+    const eye = feet.clone().addScaledVector(up, 1.65);
+    const destination = view === "first" ? eye : eye.clone().addScaledVector(forward, -5).addScaledVector(up, 0.7);
     camera.position.lerp(destination, immediate || view === "first" ? 1 : 1 - Math.exp(-dt * 12));
     // Sample the shared height function so the follow camera cannot dip below a hill.
     const body = ship.config.bodies.find(body => body.id === walker.bodyId)!;
-    const relative = walker.anchor.clone().sub(new THREE.Vector3().fromArray(body.position)).add(camera.position);
-    const normal = relative.clone().normalize();
-    const minimum = body.radius + (terrainHeightKm(body.id, normal.toArray()) + 0.00035) / ship.config.unitsKm;
-    if (relative.length() < minimum) camera.position.addScaledVector(normal, minimum - relative.length());
+    const parkedRadialM = ship.bodyRadialM;
+    const cameraRadialM = parkedRadialM.add(camera.position).sub(shipLocal);
+    const groundSample = sampleSurface(ship.config, body, cameraRadialM.toArray());
+    if (groundSample.clearanceM < 0.35)
+      camera.position.addScaledVector(new THREE.Vector3().fromArray(groundSample.normal), 0.35 - groundSample.clearanceM);
     if (view === "third") {
       // Retract the follow camera before a landing strut or hull can cover the explorer.
       this.lander.group.updateWorldMatrix(true, true);
@@ -135,12 +145,12 @@ export class ExplorerView {
         }
         return true;
       });
-      if (hit) camera.position.copy(eye).addScaledVector(ray, Math.max(0.35 / unitsM, hit.distance - 0.25 / unitsM));
+      if (hit) camera.position.copy(eye).addScaledVector(ray, Math.max(0.35, hit.distance - 0.25));
     }
     camera.up.copy(up);
-    camera.lookAt(eye.clone().addScaledVector(forward, 8 / unitsM));
-    if (Math.abs(camera.fov - 65) > 0.01 || camera.near !== 0.03 / unitsM) {
-      camera.fov = 65; camera.near = 0.03 / unitsM; camera.updateProjectionMatrix();
+    camera.lookAt(eye.clone().addScaledVector(forward, 8));
+    if (Math.abs(camera.fov - 65) > 0.01 || camera.near !== 0.03) {
+      camera.fov = 65; camera.near = 0.03; camera.updateProjectionMatrix();
     }
   }
 }

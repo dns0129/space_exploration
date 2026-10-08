@@ -1,6 +1,31 @@
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import type { WorldConfig, FlightState } from "../shared/flight-state.mjs";
 const key = "voyager-flight-v1";
+
+async function fetchWithDeadline<T>(
+  path: string,
+  timeoutMs: number,
+  consume: (response: Response) => Promise<T> | T,
+  init?: RequestInit,
+): Promise<T> {
+  const controller = new AbortController();
+  // A native AbortSignal timeout can expire while terrain creation blocks the
+  // main thread, aborting a response that has already arrived. A cancellable
+  // main-thread timer yields once before aborting, letting queued headers and
+  // body completion run after a long task. Keep the deadline active through
+  // JSON consumption so a stalled response body still falls back.
+  let abortTimer: ReturnType<typeof setTimeout> | undefined;
+  const timer = setTimeout(() => {
+    abortTimer = setTimeout(() => controller.abort(), 0);
+  }, timeoutMs);
+  try {
+    return await consume(await fetch(path, { ...init, signal: controller.signal }));
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(abortTimer);
+  }
+}
+
 export class FlightStore {
   online = false;
   async connect(): Promise<WorldConfig> {
@@ -8,11 +33,10 @@ export class FlightStore {
     if (import.meta.env.VITE_PUBLIC_SITE === "true" || !["http:", "https:"].includes(location.protocol) || !navigator.onLine)
       return world;
     try {
-      const response = await fetch("/api/world", {
-        signal: AbortSignal.timeout(2500),
-      });
-      if (!response.ok) return world;
-      const config = await response.json();
+      const config = await fetchWithDeadline(
+        "/api/world", 2500,
+        (response) => response.ok ? response.json() : null,
+      );
       if (JSON.stringify(config) === JSON.stringify(world)) {
         this.online = true;
         return config;
@@ -26,14 +50,12 @@ export class FlightStore {
     if (!navigator.onLine) this.online = false;
     if (this.online)
       try {
-        const response = await fetch("/api/flight/save", {
-          signal: AbortSignal.timeout(2500),
-        });
-        if (response.ok) {
-          const saved = await response.json();
-          const state = validateFlightState(saved.state);
-          if (state) return state;
-        }
+        const saved = await fetchWithDeadline(
+          "/api/flight/save", 2500,
+          (response) => response.ok ? response.json() : null,
+        );
+        const state = validateFlightState(saved?.state);
+        if (state) return state;
       } catch {
         this.online = false;
       }
@@ -58,13 +80,16 @@ export class FlightStore {
     }
     if (this.online)
       try {
-        const response = await fetch("/api/flight/save", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(safe),
-          signal: AbortSignal.timeout(4000),
-        });
-        if (response.ok) return "server";
+        const saved = await fetchWithDeadline(
+          "/api/flight/save", 4000,
+          (response) => response.ok,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(safe),
+          },
+        );
+        if (saved) return "server";
       } catch {
         /* Fall back to a local save. */
       }

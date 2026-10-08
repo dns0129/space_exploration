@@ -5,7 +5,9 @@ import { world, validateFlightState } from "../shared/flight-state.mjs";
 import { surfaceProfile, terrainHeightKm, legacyTerrainHeightKm, TERRAIN_VERSION, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
 import { propulsionBand } from "../shared/propulsion.mjs";
-import { WalkingDynamics } from "../src/walking-dynamics.ts";
+import { WalkingDynamics, initializeWalkingPhysics } from "../src/walking-dynamics.ts";
+
+await initializeWalkingPhysics();
 
 const vector = value => new THREE.Vector3().fromArray(value);
 const meters = world.unitsKm * 1000;

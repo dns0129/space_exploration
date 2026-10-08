@@ -17,6 +17,7 @@
     "test:performance": "npm run build && node scripts/verify-performance.mjs"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "0.19.3",
     "three": "0.180.0"
   },
   "devDependencies": {

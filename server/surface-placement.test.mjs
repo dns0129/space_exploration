@@ -2,9 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { ShipDynamics, emptyInput } from "../src/ship-dynamics.ts";
-import { WalkingDynamics } from "../src/walking-dynamics.ts";
-import { world, validateFlightState } from "../shared/flight-state.mjs";
+import { WalkingDynamics, initializeWalkingPhysics } from "../src/walking-dynamics.ts";
+import { world, validateFlightState, WALKING_GROUNDED_CLEARANCE_M } from "../shared/flight-state.mjs";
 import { surfaceProfile, terrainMapNormal, terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
+
+await initializeWalkingPhysics();
 
 test("direct placement on every solid body uses the chosen terrain and creates restorable ship and walking saves", () => {
   const bodies = world.bodies.filter(body => surfaceProfile(body.id).solid);
@@ -39,9 +41,13 @@ test("direct placement on every solid body uses the chosen terrain and creates r
       assert.deepEqual(ship.position.toArray(), saved.position, `${body.id} stays parked`);
       const walker = new WalkingDynamics();
       assert.equal(walker.disembark(ship), null, body.id);
-      assert(walker.active && walker.grounded, `${body.id} starts grounded`);
+      assert(walker.active, `${body.id} starts exploration`);
       assert.equal(walker.bodyId, body.id);
-      assert(Math.abs(walker.groundClearanceM) < 0.01, `${body.id} astronaut feet match terrain`);
+      assert(walker.groundClearanceM >= -0.015, `${body.id} capsule feet do not penetrate terrain`);
+      if (walker.grounded) assert(walker.groundClearanceM <= WALKING_GROUNDED_CLEARANCE_M,
+        `${body.id} walkable slopes support the capsule within its contact margin`);
+      assert(Math.abs(walker.groundClearanceM - walker.collisionGroundClearanceM) < 0.015,
+        `${body.id} collision mesh matches the displayed terrain sample`);
       const walking = { ...walker.snapshot(), camera: "third" };
       assert(validateFlightState({ ...saved, walking }), `${body.id} walking save is valid`);
       const restoredShip = new ShipDynamics();
@@ -49,9 +55,12 @@ test("direct placement on every solid body uses the chosen terrain and creates r
       assert.equal(restoredShip.landedBody, body.id);
       const restoredWalker = new WalkingDynamics();
       restoredWalker.restore(walking, restoredShip);
-      assert(restoredWalker.active && restoredWalker.grounded, `${body.id} restores grounded exploration`);
+      assert(restoredWalker.active, `${body.id} restores exploration`);
+      assert.equal(restoredWalker.grounded, walker.grounded, `${body.id} preserves contact state, including unwalkable cliffs`);
       assert.equal(restoredWalker.bodyId, body.id);
-      assert(Math.abs(restoredWalker.groundClearanceM) < 0.01);
+      assert(restoredWalker.groundClearanceM >= -0.015);
+      assert(restoredWalker.offsetM.distanceTo(walker.offsetM) < 1e-7);
+      walker.reset();
       restoredWalker.reset();
       assert.equal(restoredShip.takeOff(), null, body.id);
       restoredShip.step(0.25, emptyInput());

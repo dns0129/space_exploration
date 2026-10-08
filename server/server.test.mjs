@@ -66,9 +66,10 @@ test("flight saves persist across server restart and remain private to the pilot
   const initial = await fetch(f.url + "/api/flight/save");
   const cookie = initial.headers.get("set-cookie").split(";")[0];
   assert.equal((await initial.json()).state, null);
-  const saved = state();
-  saved.position[0] += 10;
-  saved.elapsed = 42;
+  const ship = new ShipDynamics();
+  ship.position.x += 10;
+  ship.elapsed = 42;
+  const saved = ship.snapshot();
   const result = await fetch(f.url + "/api/flight/save", {
     method: "POST",
     headers: { cookie, "content-type": "application/json" },

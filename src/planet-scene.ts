@@ -10,6 +10,8 @@ import { bodySystem, systemConfig } from "../shared/world-navigation.mjs";
 import { ShipDynamics } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
 import { WalkingDynamics } from "./walking-dynamics";
+import { initializeWalkingPhysics } from "./walking-physics";
+import { SpatialScale } from "../shared/spatial-frame.mjs";
 import { ExplorerView } from "./explorer-view";
 import { validateFlightState } from "../shared/flight-state.mjs";
 import { createShip, SHIP_LENGTH_KM } from "./ship-model";
@@ -267,7 +269,7 @@ export class SolarScene {
   private readonly ship = createShip();
   private readonly shipScene = new THREE.Scene();
   private readonly shipCamera = new THREE.PerspectiveCamera(58, 1, 0.01, 200);
-  private readonly walkingRenderCamera = new THREE.PerspectiveCamera();
+  private readonly localRenderCamera = new THREE.PerspectiveCamera();
   private readonly shipSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
   private readonly shipAmbient = new THREE.HemisphereLight(0xc1e6ee, 0x233643, 0.85);
   private readonly shipRim = new THREE.DirectionalLight(0x77bfff, 0.45);
@@ -1039,20 +1041,8 @@ export class SolarScene {
       this.renderer.domElement.dataset.surfaceFrameIdle = String(reuseFrame);
       // RAF, controls, tracking and HUD continue above; retain the last canvas frame instead of repeating GPU work.
       if (reuseFrame) return;
-      if (this.walking && this.renderPolicy.mode === "surface") {
-        // Logarithmic depth loses metre-scale precision when 1 world unit is 6371 km.
-        // Convert only this draw to metres; physics, terrain uniforms and the parked origin stay unchanged.
-        const metres = this.dynamics!.config.unitsKm * 1000;
-        const camera = this.walkingRenderCamera;
-        camera.copy(this.camera, false);
-        camera.position.multiplyScalar(metres);
-        camera.near *= metres;
-        camera.far *= metres;
-        camera.updateProjectionMatrix();
-        this.surfaceWorldScene.scale.setScalar(metres);
-        try { this.renderer.render(this.surfaceWorldScene, camera); }
-        finally { this.surfaceWorldScene.scale.setScalar(1); }
-      } else this.renderer.render(this.renderPolicy.mode === "surface" ? this.surfaceWorldScene : this.spaceScene, this.camera);
+      this.renderer.render(this.renderPolicy.mode === "surface" ? this.surfaceWorldScene : this.spaceScene,
+        this.renderPolicy.mode === "surface" ? this.localRenderCamera : this.camera);
       this.recordFlightRender();
       if (this.ship.group.visible) {
         // The hull pass uses the same physical scale as the world camera.
@@ -1133,6 +1123,8 @@ export class SolarScene {
     placement?: SurfacePlacement,
   ): Promise<boolean> {
     const version = ++this.selectionVersion;
+    await initializeWalkingPhysics();
+    if (this.destroyed || version !== this.selectionVersion) return false;
     const dynamics = new ShipDynamics(config);
     const walker = new WalkingDynamics(config);
     if (placement) {
@@ -1140,10 +1132,6 @@ export class SolarScene {
         throw new Error("放置类型无效，请重新选择");
       const error = dynamics.placeOnSurface(id, placement.normal);
       if (error) throw new Error(error);
-      if (placement.kind === "person") {
-        const walkingError = walker.disembark(dynamics);
-        if (walkingError) throw new Error(walkingError);
-      }
     } else dynamics.jump(id);
     await this.loadSpaceTextures();
     await this.loadEarthTextures(onProgress);
@@ -1153,6 +1141,18 @@ export class SolarScene {
       this.asteroidBelt = createAsteroidBelt(config.unitsKm, config.auKm);
       this.flightRoot.add(this.asteroidBelt);
     }
+    // Allocate WASM objects only after asynchronous loading has been accepted.
+    // Cancelled selections and failed texture loads never own a physics world.
+    try {
+      if (placement?.kind === "person") {
+        const walkingError = walker.disembark(dynamics);
+        if (walkingError) throw new Error(walkingError);
+      }
+    } catch (error) {
+      walker.reset();
+      throw error;
+    }
+    this.walker?.reset();
     this.dynamics = dynamics;
     this.walker = walker;
     if (placement && id === "venus") {
@@ -1160,7 +1160,7 @@ export class SolarScene {
       this.flightModelById.get(id)?.layers.clouds?.quaternion.identity();
     }
     this.explorerCamera = "third";
-    this.shipScale = SHIP_LENGTH_KM / (config.unitsKm * this.ship.hullLength);
+    this.shipScale = dynamics.scale.kilometresToUniverseDistance(SHIP_LENGTH_KM) / this.ship.hullLength;
     this.renderer.domElement.dataset.shipLengthKm = String(SHIP_LENGTH_KM);
     this.flightBoost = 0;
     this.flightMetrics = 0;
@@ -1175,7 +1175,7 @@ export class SolarScene {
     this.controls.enabled = false;
     this.targetPosition = null;
     this.camera.fov = 58;
-    this.camera.near = walker.active ? 0.03 / (config.unitsKm * 1000) : 1e-8;
+    this.camera.near = walker.active ? dynamics.scale.metresToUniverseDistance(0.03) : 1e-8;
     this.camera.far = 2e6;
     this.camera.updateProjectionMatrix();
     this.starsEnabled = true;
@@ -1189,8 +1189,9 @@ export class SolarScene {
     );
     this.updateFlightCamera(1);
     const scene = this.renderPolicy.mode === "surface" ? this.surfaceWorldScene : this.spaceScene;
-    this.renderer.compile(scene, this.camera);
-    this.renderer.render(scene, this.camera);
+    const renderCamera = this.renderPolicy.mode === "surface" ? this.localRenderCamera : this.camera;
+    this.renderer.compile(scene, renderCamera);
+    this.renderer.render(scene, renderCamera);
     this.recordFlightRender();
     onProgress(100);
     if (!this.frame) this.animate(0);
@@ -1296,7 +1297,7 @@ export class SolarScene {
       this.explorerCamera = saved.walking?.camera ?? "third";
       this.flightControls?.setWalking(this.walking);
       this.flightControls?.clear();
-      this.camera.near = this.walking ? 0.03 / (this.dynamics!.config.unitsKm * 1000) : 1e-8;
+      this.camera.near = this.walking ? this.dynamics!.scale.metresToUniverseDistance(0.03) : 1e-8;
       this.camera.updateProjectionMatrix();
       this.flightFrameDirty = true;
       this.updateFlightCamera(1);
@@ -1318,7 +1319,7 @@ export class SolarScene {
       this.flightControls?.clear();
       this.flightFrameDirty = true;
       this.flightMetrics = 0;
-      this.camera.near = this.walking ? 0.03 / (this.dynamics.config.unitsKm * 1000) : 1e-8;
+      this.camera.near = this.walking ? this.dynamics.scale.metresToUniverseDistance(0.03) : 1e-8;
       this.camera.updateProjectionMatrix();
       this.updateFlightCamera(1);
     }
@@ -1471,11 +1472,11 @@ export class SolarScene {
     // Use the same 24 m surface lander as walking, growing smoothly back to flight scale on ascent.
     const surfaceHull = environment.profile.solid
       ? 1 - THREE.MathUtils.smoothstep(environment.groundAltitudeKm, 0, 2) : 0;
-    const landerScale = 24 / (ship.config.unitsKm * 1000 * this.ship.hullLength);
+    const landerScale = ship.scale.metresToUniverseDistance(24) / this.ship.hullLength;
     const scale = this.renderedShipScale = THREE.MathUtils.lerp(this.shipScale, landerScale, surfaceHull);
     const surfaceView = environment.profile.solid ? 1-THREE.MathUtils.smoothstep(environment.groundAltitudeKm,20,50) : 0;
     this.ship.group.position.set(0, this.ship.landingFootOffset * surfaceView
-      - LANDING_CLEARANCE_KM / (ship.config.unitsKm * scale) * surfaceHull, 0).applyQuaternion(ship.orientation);
+      - ship.scale.kilometresToUniverseDistance(LANDING_CLEARANCE_KM) / scale * surfaceHull, 0).applyQuaternion(ship.orientation);
     this.ship.group.scale.setScalar(1);
     const attitude = ship.orientation.clone().multiply(this.bankRotation.setFromAxisAngle(this.flightAxis, ship.bank));
     this.ship.group.quaternion.copy(attitude);
@@ -1535,14 +1536,35 @@ export class SolarScene {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
     }
-    if (this.walking) this.explorerView.update(this.walker!, ship, this.camera, this.explorerCamera,
-      blend >= 1 ? 0 : -Math.log(Math.max(1e-9, 1 - blend)) / 9, this.flightPaused, blend >= 1);
-    else this.explorerView.group.visible = false;
+    const scaleUnits = new SpatialScale(ship.config.unitsKm);
+    if (this.walking) {
+      this.localRenderCamera.aspect = this.camera.aspect;
+      this.explorerView.update(this.walker!, ship, this.localRenderCamera, this.explorerCamera,
+        blend >= 1 ? 0 : -Math.log(Math.max(1e-9, 1 - blend)) / 9, this.flightPaused, blend >= 1);
+      // Navigation/optics retain the inexpensive ship-relative universe camera.
+      this.camera.position.copy(this.localRenderCamera.position).sub(this.walker!.localShipPositionM)
+        .multiplyScalar(1 / scaleUnits.metresPerUnit);
+      this.camera.quaternion.copy(this.localRenderCamera.quaternion);
+      this.camera.up.copy(this.localRenderCamera.up);
+      this.camera.fov = this.localRenderCamera.fov;
+    } else {
+      this.explorerView.group.visible = false;
+      this.localRenderCamera.copy(this.camera, false);
+      this.localRenderCamera.position.copy(ship.localPositionM)
+        .addScaledVector(this.camera.position, scaleUnits.metresPerUnit);
+      this.localRenderCamera.near = Math.max(0.03, this.camera.near * scaleUnits.metresPerUnit);
+    }
+    this.localRenderCamera.far = Math.max(1e7, environment.body.radius * scaleUnits.metresPerUnit * 4);
+    this.localRenderCamera.updateProjectionMatrix();
+    const localFrame = this.walking ? this.walker!.localFrame : ship.localFrame;
+    this.renderer.domElement.dataset.localOrigin = JSON.stringify(localFrame!.originUniverse);
+    this.renderer.domElement.dataset.localPositionM = JSON.stringify((this.walking ? this.walker!.localPositionM : ship.localPositionM).toArray());
+    this.renderer.domElement.dataset.physicsEngine = this.walking ? "rapier" : "flight";
     this.renderer.domElement.dataset.exploration = this.walking ? "walking" : "ship";
     this.renderer.domElement.setAttribute("aria-label", this.walking
       ? "地表探索：WASD 行走，Shift 奔跑，空格跳跃，方向键或拖动看向，E 返回飞船"
       : "自由驾驶飞船：W/S 推力，方向键或触屏拖动转向，空格刹车");
-    if (mode === "surface") this.surfaceScene.update(ship, this.camera, this.flightSun, this.walking ? this.walker : undefined);
+    if (mode === "surface") this.surfaceScene.update(ship, this.localRenderCamera, this.flightSun, this.walking ? this.walker : undefined);
     else this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
     this.flightLight.update(ship, this.camera, this.flightSun);
     this.useSystemBackground(ship.systemId);
@@ -1576,7 +1598,7 @@ export class SolarScene {
     const target = ship.config.bodies.find((b) => b.id === ship.target)!;
     this.flightRelative.copy(ship.targetRelative);
     const markerRelative = this.walking ? ship.environment.outward.clone()
-      .multiplyScalar(-6 / (ship.config.unitsKm * 1000)) : this.flightRelative;
+      .multiplyScalar(ship.scale.metresToUniverseDistance(-6)) : this.flightRelative;
     const tracking = projectFlightTarget(markerRelative, this.camera);
     const aim = this.flightControls!.aim;
     this.flightTargetHandler?.({ ...tracking, target: ship.target, deceleration: ship.deceleration,
@@ -1735,6 +1757,7 @@ export class SolarScene {
 
   dispose() {
     this.destroyed = true;
+    this.walker?.reset();
     this.photoCapture?.reject(new Error("场景已关闭，照片未能生成"));
     this.photoCapture = undefined;
     this.resumeSpaceWork();

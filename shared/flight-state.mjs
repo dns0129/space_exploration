@@ -1,7 +1,11 @@
 import world from "./world.json" with { type: "json" };
 import { surfaceProfile, terrainHeightKm, legacyTerrainHeightKm, TERRAIN_VERSION, LANDING_CLEARANCE_KM } from "./surface.mjs";
 import { propulsionBand } from "./propulsion.mjs";
+import { SpatialScale, METRES_PER_KILOMETRE } from "./spatial-frame.mjs";
 export { world };
+// A rounded character capsule rests slightly above the radial height on a
+// slope. This is a contact allowance, not permission to restore below ground.
+export const WALKING_GROUNDED_CLEARANCE_M = 0.20;
 const systemIds = new Set(world.systems.map(system => system.id));
 const ids = new Set(world.bodies.map((body) => body.id));
 // Stage 03 used a compressed world. Re-anchor old saves relative to their destination.
@@ -18,6 +22,33 @@ const vector = (value, count, bound) =>
   );
 // Keep already normalized quaternions byte-stable across repeated validation.
 const normalizedQuaternion = (value, norm) => Math.abs(norm - 1) < 1e-10 ? [...value] : value.map(n => n / norm);
+// Body-relative metres retain the precision lost when adding a small surface
+// displacement to a solar-system position. Never persist a Rapier/world origin.
+function bodyRadialM(config, body, position, referenceFrame) {
+  const scale = new SpatialScale(config.unitsKm);
+  if (referenceFrame?.kind === "body-fixed" && referenceFrame.bodyId === body.id) {
+    if (!vector(referenceFrame.radialM, 3, 1e15)) return null;
+    const expected = scale.metresOffsetToUniverse(referenceFrame.radialM, body.position);
+    const toleranceM = .001 + Number.EPSILON * Math.max(1, ...position.map(Math.abs), ...body.position.map(Math.abs)) * scale.metresPerUnit * 8;
+    if (Math.hypot(...scale.universeDeltaToMetres(position, expected)) > toleranceM) return null;
+    return [...referenceFrame.radialM];
+  }
+  return scale.universeDeltaToMetres(position, body.position);
+}
+function validateReferenceFrame(value, position) {
+  if (value.referenceFrame === undefined) return undefined;
+  const reference = value.referenceFrame;
+  if (!reference || typeof reference !== "object" || !["system", "body-fixed"].includes(reference.kind)) return null;
+  if (reference.kind === "system") {
+    if (reference.bodyId !== undefined || reference.radialM !== undefined) return null;
+    return { kind: "system" };
+  }
+  const body = world.bodies.find(candidate => candidate.id === reference.bodyId);
+  if (!body || (body.systemId ?? "solar") !== (value.systemId ?? "solar")
+    || (value.landedBody && value.landedBody !== body.id)) return null;
+  const radialM = bodyRadialM(world, body, position, reference);
+  return radialM ? { kind: "body-fixed", bodyId: body.id, radialM } : null;
+}
 // Layout 1 placed every planet in the ecliptic. Preserve local ship/terrain
 // offsets near moved bodies, including landed and walking saves. Deep-space
 // positions retain their absolute coordinates. Current saves carry the layout
@@ -54,21 +85,24 @@ function validateWalkingTerrain(value, flight, config, heightAt) {
     || (body.systemId ?? "solar") !== (flight.systemId ?? "solar")) return null;
   const norm = Math.hypot(...value.orientation);
   if (norm < 0.95 || norm > 1.05) return null;
-  const meters = config.unitsKm * 1000;
-  const anchorRadial = flight.position.map((n, i) => (n - body.position[i]) * meters);
+  const scale = new SpatialScale(config.unitsKm);
+  const meters = scale.metresPerUnit;
+  const anchorRadial = bodyRadialM(config, body, flight.position, flight.referenceFrame);
+  if (!anchorRadial) return null;
   const anchorDistance = Math.hypot(...anchorRadial);
   if (!anchorDistance) return null;
   const landingRadius = body.radius * meters
-    + (heightAt(body.id, anchorRadial.map(n => n / anchorDistance)) + LANDING_CLEARANCE_KM) * 1000;
+    + (heightAt(body.id, anchorRadial.map(n => n / anchorDistance)) + LANDING_CLEARANCE_KM) * METRES_PER_KILOMETRE;
   if (Math.abs(anchorDistance - landingRadius) > 0.1) return null;
   const radial = anchorRadial.map((n, i) => n + value.offsetM[i]);
   const distance = Math.hypot(...radial);
   if (!distance) return null;
   const normal = radial.map(n => n / distance);
-  const clearance = distance - body.radius * meters - heightAt(body.id, normal) * 1000;
-  // 1.5 cm allows the landing anchor's floating-point round-off even at Neptune.
+  const clearance = distance - body.radius * meters - heightAt(body.id, normal) * METRES_PER_KILOMETRE;
+  // 1.5 cm allows distant landing-anchor round-off; a rounded Rapier capsule
+  // can stand above the radial floor on a slope without its feet penetrating.
   if (clearance < -0.015 || clearance > 2000
-    || (value.grounded && (Math.abs(clearance) > 0.015
+    || (value.grounded && (clearance > WALKING_GROUNDED_CLEARANCE_M
       || Math.abs(value.velocityMps.reduce((sum, n, i) => sum + n * normal[i], 0)) > 0.1))) return null;
   return {
     bodyId: value.bodyId,
@@ -83,45 +117,48 @@ function validateWalkingTerrain(value, flight, config, heightAt) {
 // Validate an old anchor against its original terrain before moving it. The
 // character retains its surface direction and height above the floor, rather
 // than being translated by the ship's possibly different elevation change.
-function migrateLandedTerrain(value, position, body) {
-  const meters = world.unitsKm * 1000;
-  const radial = position.map((n, i) => (n - body.position[i]) * meters);
+function migrateLandedTerrain(value, position, body, referenceFrame) {
+  const scale = new SpatialScale(world.unitsKm);
+  const meters = scale.metresPerUnit;
+  const radial = bodyRadialM(world, body, position, referenceFrame);
+  if (!radial) return null;
   const distance = Math.hypot(...radial);
   if (!distance) return null;
   const normal = radial.map(n => n / distance);
-  const altitudeKm = distance / 1000 - body.radius * world.unitsKm;
+  const altitudeKm = distance / METRES_PER_KILOMETRE - body.radius * world.unitsKm;
   const currentHeight = terrainHeightKm(body.id, normal) + LANDING_CLEARANCE_KM;
   // Some callers already used the current terrain before writing version
   // metadata. Only unmarked saves may use this current-height compatibility.
   if ((value.terrainVersion === undefined || value.terrainVersion === TERRAIN_VERSION)
     && Math.abs(altitudeKm - currentHeight) <= 0.0001)
-    return { position, walking: value.walking };
+    return { position, radialM: radial, walking: value.walking };
   if ((value.terrainVersion ?? 1) !== 1) return null;
   const oldHeight = legacyTerrainHeightKm(body.id, normal) + LANDING_CLEARANCE_KM;
   if (Math.abs(altitudeKm - oldHeight) > 0.0001) return null;
-  const oldFlight = { position, velocity: value.velocity, landedBody: body.id, systemId: value.systemId ?? "solar" };
+  const oldFlight = { position, velocity: value.velocity, landedBody: body.id, systemId: value.systemId ?? "solar", referenceFrame };
   const oldWalking = value.walking === undefined ? undefined
     : validateWalkingTerrain(value.walking, oldFlight, world, legacyTerrainHeightKm);
   if (value.walking !== undefined && !oldWalking) return null;
-  const newRadius = body.radius * meters + currentHeight * 1000;
+  const newRadius = body.radius * meters + currentHeight * METRES_PER_KILOMETRE;
   const newRadial = normal.map(n => n * newRadius);
-  const migratedPosition = newRadial.map((n, i) => body.position[i] + n / meters);
+  const migratedPosition = scale.metresOffsetToUniverse(newRadial, body.position);
   let walking = oldWalking;
   if (oldWalking) {
     const oldFeet = radial.map((n, i) => n + oldWalking.offsetM[i]);
     const feetDistance = Math.hypot(...oldFeet);
     const feetNormal = oldFeet.map(n => n / feetDistance);
-    const elevationDelta = (terrainHeightKm(body.id, feetNormal) - legacyTerrainHeightKm(body.id, feetNormal)) * 1000;
+    const elevationDelta = (terrainHeightKm(body.id, feetNormal) - legacyTerrainHeightKm(body.id, feetNormal)) * METRES_PER_KILOMETRE;
     const newFeet = feetNormal.map(n => n * (feetDistance + elevationDelta));
     walking = { ...oldWalking, offsetM: newFeet.map((n, i) => n - newRadial[i]) };
   }
-  return { position: migratedPosition, walking };
+  return { position: migratedPosition, radialM: newRadial, walking };
 }
 export function validateFlightState(value) {
   if (
     !value ||
     typeof value !== "object" ||
     ![1, 2].includes(value.version) ||
+    (value.coordinateVersion !== undefined && value.coordinateVersion !== 1) ||
     (value.worldLayoutVersion !== undefined && ![1, world.layoutVersion ?? 1].includes(value.worldLayoutVersion)) ||
     (value.terrainVersion !== undefined && ![1, TERRAIN_VERSION].includes(value.terrainVersion)) ||
     !vector(value.position, 3, value.version === 1 ? 1e6 : Infinity) ||
@@ -155,18 +192,23 @@ export function validateFlightState(value) {
     ? value.position.map((n, i) => body.position[i] + (n - old[1][i]) / old[0] * body.radius)
     : migrateLayoutPosition(value, [...value.position]);
   if (!vector(position, 3, Infinity)) return null;
+  // Compressed-world v1 positions predate reference metadata. Their migration
+  // retains the existing target-relative rule and constructs a fresh frame.
+  let referenceFrame = value.version === 1 ? undefined : validateReferenceFrame(value, position);
+  if (referenceFrame === null) return null;
   let walkingValue = value.walking;
   if (value.landedBody !== undefined) {
     const ground = world.bodies.find((b) => b.id === value.landedBody);
     if (value.version !== 2 || !ground || ground.kind === "star" || !surfaceProfile(ground.id).solid
       || (ground.systemId ?? "solar") !== (value.systemId ?? "solar") || Math.hypot(...value.velocity) > 1e-9) return null;
-    const migrated = migrateLandedTerrain(value, position, ground);
+    const migrated = migrateLandedTerrain(value, position, ground, referenceFrame);
     if (!migrated) return null;
     position = migrated.position;
     walkingValue = migrated.walking;
+    referenceFrame = { kind: "body-fixed", bodyId: ground.id, radialM: migrated.radialM };
   }
   const walking = walkingValue === undefined ? undefined : validateWalkingState(walkingValue, {
-    position, velocity: value.velocity, landedBody: value.landedBody, systemId: value.systemId ?? "solar",
+    position, velocity: value.velocity, landedBody: value.landedBody, systemId: value.systemId ?? "solar", referenceFrame,
   });
   if (value.walking !== undefined && (value.version !== 2 || !walking)) return null;
   const cruiseSpeedKm = Math.max(1, Math.min(150000, value.version === 2 ? value.cruiseSpeedKm ?? 100 : 100));
@@ -184,6 +226,8 @@ export function validateFlightState(value) {
   }
   return {
     version: 2,
+    coordinateVersion: 1,
+    referenceFrame: referenceFrame ?? { kind: "system" },
     worldLayoutVersion: world.layoutVersion ?? 1,
     terrainVersion: TERRAIN_VERSION,
     ...(value.landedBody ? { landedBody: value.landedBody } : {}),
