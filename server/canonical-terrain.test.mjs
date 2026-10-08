@@ -16,7 +16,7 @@ const sphereUv = direction => {
 };
 
 test("every solid body has one stable height field and the measured/concept image frames match", () => {
-  assert.equal(solids.length, 34);
+  assert.equal(solids.length, 36);
   for (const body of solids) {
     const field = terrainHeightField(body.id);
     assert(field, body.id);

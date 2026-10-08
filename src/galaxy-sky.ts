@@ -1,6 +1,7 @@
 import * as THREE from "three";
 
 export type GalaxyTextureFile = "milky-way-8k.jpg" | "milky-way-4k.jpg";
+export type GalaxySkyVariant = "milky-way" | "echo-rift";
 
 /** Native source pixels, never a 4K image enlarged into an 8K/16K texture. */
 export function selectGalaxyFile(maxTextureSize: number, compact = false, software = false): GalaxyTextureFile {
@@ -25,12 +26,65 @@ const skyFragment = /* glsl */ `
   uniform float visibility;
   uniform float detail;
   uniform float hasMap;
+  uniform float riftVariant;
   varying vec3 vDirection;
 
   float starHash(vec2 p) {
     vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
     q += dot(q, q.yzx + 33.33);
     return fract((q.x + q.y) * q.z);
+  }
+
+  float riftHash(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+  }
+
+  // This field lives on a direction sphere, so its dust has neither an
+  // equirectangular longitude seam nor a moving/screen-space noise pattern.
+  float riftNoise(vec3 p) {
+    vec3 cell = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(mix(riftHash(cell), riftHash(cell + vec3(1.0, 0.0, 0.0)), f.x),
+          mix(riftHash(cell + vec3(0.0, 1.0, 0.0)), riftHash(cell + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+      mix(mix(riftHash(cell + vec3(0.0, 0.0, 1.0)), riftHash(cell + vec3(1.0, 0.0, 1.0)), f.x),
+          mix(riftHash(cell + vec3(0.0, 1.0, 1.0)), riftHash(cell + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);
+  }
+
+  vec3 riftDirection(vec3 direction) {
+    // A non-rigid angular remapping changes the photographed lanes' shapes,
+    // spacing and branches rather than merely rotating the same panorama.
+    vec3 bend = sin(direction.yzx * vec3(4.7, 3.9, 4.3)
+                  + direction.zxy * vec3(2.1, -2.7, 2.3)
+                  + vec3(1.7, 4.2, 0.6));
+    bend += sin(direction.zxy * 9.1 + vec3(2.4, 0.9, 4.6)) * 0.22;
+    bend -= direction * dot(direction, bend);
+    return normalize(direction + bend * 0.14);
+  }
+
+  vec3 riftClouds(vec3 direction, vec3 panoramaDirection, vec3 photograph) {
+    vec3 p = direction * 5.6 + vec3(6.4, 2.7, 11.3);
+    float cloud = riftNoise(p) * 0.64;
+    cloud += riftNoise(p.zxy * 2.13 + vec3(3.2, 9.4, 1.7)) * 0.26;
+    if (detail > 0.5) cloud += riftNoise(p.yzx * 4.37 + vec3(17.8, 0.3, 5.1)) * 0.10;
+    else cloud += 0.05;
+    // Broad emission stays near the old photographic galactic plane. An
+    // offset crossing lane and irregular dark knots give this view its own
+    // silhouette while leaving most of the sky black and the stars tiny.
+    float plane = exp(-abs(panoramaDirection.y) * 10.0);
+    float crossing = exp(-abs(direction.y + direction.x * 0.22
+                            + sin(direction.z * 4.3) * 0.075) * 17.0);
+    float envelope = max(plane, crossing * 0.48);
+    float wisps = smoothstep(0.39, 0.71, cloud) * envelope;
+    float knots = smoothstep(0.57, 0.76, cloud) * envelope;
+    float hue = smoothstep(-0.55, 0.65, direction.x + direction.z * 0.35);
+    vec3 emission = mix(vec3(0.009, 0.004, 0.019), vec3(0.003, 0.015, 0.021), hue);
+    vec3 radiance = photograph * mix(vec3(0.77, 0.83, 1.06), vec3(0.73, 1.04, 1.12), hue);
+    radiance *= 1.0 - knots * 0.52;
+    return radiance + emission * wisps;
   }
 
   // Stars are evaluated at the display's pixel scale. Their tiny round cores
@@ -62,8 +116,10 @@ const skyFragment = /* glsl */ `
 
   void main() {
     vec3 direction = normalize(skyRotation * normalize(vDirection));
-    vec2 uv = vec2(atan(direction.z, direction.x) / 6.28318530718 + 0.5,
-                   asin(clamp(direction.y, -1.0, 1.0)) / 3.14159265359 + 0.5);
+    vec3 panoramaDirection = direction;
+    if (riftVariant > 0.5) panoramaDirection = riftDirection(direction);
+    vec2 uv = vec2(atan(panoramaDirection.z, panoramaDirection.x) / 6.28318530718 + 0.5,
+                   asin(clamp(panoramaDirection.y, -1.0, 1.0)) / 3.14159265359 + 0.5);
     // Longitude wraps. Derivatives across the wrap must not select a blurry
     // mip level, especially when the sharp galactic plane crosses the seam.
     vec2 dx = dFdx(uv), dy = dFdy(uv);
@@ -73,9 +129,11 @@ const skyFragment = /* glsl */ `
     // A restrained photographic shadow lift reveals the native dust lanes;
     // it changes display exposure, without inventing higher-resolution clouds.
     vec3 radiance = photograph + sqrt(max(photograph, vec3(0.0))) * 0.024;
-    vec3 pinpoints = stars(uv, dx, dy, vec2(420.0, 210.0), 19.3, 0.052, 0.62);
+    if (riftVariant > 0.5) radiance = riftClouds(direction, panoramaDirection, radiance);
+    float starSeed = riftVariant * 113.7;
+    vec3 pinpoints = stars(uv, dx, dy, vec2(420.0, 210.0), 19.3 + starSeed, 0.052, 0.62);
     if (detail > 0.5) {
-      pinpoints += stars(uv, dx, dy, vec2(1440.0, 720.0), 71.8, 0.022, 0.13);
+      pinpoints += stars(uv, dx, dy, vec2(1440.0, 720.0), 71.8 + starSeed, 0.022, 0.13);
     }
     gl_FragColor = vec4((radiance * intensity + pinpoints) * visibility, 1.0);
     #include <colorspace_fragment>
@@ -101,6 +159,7 @@ export class GalaxySky {
         visibility: { value: 1 },
         detail: { value: compact ? 0 : 1 },
         hasMap: { value: 0 },
+        riftVariant: { value: 0 },
       },
       side: THREE.BackSide,
       depthWrite: false,
@@ -129,11 +188,12 @@ export class GalaxySky {
   }
 
   /** Rotation uses the same convention as Scene.backgroundRotation. */
-  setView(rotation: readonly number[], intensity: number, visibility = 1, enabled = true) {
+  setView(rotation: readonly number[], intensity: number, visibility = 1, enabled = true, variant: GalaxySkyVariant = "milky-way") {
     this.rotation.set(-rotation[0], -rotation[1], -rotation[2]);
     this.mesh.material.uniforms.skyRotation.value.setFromMatrix4(this.rotationMatrix.makeRotationFromEuler(this.rotation));
     this.mesh.material.uniforms.intensity.value = intensity;
     this.mesh.material.uniforms.visibility.value = THREE.MathUtils.clamp(visibility, 0, 1);
+    this.mesh.material.uniforms.riftVariant.value = variant === "echo-rift" ? 1 : 0;
     this.mesh.visible = enabled && visibility > 0.001;
   }
 

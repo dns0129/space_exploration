@@ -302,7 +302,7 @@ test("landed legacy saves migrate low-altitude speed and clamp space presets wit
 
 test("landing rejects giant planets, the Sun, wrong targets and warp; manual input safely cancels descent", () => {
   const ship = new ShipDynamics();
-  for (const id of ["sun", "jupiter", "saturn", "uranus", "neptune", "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "betelgeuse"]) {
+  for (const id of ["sun", "jupiter", "saturn", "uranus", "neptune", "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "betelgeuse", "echo-pulsar", "veyl", "ruin", "shard"]) {
     ship.jump(id);
     const before = ship.snapshot();
     assert(ship.startLanding());

@@ -4,6 +4,7 @@ import type { ShipDynamics } from "./ship-dynamics";
 import type { WalkingDynamics } from "./walking-dynamics";
 import { atmosphereCloudProfile, atmosphereScattering, atmosphereStrength } from "./atmosphere";
 import { entryClouds } from "./entry-clouds";
+import { echoSurfaceColor, echoTerrainTexture } from "./echo-surface";
 
 /** A closed surface globe with concentrated subdivision near the pilot. */
 export class SurfaceScene {
@@ -11,6 +12,7 @@ export class SurfaceScene {
   readonly sky: THREE.Mesh;
   spaceVisibility = 1;
   private horizon?: THREE.Mesh;
+  private echoTerrain?: THREE.DataTexture;
   private horizonBodyId = "";
   private horizonMapBodyId = "";
   private anchor = new THREE.Vector3();
@@ -167,6 +169,8 @@ export class SurfaceScene {
     this.ambient.position.copy(env.outward);
   }
   private rebuildHorizon(ship: ShipDynamics, outward: THREE.Vector3) {
+    this.echoTerrain?.dispose();
+    this.echoTerrain = undefined;
     if (this.horizon) {
       this.group.remove(this.horizon);
       this.horizon.geometry.dispose();
@@ -208,8 +212,14 @@ export class SurfaceScene {
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     geometry.computeVertexNormals();
     const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, transparent: true });
+    const echoMoon = env.body.id === "echo-thalassa" || env.body.id === "cinder";
+    if (echoMoon) this.echoTerrain = echoTerrainTexture(env.body.id);
     material.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, this.terrainUniforms);
+      if (echoMoon) {
+        shader.uniforms.echoTerrain = { value: this.echoTerrain };
+        shader.uniforms.oceanMoon = { value: env.body.id === "echo-thalassa" ? 1 : 0 };
+      }
       shader.vertexShader = shader.vertexShader.replace("#include <common>",
         "#include <common>\nvarying vec3 groundPosition, groundRadial; uniform vec3 groundHorizonOffset;")
         .replace("#include <begin_vertex>", `#include <begin_vertex>\ngroundPosition = position * ${Number(ship.config.unitsKm * 1000).toFixed(1)} + groundHorizonOffset; groundRadial = normalize(position);`);
@@ -218,6 +228,7 @@ export class SurfaceScene {
         uniform sampler2D groundHorizonMap, groundHorizonCloudMap;
         uniform mat3 groundMapRotation, groundCloudRotation;
         uniform float groundAtmosphere, groundMapReady, groundCloudMapReady, groundMapBlend, groundCloudMapBlend;
+        ${echoMoon ? `uniform sampler2D echoTerrain; uniform float oceanMoon; ${echoSurfaceColor}` : ""}
         vec2 groundSphereUv(vec3 p) {
           p = normalize(p);
           return vec2(fract(atan(p.z, -p.x) / 6.28318530718), 1.0 - acos(clamp(p.y, -1.0, 1.0)) / 3.14159265359);
@@ -225,6 +236,11 @@ export class SurfaceScene {
         .replace("#include <color_fragment>", `#include <color_fragment>
           vec3 horizonPhoto = diffuseColor.rgb;
           float horizonCover = 0.0;
+          ${echoMoon ? `
+            vec3 echoRadial = normalize(groundMapRotation * groundRadial);
+            vec2 echoField = texture2D(echoTerrain, groundSphereUv(echoRadial)).rg;
+            diffuseColor.rgb = echoLandColor(echoRadial, echoField.r, echoField.g, oceanMoon);
+            horizonPhoto = diffuseColor.rgb;` : ""}
           if (groundMapReady * groundMapBlend > 0.0) {
             vec2 groundMapUv = groundSphereUv(groundMapRotation * groundRadial);
             horizonPhoto = texture2D(groundHorizonMap, groundMapUv).rgb * groundMapTint;
@@ -254,6 +270,7 @@ export class SurfaceScene {
     this.group.add(this.horizon);
   }
   dispose() {
+    this.echoTerrain?.dispose();
     this.horizon?.geometry.dispose();
     (this.horizon?.material as THREE.Material | undefined)?.dispose();
     this.sky.geometry.dispose();

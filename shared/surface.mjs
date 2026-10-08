@@ -1,4 +1,5 @@
 import { getTerrainHeightField, terrainDefinitions } from "./terrain-fields.mjs";
+import { getEchoTerrainHeightField, echoTerrainDefinitions } from "./echo-terrain.mjs";
 
 // Gameplay profiles: density and inferred rocky relief are illustrative. Earth
 // macrorelief uses the same shipped GEBCO elevation as its visible surface.
@@ -10,6 +11,13 @@ const profiles = {
   "alpha-centauri-b": { solid: false, sky: "#ffcb92", gravity: 300 },
   "proxima-centauri": { solid: false, sky: "#ff805a", gravity: 1000 },
   betelgeuse: { solid: false, sky: "#ff9d63", gravity: 0.007 },
+  // Echo Rift is wholly fictional; gravity and atmosphere are gameplay values.
+  "echo-pulsar": { solid: false, sky: "#a6e9ff", gravity: 0, landingReason: "脉冲星没有可着陆的固体地表" },
+  veyl: { solid: false, sky: "#70bcca", gravity: 29, gravityEstimated: true, density: 2.5, scaleKm: 210, landingReason: "气态巨行星没有可降落的固体地表，请选择塔拉萨或烬岩" },
+  "echo-thalassa": { sky: "#66c9d1", ground: "#648b7e", gravity: 8.3, gravityEstimated: true, density: .82, scaleKm: 9.2 },
+  cinder: { ground: "#a87859", gravity: 6.6, gravityEstimated: true },
+  ruin: { solid: false, ground: "#bd8a98", gravity: 0, landingReason: "残冕的岩壳已经碎裂，没有连续且稳定的地表，无法着陆" },
+  shard: { solid: false, ground: "#8fa7b5", gravity: 0, landingReason: "裂片由漂浮残骸组成，没有连续且稳定的地表，无法着陆" },
   // Exoplanet gravities are gameplay estimates, not measured surface values.
   "proxima-b": { sky: "#af8976", ground: "#a2785c", gravity: 10, gravityEstimated: true, density: 0.6, scaleKm: 9 },
   "proxima-c": { sky: "#93bdce", ground: "#81999f", gravity: 12, gravityEstimated: true, density: 1, scaleKm: 40 },
@@ -92,11 +100,11 @@ export function legacyTerrainHeightKm(id, normal) {
   return 0.065 + broad * 0.045 + fine * 0.009;
 }
 export const TERRAIN_VERSION = 2;
-export const terrainHeightField = getTerrainHeightField;
+export const terrainHeightField = id => getEchoTerrainHeightField(id) ?? getTerrainHeightField(id);
 
 /** Map a fixed world radial into the photographic frame used during flight. */
 export function terrainMapUv(id, normal) {
-  const definition = terrainDefinitions[id];
+  const definition = echoTerrainDefinitions[id] ?? terrainDefinitions[id];
   const tilt = definition?.tiltRad ?? 0;
   const yaw = -(definition?.yawRad ?? -0.4) + (definition?.mapOffset ?? 0) * Math.PI * 2;
   const length = Math.hypot(...normal) || 1;
@@ -110,7 +118,7 @@ export function terrainMapUv(id, normal) {
 }
 /** Inverse mapping, useful for navigating/tests of a feature in a source mosaic. */
 export function terrainMapNormal(id, uv) {
-  const definition = terrainDefinitions[id];
+  const definition = echoTerrainDefinitions[id] ?? terrainDefinitions[id];
   const longitude = uv[0] * Math.PI * 2, latitude = (uv[1] - .5) * Math.PI;
   const x = -Math.cos(longitude) * Math.cos(latitude), y = Math.sin(latitude), z = Math.sin(longitude) * Math.cos(latitude);
   const yaw = (definition?.yawRad ?? -.4) - (definition?.mapOffset ?? 0) * Math.PI * 2;
@@ -148,7 +156,7 @@ export function terrainHeightKm(id, normal) {
 
 export function terrainMaxHeightKm(id) {
   if (!surfaceProfile(id).solid) return 0;
-  const definition = terrainDefinitions[id];
+  const definition = echoTerrainDefinitions[id] ?? terrainDefinitions[id];
   return definition ? definition.heightOffsetKm + definition.heightScaleKm + (definition.fineEnabled ? .054 : 0) : .119;
 }
 

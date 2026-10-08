@@ -2154,6 +2154,9 @@ dialog h2 {
 .planet-dot.alpha-centauri-a, .planet-dot.alpha-centauri-b, .planet-dot.proxima-centauri, .planet-dot.betelgeuse { background: var(--planet-color); box-shadow: 0 0 12px var(--planet-color); }
 .planet-dot.proxima-b, .planet-dot.proxima-c, .planet-dot.proxima-d { background: var(--planet-color); }
 .planet-info[data-system-group="betelgeuse"] .facts dd { font-size: 14px; letter-spacing: 0; }
+.planet-info[data-system-group="echo-rift"] .facts > div { gap: 14px; }
+.planet-info[data-system-group="echo-rift"] .facts dt { flex-shrink: 0; }
+.planet-info[data-system-group="echo-rift"] .facts dd { font-size: 14px; letter-spacing: 0; text-align: right; }
 .planet-item:has(.alpha-centauri-a) .planet-name, .planet-item:has(.alpha-centauri-b) .planet-name { white-space: nowrap; }
 @media (max-width: 800px) {
   .destination-selectors, .flight-mode .destination-selectors { top: 116px; right: 12px; left: 12px; justify-content: flex-end; gap: 12px; }

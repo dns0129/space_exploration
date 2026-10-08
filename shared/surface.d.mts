@@ -1,5 +1,5 @@
 import type { BodyId } from "../src/solar-system";
-export function surfaceProfile(id: BodyId): { solid: boolean; sky: string; ground: string; gravity: number; gravityEstimated: boolean; density: number; scaleKm: number };
+export function surfaceProfile(id: BodyId): { solid: boolean; sky: string; ground: string; gravity: number; gravityEstimated: boolean; density: number; scaleKm: number; landingReason?: string };
 export function terrainHeightKm(id: BodyId, normal: number[]): number;
 export function legacyTerrainHeightKm(id: BodyId, normal: number[]): number;
 export const TERRAIN_VERSION: number;

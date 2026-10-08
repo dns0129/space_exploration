@@ -1,5 +1,6 @@
 import centauriData from "../shared/centauri.json" with { type: "json" };
 import betelgeuseData from "../shared/betelgeuse.json" with { type: "json" };
+import echoRiftData from "../shared/echo-rift.json" with { type: "json" };
 import worldData from "../shared/world.json" with { type: "json" };
 import moonData from "../shared/moons.json" with { type: "json" };
 export type BodyId =
@@ -46,9 +47,15 @@ export type BodyId =
   | "proxima-d"
   | "betelgeuse"
   | "ceres"
-  | "earth-station";
-export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri" | "betelgeuse";
-export type SystemGroupId = "solar" | "alpha-centauri" | "betelgeuse";
+  | "earth-station"
+  | "echo-pulsar"
+  | "veyl"
+  | "echo-thalassa"
+  | "cinder"
+  | "ruin"
+  | "shard";
+export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri" | "betelgeuse" | "echo-rift";
+export type SystemGroupId = "solar" | "alpha-centauri" | "betelgeuse" | "echo-rift";
 export type Layer = "clouds" | "atmosphere" | "stars" | "rings";
 
 export interface CelestialBody {
@@ -273,6 +280,16 @@ export const BETELGEUSE_BODIES: readonly CelestialBody[] = betelgeuseData.map(bo
   rotationSpeed: 0.002, surfaceSeed: 91.4, caption: "BETELGEUSE / RED SUPERGIANT",
   layers: ["atmosphere", "stars"], atmosphereColor: body.color,
 }));
+export const ECHO_RIFT_BODIES: readonly CelestialBody[] = echoRiftData.map(body => ({
+  ...body, id: body.id as BodyId, systemId: "echo-rift", kind: body.kind as "star" | "planet",
+  hostStarId: body.hostStarId as BodyId | undefined, parentId: body.parentId as BodyId | undefined,
+  // Fixed, shared surface frame keeps the ocean coastlines and collision terrain aligned.
+  axialTiltDeg: 0, flattening: body.id === "veyl" ? 0.94 : 1,
+  distanceFromSunMillionKm: 0, rotationSpeed: body.kind === "star" ? 0.14 : body.id === "veyl" ? 0.034 : 0,
+  caption: `${body.english} / ECHO RIFT · FICTIONAL SYSTEM`,
+  layers: body.kind === "star" || body.atmosphereKm ? ["atmosphere", "stars"] : ["stars"],
+  atmosphereColor: body.atmosphereColor ?? body.color,
+}));
 export const EXPLORATION_BODIES: readonly CelestialBody[] = [
   {
     id: "ceres", name: "小行星带 · 谷神星", english: "ASTEROID BELT / CERES",
@@ -293,7 +310,7 @@ export const EXPLORATION_BODIES: readonly CelestialBody[] = [
     caption: "TERRA ORBITAL / ALTITUDE 400 KM · FICTIONAL SCALE", layers: ["stars"],
   },
 ];
-export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...EXPLORATION_BODIES].map(body => ({
+export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...EXPLORATION_BODIES, ...ECHO_RIFT_BODIES].map(body => ({
   ...body, atmosphereKm: worldData.bodies.find(config => config.id === body.id)?.atmosphereKm,
 }));
 export const STAR_SYSTEMS = worldData.systems;

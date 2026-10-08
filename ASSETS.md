@@ -4,6 +4,14 @@ The texture images are included locally to avoid external requests during render
 
 The website posters `public/site/earth.png`, `mars.png`, and `saturn.png` are original 900 × 900 transparent screenshots of this application's planet renderer using the textures listed below. They retain the underlying imagery credits and applicable licenses; they are not additional stock imagery. The site background uses the same `milky-way-4k.jpg` panorama. The deployed website includes this document and `THIRD_PARTY_NOTICES.md` under `legal/`.
 
+## Echo Rift — original fictional system
+
+The six Echo Rift bodies are original procedural artwork implemented in `src/echo-models.ts` and `src/echo-surface.ts`. The pulsar has a deliberately enlarged 18,000 km visual radius, blue-white plasma, a soft corona and two tilted beams. Veyl has teal and gold atmospheric bands and a spiral storm. Ruin and Shard use separated, closed radial rock wedges, luminous cut faces and instanced debris; their navigation radii describe the conservative debris envelope. No astronomical photographs are claimed for these bodies, and their distances, orbits, atmosphere, gravity and water-heating premise are fictional.
+
+Thalassa and Cinder each use a deterministic **512 × 256** field in `shared/echo-terrain.mjs`. The same field drives orbital colour, local surface colour, landing and walking collision; Thalassa includes a separate water mask for seas and low branching channels. Fine colour structure is procedural and does not represent measured relief. This adds two solid worlds to the 34 existing terrain definitions. The six bodies add no downloaded planet textures.
+
+Echo Rift's background retains the licensed 8K/4K Milky Way panorama credited below. `src/galaxy-sky.ts` applies a continuous spherical warp and a fixed cold cyan/violet dust network with an independent star seed. This is an artistic rearrangement of that panorama, with its existing attribution and licence retained, rather than a newly observed sky or an additional source image.
+
 ## Retired 16K enhancement — historical provenance
 
 The following section records the removed enhancement and its source credits. Its AI material atlas and generated tiles are no longer used by the game.

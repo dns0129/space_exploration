@@ -474,7 +474,7 @@ export class SolarScene {
     this.currentModel = model;
     this.publishSurfaceResolution(model);
     this.useSystemBackground(getBody(id).systemId ?? "solar");
-    this.controls.maxDistance = id === "saturn" ? 12 : 7;
+    this.controls.maxDistance = id === "echo-pulsar" ? 20 : id === "saturn" ? 12 : 7;
     this.targetPosition = null;
     this.controls.reset();
     this.camera.position.copy(this.viewPosition("overview"));
@@ -706,7 +706,9 @@ export class SolarScene {
       sky.setTexture(texture);
     }
     sky.setView(system.backgroundRotation, system.backgroundIntensity,
-      this.flying ? this.surfaceScene.spaceVisibility : 1, this.starsEnabled);
+      this.flying ? this.surfaceScene.spaceVisibility : 1, this.starsEnabled,
+      id === "echo-rift" ? "echo-rift" : "milky-way");
+    this.renderer.domElement.dataset.backgroundVariant = id === "echo-rift" ? "echo-rift" : "milky-way";
     this.backgroundSystem = id;
     if (this.renderer.domElement.dataset.system !== id) this.renderer.domElement.dataset.system = id;
     if (this.renderer.domElement.dataset.background !== this.galaxyFile) {
@@ -1227,7 +1229,7 @@ export class SolarScene {
     model.group.position.copy(center);
     model.group.scale.setScalar(body.radius);
     // Collision uses the mean-radius sphere. Match rocky flight surfaces to it.
-    if (body.id !== "sun" && !["jupiter", "saturn", "uranus", "neptune"].includes(body.id)) {
+    if (body.id !== "sun" && !["jupiter", "saturn", "uranus", "neptune", "veyl"].includes(body.id)) {
       model.surface.scale.y = 1;
       model.layers.atmosphere?.traverse(object => { if (object instanceof THREE.Mesh) object.scale.y = object.scale.x; });
     }
@@ -1622,6 +1624,8 @@ export class SolarScene {
   }
 
   private viewPosition(view: View): THREE.Vector3 {
+    if (this.currentModel?.body.id === "echo-pulsar" && view === "overview")
+      return new THREE.Vector3(0, 0.35, 9.4).multiplyScalar(Math.max(1, 0.70 / this.camera.aspect));
     if (this.currentModel?.body.id === "saturn") {
       return {
         // Narrow displays need more distance to show the full ring system.
@@ -1755,7 +1759,9 @@ export class SolarScene {
     geometries.add(this.largeSphere);
     this.flightGeometries.forEach((geometry) => geometries.add(geometry));
     const materials = new Set<THREE.Material>();
+    const instances = new Set<THREE.InstancedMesh>();
     const collect = (object: THREE.Object3D) => {
+      if (object instanceof THREE.InstancedMesh) instances.add(object);
       if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
         geometries.add(object.geometry);
         const objectMaterials = Array.isArray(object.material)
@@ -1769,8 +1775,11 @@ export class SolarScene {
     this.shipScene.traverse(collect);
     this.surfaceWorldScene.traverse(collect);
     this.models.forEach((model) => model.group.traverse(collect));
+    for (const model of [...this.models.values(), ...this.flightModels])
+      model.ownedTextures?.forEach(texture => texture.dispose());
     geometries.forEach((geometry) => geometry.dispose());
     materials.forEach((material) => material.dispose());
+    instances.forEach(mesh => mesh.dispose());
     this.textures.forEach((texture) => texture.dispose());
     this.renderer.dispose();
     this.renderer.domElement.remove();

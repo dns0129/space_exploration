@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { chromium, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
+import { verifyEchoRiftFlight } from "./verify-echo-rift.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
 import { createServer } from "node:http";
@@ -67,9 +68,11 @@ try {
     "miranda", "ariel", "umbriel", "titania", "oberon",
     "naiad", "thalassa", "despina", "galatea", "larissa", "proteus", "triton", "nereid",
     "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-c", "proxima-d", "betelgeuse",
+    "echo-pulsar", "veyl", "echo-thalassa", "cinder", "ruin", "shard",
   ]) {
     if (id === "betelgeuse") await page.locator("#star-system").selectOption("betelgeuse");
     if (id === "alpha-centauri-a") await page.locator("#star-system").selectOption("alpha-centauri");
+    if (id === "echo-pulsar") await page.locator("#star-system").selectOption("echo-rift");
     if (await page.locator(`button[data-body="${id}"]`).count()) {
       if (id !== "earth") await page.locator(`button[data-body="${id}"]`).click();
     } else await page.locator("#satellite-target").selectOption(id);
@@ -167,12 +170,13 @@ try {
   await page.waitForFunction(() => document.querySelector("canvas")?.dataset.system === "proxima-centauri");
   assert.equal(await page.locator("canvas").count(), 1);
   await verifyBetelgeuseFlight(page);
+  await verifyEchoRiftFlight(page);
   await verifySurfaceFlight(page);
   await verifyWalkingFlight(page);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(
-    "PASS: all 44 destinations, two sky panoramas, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
+    "PASS: all 50 destinations, original and echo-rift galactic skies, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
   );
 } finally {
   await browser.close();

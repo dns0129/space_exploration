@@ -747,6 +747,112 @@
         0,
         23481.70354732381
       ]
+    },
+    {
+      "id": "echo-pulsar",
+      "systemId": "echo-rift",
+      "kind": "star",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "radius": 2.825302150368859
+    },
+    {
+      "id": "veyl",
+      "systemId": "echo-rift",
+      "kind": "planet",
+      "position": [
+        3128.064451646646,
+        109.00284942504949,
+        2096.221371381226
+      ],
+      "hostStarId": "echo-pulsar",
+      "atmosphereKm": 2400,
+      "orbit": {
+        "inclinationDeg": 12,
+        "ascendingNodeDeg": 26,
+        "longitudeDeg": 34
+      },
+      "orbitRadiusKm": 24000000,
+      "radius": 16.48092921048501
+    },
+    {
+      "id": "echo-thalassa",
+      "systemId": "echo-rift",
+      "kind": "planet",
+      "position": [
+        2996.8154690815963,
+        126.83158832466373,
+        2080.2229712896365
+      ],
+      "hostStarId": "echo-pulsar",
+      "parentId": "veyl",
+      "atmosphereKm": 125,
+      "orbit": {
+        "inclinationDeg": 16,
+        "ascendingNodeDeg": 35,
+        "longitudeDeg": 186
+      },
+      "orbitRadiusKm": 850000,
+      "radius": 1.161513106262753
+    },
+    {
+      "id": "cinder",
+      "systemId": "echo-rift",
+      "kind": "planet",
+      "position": [
+        3320.8553523902096,
+        12.230637811926115,
+        1952.90154854263
+      ],
+      "hostStarId": "echo-pulsar",
+      "parentId": "veyl",
+      "orbit": {
+        "inclinationDeg": 23,
+        "ascendingNodeDeg": 35,
+        "longitudeDeg": -38
+      },
+      "orbitRadiusKm": 1650000,
+      "radius": 0.9574635065138911
+    },
+    {
+      "id": "ruin",
+      "systemId": "echo-rift",
+      "kind": "planet",
+      "position": [
+        -4662.814197130358,
+        3062.6266493894964,
+        -3208.268922023857
+      ],
+      "hostStarId": "echo-pulsar",
+      "orbit": {
+        "inclinationDeg": 29,
+        "ascendingNodeDeg": 112,
+        "longitudeDeg": 213
+      },
+      "orbitRadiusKm": 41000000,
+      "radius": 6.749332914770052
+    },
+    {
+      "id": "shard",
+      "systemId": "echo-rift",
+      "kind": "planet",
+      "position": [
+        -4627.183719104225,
+        3064.944912585446,
+        -3101.0456676580725
+      ],
+      "hostStarId": "echo-pulsar",
+      "parentId": "ruin",
+      "orbit": {
+        "inclinationDeg": 36,
+        "ascendingNodeDeg": 70,
+        "longitudeDeg": 72
+      },
+      "orbitRadiusKm": 720000,
+      "radius": 1.3969549521268247
     }
   ],
   "lightYearKm": 9460730472580.8,
@@ -821,6 +927,24 @@
         0.18,
         1.55,
         0.12
+      ]
+    },
+    {
+      "id": "echo-rift",
+      "groupId": "echo-rift",
+      "name": "\u56de\u58f0\u88c2\u9699 \u00b7 \u865a\u6784\u8109\u51b2\u661f\u7cfb",
+      "positionLy": [
+        -34.2,
+        18.6,
+        72.4
+      ],
+      "primaryStar": "echo-pulsar",
+      "backgroundFile": "milky-way-4k.jpg",
+      "backgroundIntensity": 1.8,
+      "backgroundRotation": [
+        0.24,
+        2.18,
+        -0.21
       ]
     }
   ],

@@ -8,6 +8,7 @@ import { SURFACE_MAPS } from "./body-textures";
 import type { SurfaceMap } from "./body-textures";
 import { PROCEDURAL_DETAIL_WIDTH, proceduralBodyProfile } from "./procedural-body";
 import { SATURN_RING_INNER, SATURN_RING_OUTER, saturnRingOptics } from "./saturn-rings";
+import { createEchoModel } from "./echo-models";
 
 export interface PlanetModel {
   body: CelestialBody;
@@ -20,6 +21,7 @@ export interface PlanetModel {
   /** Photographic or concept map shared by the surface (or Venus cloud deck) material. */
   surfaceMap?: SurfaceMap;
   mapUniforms?: SurfaceMapUniforms;
+  ownedTextures?: THREE.Texture[];
 }
 
 export interface SurfaceMapUniforms {
@@ -574,6 +576,8 @@ export function createPlanetModel(
   map?: THREE.Texture,
 ): PlanetModel {
   if (body.kind === "station") return createStationModel(body);
+  if (body.systemId === "echo-rift") return createEchoModel(body, sunDirection, placement,
+    { vertex: modelVertex, noise, atmosphere: atmosphereFragment });
   const kinds = {
     mercury: 0,
     ceres: 8,

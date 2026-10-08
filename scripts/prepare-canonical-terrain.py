@@ -59,6 +59,10 @@ def pole_filter(values):
 arrays, definitions = {}, {}
 for body in world["bodies"]:
     key = body["id"]
+    # Original fictional geology has its own stable generator shared by the CPU
+    # and renderer; never replace it with an unrelated photo-derived field.
+    if body.get("systemId") == "echo-rift":
+        continue
     if body.get("kind") in {"star", "station"} or key in {"sun", "jupiter", "saturn", "uranus", "neptune"}:
         continue
     width, height = (1024, 512) if key == "earth" else (512, 256)

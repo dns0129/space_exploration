@@ -8,7 +8,7 @@ import { surfaceProfile, terrainMapNormal, terrainHeightKm, LANDING_CLEARANCE_KM
 
 test("direct placement on every solid body uses the chosen terrain and creates restorable ship and walking saves", () => {
   const bodies = world.bodies.filter(body => surfaceProfile(body.id).solid);
-  assert.equal(bodies.length, 34);
+  assert.equal(bodies.length, 36);
   for (const body of bodies) {
     for (const uv of [[0.17, 0.61], [0.995, 0.32], [0.4, 1]]) {
       const normal = new THREE.Vector3().fromArray(terrainMapNormal(body.id, uv));

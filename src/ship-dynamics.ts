@@ -106,7 +106,7 @@ export class ShipDynamics {
   placeOnSurface(id: BodyId, radial: [number, number, number]): string | null {
     const body = this.config.bodies.find(candidate => candidate.id === id);
     if (!body || body.kind === "station" || !surfaceProfile(id).solid)
-      return "请选择有固体地表的行星或卫星放置";
+      return surfaceProfile(id).landingReason ?? "请选择有固体地表的行星或卫星放置";
     if (!Array.isArray(radial) || radial.length !== 3 || !radial.every(Number.isFinite))
       return "地表位置无效，请重新选择放置点";
     const length = Math.hypot(...radial);
@@ -760,7 +760,7 @@ export class ShipDynamics {
     if (this.warping) return "跃迁期间无法着陆";
     const environment = this.environment;
     if (this.target === "earth-station") return "空间站暂不支持自动对接，请手动近距离观测";
-    if (!environment.profile.solid) return environment.body.kind === "star" ? "恒星无法着陆" : "气态或冰巨行星没有可降落的固体地表，请选择卫星";
+    if (!environment.profile.solid) return environment.profile.landingReason ?? (environment.body.kind === "star" ? "恒星无法着陆" : "气态或冰巨行星没有可降落的固体地表，请选择卫星");
     if (environment.body.id !== this.target) return "请先接近并选择要着陆的天体";
     if (environment.altitudeKm > Math.max(environment.body.radius * this.config.unitsKm * 5, 2000))
       return "距离地表太远，请先跃迁或驾驶接近目标";
