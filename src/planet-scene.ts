@@ -712,8 +712,8 @@ export class SolarScene {
     }
     sky.setView(system.backgroundRotation, system.backgroundIntensity,
       this.flying ? this.surfaceScene.spaceVisibility : 1, this.starsEnabled,
-      id === "echo-rift" ? "echo-rift" : "milky-way");
-    this.renderer.domElement.dataset.backgroundVariant = id === "echo-rift" ? "echo-rift" : "milky-way";
+      id === "black-hole" ? "black-hole" : id === "echo-rift" ? "echo-rift" : "milky-way");
+    this.renderer.domElement.dataset.backgroundVariant = id === "black-hole" ? "black-hole" : id === "echo-rift" ? "echo-rift" : "milky-way";
     this.backgroundSystem = id;
     if (this.renderer.domElement.dataset.system !== id) this.renderer.domElement.dataset.system = id;
     if (this.renderer.domElement.dataset.background !== this.galaxyFile) {

@@ -1,7 +1,8 @@
 import * as THREE from "three";
+import { blackHoleSky } from "./black-hole-sky";
 
 export type GalaxyTextureFile = "milky-way-8k.jpg" | "milky-way-4k.jpg";
-export type GalaxySkyVariant = "milky-way" | "echo-rift";
+export type GalaxySkyVariant = "milky-way" | "echo-rift" | "black-hole";
 
 /** Native source pixels, never a 4K image enlarged into an 8K/16K texture. */
 export function selectGalaxyFile(maxTextureSize: number, compact = false, software = false): GalaxyTextureFile {
@@ -27,7 +28,9 @@ const skyFragment = /* glsl */ `
   uniform float detail;
   uniform float hasMap;
   uniform float riftVariant;
+  uniform float blackHoleVariant;
   varying vec3 vDirection;
+  ${blackHoleSky}
 
   float starHash(vec2 p) {
     vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -116,6 +119,12 @@ const skyFragment = /* glsl */ `
 
   void main() {
     vec3 direction = normalize(skyRotation * normalize(vDirection));
+    if (blackHoleVariant > 0.5) {
+      gl_FragColor = vec4(blackHoleStarField(direction) * visibility, 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+      return;
+    }
     vec3 panoramaDirection = direction;
     if (riftVariant > 0.5) panoramaDirection = riftDirection(direction);
     vec2 uv = vec2(atan(panoramaDirection.z, panoramaDirection.x) / 6.28318530718 + 0.5,
@@ -160,11 +169,14 @@ export class GalaxySky {
         detail: { value: compact ? 0 : 1 },
         hasMap: { value: 0 },
         riftVariant: { value: 0 },
+        blackHoleVariant: { value: 0 },
       },
       side: THREE.BackSide,
       depthWrite: false,
       depthTest: false,
-      toneMapped: false,
+      // Only the black-hole branch invokes filmic mapping; the existing sky
+      // branches keep their original radiance and output conversion unchanged.
+      toneMapped: true,
     });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(10, 48, 32), material);
     this.mesh.name = "native-panorama-galaxy";
@@ -194,6 +206,7 @@ export class GalaxySky {
     this.mesh.material.uniforms.intensity.value = intensity;
     this.mesh.material.uniforms.visibility.value = THREE.MathUtils.clamp(visibility, 0, 1);
     this.mesh.material.uniforms.riftVariant.value = variant === "echo-rift" ? 1 : 0;
+    this.mesh.material.uniforms.blackHoleVariant.value = variant === "black-hole" ? 1 : 0;
     this.mesh.visible = enabled && visibility > 0.001;
   }
 
