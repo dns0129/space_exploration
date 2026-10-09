@@ -64,8 +64,6 @@ jobs:
         run: npx playwright test tests/black-hole.spec.ts --reporter=line,html
       - name: Verify the built website and project paths
         run: npm run test:site
-      - name: Export and verify the disconnected standalone game
-        run: npm run test:offline
       - name: Upload screenshots, browser traces and actual runtime evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -74,6 +72,52 @@ jobs:
           path: |
             test-results/
             playwright-report/
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Record the actual offline runtime and source revision
+        run: |
+          mkdir -p test-results/offline
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          import { execFileSync } from "node:child_process";
+          const runtime = { node: process.version, npm: execFileSync("npm", ["--version"], { encoding: "utf8" }).trim(), revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), platform: process.platform, architecture: process.arch };
+          if (Number(process.versions.node.split(".")[0]) !== 24) throw new Error("Node.js 24 is required");
+          writeFileSync("test-results/offline/runtime.json", JSON.stringify(runtime, null, 2) + "\n");
+          console.log(JSON.stringify(runtime, null, 2));
+          NODE
+      - run: npm ci --no-fund --no-audit
+      - run: npx playwright install --with-deps chromium
+      - name: Select cloud Chromium
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from "@playwright/test";
+          import { appendFileSync, existsSync } from "node:fs";
+          const executable = chromium.executablePath();
+          if (!existsSync(executable)) throw new Error("Installed Chromium executable is missing");
+          appendFileSync(process.env.GITHUB_ENV, `PLAYWRIGHT_CHROMIUM_EXECUTABLE=${executable}\n`);
+          NODE
+      - name: Export and verify all destinations and navigation while disconnected
+        run: |
+          set -o pipefail
+          npm run test:offline 2>&1 | tee test-results/offline/verification.log
+      - name: Upload actual offline runtime and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: black-hole-offline-evidence-${{ github.sha }}
+          path: test-results/offline/
           if-no-files-found: error
           retention-days: 14
       - name: Upload the verified offline package
@@ -86,7 +130,7 @@ jobs:
           retention-days: 14
 
   refresh-offline-package:
-    needs: verify
+    needs: [verify, verify-offline]
     if: github.event_name == 'push' && github.ref == 'refs/heads/codex/black-hole'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -121,4 +165,4 @@ jobs:
           git push origin "HEAD:refs/heads/$FEATURE_BRANCH"
           echo "Verified source revision: $VERIFIED_SHA" >> "$GITHUB_STEP_SUMMARY"
           echo "Offline package commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
-          echo "The package commit uses GITHUB_TOKEN and does not trigger another push workflow. Open the PR after this step to run read-only verification for the final head." >> "$GITHUB_STEP_SUMMARY"
+          echo "The package commit uses GITHUB_TOKEN and does not trigger another push workflow. The source and verified ZIP are both gated by the complete independent verification jobs." >> "$GITHUB_STEP_SUMMARY"

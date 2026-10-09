@@ -37,6 +37,10 @@ try {
     viewport: { width: 1280, height: 900 },
     reducedMotion: "reduce",
   });
+  // Software rendering of the existing shattered bodies can block several
+  // browser frames. Give real UI actions the same bounded budget as captures;
+  // destination, pixel, flight-state and disconnected-network checks remain.
+  context.setDefaultTimeout(90000);
   const page = await context.newPage();
   const documentUrl = `http://127.0.0.1:${origin.address().port}/`;
   const errors = [],
@@ -176,7 +180,7 @@ try {
   assert.equal(await page.locator("canvas").count(), 1);
   await verifyBetelgeuseFlight(page);
   await verifyEchoRiftFlight(page);
-    await verifyBlackHoleFlight(page);
+  await verifyBlackHoleFlight(page);
   await verifySurfaceFlight(page);
   await verifyWalkingFlight(page);
   assert.deepEqual(errors, []);
