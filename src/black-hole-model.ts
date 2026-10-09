@@ -37,7 +37,6 @@ export function createBlackHoleModel(body: CelestialBody): PlanetModel {
       uniform float uTime;
       uniform vec3 eye, right, up, forward;
       varying vec3 rayPoint;
-      const float PI = 3.14159265359;
       // Disk temperature gradient, many advecting radial filaments and azimuthal
       // turbulence. Derivative filtering keeps the fine bands stable at distance.
       vec3 diskLight(float r, float angle) {

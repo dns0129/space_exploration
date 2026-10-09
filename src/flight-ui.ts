@@ -321,7 +321,7 @@ export class FlightInterface {
     $("#flight-assist").setAttribute("aria-pressed", String(state.assist));
     $<HTMLButtonElement>("#flight-assist").disabled = this.walking;
     $("#flight-assist").title = this.walking ? "人物离舱后，飞船停留原地；返舱后可设置驾驶辅助" : "辅助速度方向跟随船头";
-    $("#flight-target-label").textContent = this.walking ? "返回飞船" : "导航目标";
+    $("#flight-target-label").textContent = this.walking ? "返回飞船" : getBody(state.target).kind === "black-hole" ? "导航目标 · 距阴影边缘" : "导航目标";
     $("#flight-target").textContent = this.walking ? "VOYAGER 01" : getBody(state.target).name;
     $("#flight-speed-label").textContent = this.walking ? "移动速度" : "当前航速";
     $("#flight-key-guide").innerHTML = this.walking
