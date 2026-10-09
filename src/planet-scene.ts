@@ -14,6 +14,7 @@ import { initializeWalkingPhysics } from "./walking-physics";
 import { SpatialScale } from "../shared/spatial-frame.mjs";
 import { ExplorerView } from "./explorer-view";
 import { StationInterior } from "./station-interior";
+import { STATION_SPAWN } from "../shared/station-layout.mjs";
 import { validateFlightState } from "../shared/flight-state.mjs";
 import { createShip, SHIP_LENGTH_KM } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
@@ -314,6 +315,9 @@ export class SolarScene {
   private dynamics?: ShipDynamics;
   private walker?: WalkingDynamics;
   private stationInterior?: StationInterior;
+  private readonly stationSpaceRotation = new THREE.Quaternion();
+  private readonly stationSpaceOrigin = new THREE.Vector3();
+  private readonly stationLocalOrigin = new THREE.Vector3().fromArray(STATION_SPAWN);
   private readonly explorerView = new ExplorerView();
   private explorerCamera: "first" | "third" = "third";
   private flightControls?: FlightControls;
@@ -601,9 +605,9 @@ export class SolarScene {
 
   /** Only the current globe's original base image may finish loading locally. */
   private async waitForSpaceWork(file?: string) {
-    while (!this.destroyed && this.flying && (this.inStation || this.renderPolicy.mode === "surface")) {
+    while (!this.destroyed && this.flying && !this.inStation && this.renderPolicy.mode === "surface") {
       const map = SURFACE_MAPS[this.dynamics!.environment.body.id];
-      if (!this.inStation && file && (file === map?.file || file === map?.compactFile)) return;
+      if (file && (file === map?.file || file === map?.compactFile)) return;
       await new Promise<void>(resolve => this.spaceWorkWaiters.add(resolve));
     }
   }
@@ -697,6 +701,7 @@ export class SolarScene {
     if (this.pendingSurfaceMaps.size) this.applyPendingSurfaceMaps();
     for (const model of this.mapFades) {
       const ready = model.mapUniforms!.mapReady;
+      if (ready.value < 1) this.flightFrameDirty = true;
       ready.value = Math.min(1, ready.value + delta / 0.7);
       if (ready.value >= 1) this.mapFades.delete(model);
     }
@@ -823,9 +828,15 @@ export class SolarScene {
     const active = !!model && (this.flying ? model.group.visible && this.dynamics?.systemId === "solar" : this.currentModel === model);
     const capable = !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 8192
       && (this.renderer.domElement.dataset.softwareRenderer !== "true" || this.quality === "ultra");
-    for (const [earth, detail] of this.earthDetails) if (earth !== model) detail.update(undefined, this.camera, false, delta, time);
-    if (model) this.earthDetails.get(model)?.update(active ? model.surface : undefined,
-      this.camera, active && capable && this.earthUpgraded && this.quality === "ultra", delta, time);
+    for (const [earth, detail] of this.earthDetails) {
+      const blend = detail.uniforms.detailBlend.value as THREE.Vector4;
+      const previousBlend = blend.clone();
+      const current = earth === model && active;
+      detail.update(current ? earth.surface : undefined, this.camera,
+        current && capable && this.earthUpgraded && this.quality === "ultra", delta, time);
+      // A paused view still redraws resident detail as it arrives and fades in.
+      if (!blend.equals(previousBlend)) this.flightFrameDirty = true;
+    }
     if (!active || !capable || this.quality === "standard" || this.earthUpgraded || this.earthUpgrade || time < this.earthUpgradeAt) return;
     const batch: THREE.Texture[] = [];
     this.earthUpgrade = (async () => {
@@ -852,6 +863,7 @@ export class SolarScene {
   }
 
   private applyEarthMaps(model: PlanetModel, maps: THREE.Texture[]) {
+    this.flightFrameDirty = true;
     const uniforms = (model.surface.material as THREE.ShaderMaterial).uniforms;
     for (const [i, name, size] of [[0, "dayMap", "mapSize"], [1, "nightMap", "nightSize"],
       [2, "terrainMap", "terrainSize"], [3, "cloudMap", "cloudSize"]] as const) {
@@ -877,6 +889,7 @@ export class SolarScene {
       texture => this.releaseEarthMap(texture), texture => {
         this.renderBudget.hold(1.5);
         this.renderer.initTexture(texture);
+        this.flightFrameDirty = true;
       }, this.renderer.domElement);
     const surface = new THREE.Mesh(
       geometry,
@@ -999,7 +1012,17 @@ export class SolarScene {
 
   private renderFlightWorld() {
     if (this.inStation) {
-      this.renderer.render(this.stationInterior!.scene, this.stationInterior!.camera);
+      // Draw the actual orbital world, then let the local hull and glazing
+      // occlude it. Celestial resources stay owned by the outer space scene.
+      const autoClear = this.renderer.autoClear;
+      try {
+        this.renderer.render(this.spaceScene, this.camera);
+        this.renderer.autoClear = false;
+        this.renderer.clearDepth();
+        this.renderer.render(this.stationInterior!.scene, this.stationInterior!.camera);
+      } finally {
+        this.renderer.autoClear = autoClear;
+      }
       return;
     }
     if (this.renderPolicy.mode === "space") {
@@ -1066,7 +1089,7 @@ export class SolarScene {
     if (animating ? this.renderBudget.sample(delta) : this.stillSeconds > 0.4 && this.renderBudget.rest()) this.applyRenderBudget();
     if (this.flying) {
       this.animateFlight(delta, time);
-      if (!this.inStation && this.renderPolicy.mode === "space") {
+      if (this.inStation || this.renderPolicy.mode === "space") {
         this.updateSurfaceMaps(delta, time);
         this.updateEarthDetail(delta, time);
       }
@@ -1431,7 +1454,17 @@ export class SolarScene {
   }
   private getStationInterior() {
     if (!this.stationInterior) this.stationInterior = new StationInterior();
-    this.stationInterior.setEarthMap(this.earthMaps?.[0]);
+    // Restoring a station checkpoint can follow a planetary surface visit.
+    this.renderPolicy.reset();
+    const config = this.dynamics!.config;
+    this.stationSpaceOrigin.fromArray(config.bodies.find(body => body.id === "earth-station")!.position);
+    // The observation glazing faces local +X. Preserve the world's planetary
+    // axes and light by rotating only the observer, never the celestial models.
+    const right = new THREE.Vector3().fromArray(config.bodies.find(body => body.id === "earth")!.position)
+      .sub(this.stationSpaceOrigin).normalize();
+    const up = new THREE.Vector3(0, 1, 0).projectOnPlane(right).normalize();
+    const back = new THREE.Vector3().crossVectors(right, up).normalize();
+    this.stationSpaceRotation.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, up, back));
     this.stationInterior.resize(this.flightWidth, this.flightHeight);
     return this.stationInterior;
   }
@@ -1512,9 +1545,13 @@ export class SolarScene {
         < this.flightForward.fromArray(closest.position).distanceToSquared(ship.position) ? body : closest);
     const celestialBodies: string[] = [];
     for (const body of ship.activeBodies) {
+      // The local deck replaces the surrounding megastructure while inside it.
+      if (this.inStation && body.id === "earth-station") continue;
       if (surface && (body.id === environment.body.id || body.id === localStar.id)) continue;
       this.flightRelative.fromArray(body.position).sub(ship.position);
-      const angularRadius = body.radius / Math.max(this.flightRelative.length(), 1e-9);
+      const observerDistance = this.inStation
+        ? this.flightRelative.distanceTo(this.camera.position) : this.flightRelative.length();
+      const angularRadius = body.radius / Math.max(observerDistance, 1e-9);
       const pixelRadius = angularRadius * pixelsPerRadian;
       if (pixelRadius <= 0.65) continue;
       const model = this.flightModelById.get(body.id) ?? this.createFlightModel(body);
@@ -1522,7 +1559,7 @@ export class SolarScene {
       if (model.group.parent !== parent) parent.add(model.group);
       model.group.position.copy(this.flightRelative);
       model.group.visible = true;
-      if (surface) celestialBodies.push(body.id);
+      if (surface || this.inStation) celestialBodies.push(body.id);
       // Maps stream in as bodies grow beyond a few pixels; far ones keep the procedural fallback.
       if (!surface && pixelRadius > 4) this.touchSurfaceMap(model.body.id);
       const lod = pixelRadius < 8 ? this.tinySphere : pixelRadius < 100 ? this.distantSphere : pixelRadius < 280 ? this.mediumSphere : pixelRadius < 700 ? this.largeSphere : undefined;
@@ -1542,6 +1579,7 @@ export class SolarScene {
       }
     }
     this.renderer.domElement.dataset.surfaceCelestialBodies = JSON.stringify(celestialBodies);
+    if (this.inStation) this.renderer.domElement.dataset.stationCelestialBodies = JSON.stringify(celestialBodies);
   }
 
   /** Take resident asset references without streaming global terrain detail. */
@@ -1568,9 +1606,34 @@ export class SolarScene {
     if (this.inStation) {
       const interior = this.stationInterior!;
       interior.updateCamera();
+      const localOffset = interior.camera.position.clone().sub(this.stationLocalOrigin)
+        .applyQuaternion(this.stationSpaceRotation).multiplyScalar(ship.scale.metresToUniverseDistance(1));
+      this.camera.position.copy(this.stationSpaceOrigin).sub(ship.position).add(localOffset);
+      this.camera.quaternion.copy(this.stationSpaceRotation).multiply(interior.camera.quaternion);
+      if (this.camera.fov !== interior.camera.fov || this.camera.aspect !== interior.camera.aspect
+        || this.camera.near !== 1e-8) {
+        this.camera.fov = interior.camera.fov;
+        this.camera.aspect = interior.camera.aspect;
+        this.camera.near = 1e-8;
+        this.camera.far = 2e6;
+        this.camera.updateProjectionMatrix();
+      }
+      this.camera.updateMatrixWorld();
+      if (this.surfaceScene.sky.parent !== this.spaceScene || this.flightSun.parent !== this.spaceScene)
+        this.spaceScene.add(this.surfaceScene.sky, this.flightLight.mesh, this.flightSun);
+      this.updateSpaceWorld();
+      const sun = ship.config.bodies.find(body => body.id === "sun")!;
+      this.flightSun.position.fromArray(sun.position).sub(ship.position);
+      this.flightSun.color.set(getBody("sun").color);
+      this.flightSun.intensity = 2.5;
+      this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
+      this.flightLight.update(ship, this.camera, this.flightSun);
+      this.useSystemBackground(ship.systemId);
+      this.resumeSpaceWork();
       this.ship.group.visible = false;
+      this.warpEffect.mesh.visible = false;
       this.renderer.domElement.dataset.renderMode = "station";
-      this.renderer.domElement.dataset.spaceWorkActive = "false";
+      this.renderer.domElement.dataset.spaceWorkActive = "true";
       this.renderer.domElement.dataset.exploration = "station";
       this.renderer.domElement.dataset.physicsEngine = "station-collision";
       this.renderer.domElement.dataset.stationZone = interior.zone;
@@ -1582,6 +1645,7 @@ export class SolarScene {
     delete this.renderer.domElement.dataset.stationZone;
     delete this.renderer.domElement.dataset.stationPositionM;
     delete this.renderer.domElement.dataset.stationCamera;
+    delete this.renderer.domElement.dataset.stationCelestialBodies;
     const environment = ship.environment;
     const previousMode = this.renderPolicy.mode;
     const mode = this.renderPolicy.update({ bodyId: environment.body.id,
@@ -1732,7 +1796,7 @@ export class SolarScene {
     const exhaust = this.flightPaused || ship.warping ? 0.1 : input.boost && input.throttle > 0 ? 2.4 : input.throttle > 0 ? 1 : 0.22;
     this.ship.exhaust.scale.z = THREE.MathUtils.lerp(this.ship.exhaust.scale.z, exhaust, 1 - Math.exp(-delta * 10));
     this.updateFlightCamera(1 - Math.exp(-delta * 9));
-    if (!this.inStation && !this.flightPaused && !this.paused && this.renderPolicy.mode === "space")
+    if (!this.flightPaused && !this.paused && (this.inStation || this.renderPolicy.mode === "space"))
       for (const model of this.flightModels) {
         if (!model.group.visible) continue;
         // Keep surface features fixed in the collision frame while flying; clouds still drift.

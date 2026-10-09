@@ -24,9 +24,6 @@ export class StationInterior {
   private readonly limbs: THREE.Group[] = [];
   private readonly holograms: THREE.Object3D[] = [];
   private readonly textures = new Set<THREE.Texture>();
-  private readonly earthSurfaces = new Set<THREE.ShaderMaterial>();
-  private earthMap?: THREE.Texture;
-  private exteriorEarth?: THREE.Group;
   private clock = 0;
   private gait = 0;
   private jumpHeld = false;
@@ -71,15 +68,6 @@ export class StationInterior {
   resize(width: number, height: number) {
     this.camera.aspect = Math.max(1, width) / Math.max(1, height);
     this.camera.updateProjectionMatrix();
-  }
-
-  /** Borrow the loaded orbital Earth image; the main scene owns its lifetime. */
-  setEarthMap(texture?: THREE.Texture) {
-    this.earthMap = texture;
-    for (const material of this.earthSurfaces) {
-      material.uniforms.dayMap.value = texture ?? null;
-      material.uniforms.useDayMap.value = Number(!!texture);
-    }
   }
 
   step(delta: number, input: FlightInput) {
@@ -161,10 +149,6 @@ export class StationInterior {
     }
     for (let index = 0; index < this.holograms.length; index++)
       this.holograms[index].rotation.y = this.clock * (index % 2 ? -0.12 : 0.08);
-    // The adjoining corridor shares the open observation entrance. Keep the
-    // globe visible there too, so crossing the doorway never reveals it abruptly.
-    if (this.exteriorEarth) this.exteriorEarth.visible = this.active
-      && this.positionM.x > -3 && this.positionM.z > -14 && this.positionM.z < 10;
     this.camera.updateMatrixWorld();
   }
 
@@ -230,10 +214,9 @@ export class StationInterior {
     return texture;
   }
 
-  private earthMaterial(hologram = false) {
+  /** The control-room projection is decorative; window views use the orbital scene. */
+  private hologramMaterial() {
     const material = new THREE.ShaderMaterial({
-      uniforms: { hologram: { value: Number(hologram) }, dayMap: { value: this.earthMap ?? null },
-        useDayMap: { value: Number(!!this.earthMap && !hologram) } },
       vertexShader: `varying vec3 vSphere; varying vec3 vNormal; varying vec3 vView; varying vec2 vUv;
         #include <common>
         #include <logdepthbuf_pars_vertex>
@@ -242,7 +225,7 @@ export class StationInterior {
           #include <logdepthbuf_vertex>
         }`,
       fragmentShader: `
-        uniform float hologram,useDayMap; uniform sampler2D dayMap; varying vec3 vSphere,vNormal,vView; varying vec2 vUv;
+        varying vec3 vSphere,vNormal,vView; varying vec2 vUv;
         #include <logdepthbuf_pars_fragment>
         float hash(vec3 p){p=fract(p*0.1031);p+=dot(p,p.yzx+33.33);return fract((p.x+p.y)*p.z);}
         float noise(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
@@ -252,37 +235,31 @@ export class StationInterior {
         void main(){
           #include <logdepthbuf_fragment>
           vec3 n=normalize(vSphere); vec3 color;
-          if(useDayMap>0.5){
-            color=texture2D(dayMap,vUv).rgb;
-          }else{
-            float land=fbm(n*3.6+vec3(3.0,7.1,2.0));
-            float continents=smoothstep(0.48,0.51,land); float desert=smoothstep(0.55,0.69,fbm(n*6.0+7.0));
-            vec3 terrain=mix(vec3(0.085,0.25,0.15),vec3(0.53,0.42,0.24),desert);
-            color=mix(vec3(0.015,0.11,0.3),terrain,continents);
-            float ice=smoothstep(0.8,0.94,abs(n.y)+noise(n*18.0)*0.06);color=mix(color,vec3(0.84,0.91,0.92),ice);
-            float cloud=smoothstep(0.54,0.66,fbm(n*9.0+vec3(8.0,2.0,11.0)));
-            color=mix(color,vec3(0.86,0.92,0.95),cloud*0.85);
-          }
+          float land=fbm(n*3.6+vec3(3.0,7.1,2.0));
+          float continents=smoothstep(0.48,0.51,land); float desert=smoothstep(0.55,0.69,fbm(n*6.0+7.0));
+          vec3 terrain=mix(vec3(0.085,0.25,0.15),vec3(0.53,0.42,0.24),desert);
+          color=mix(vec3(0.015,0.11,0.3),terrain,continents);
+          float ice=smoothstep(0.8,0.94,abs(n.y)+noise(n*18.0)*0.06);color=mix(color,vec3(0.84,0.91,0.92),ice);
+          float cloud=smoothstep(0.54,0.66,fbm(n*9.0+vec3(8.0,2.0,11.0)));
+          color=mix(color,vec3(0.86,0.92,0.95),cloud*0.85);
           float sunlight=smoothstep(-0.2,0.45,dot(n,normalize(vec3(-0.8,0.5,-0.25))));
           color*=0.1+sunlight*1.15;
           float rim=pow(1.0-max(0.0,dot(normalize(vNormal),normalize(vView))),3.5);
           color+=vec3(0.09,0.42,0.8)*rim*0.8;
-          if(hologram>0.5){
-            float grid=pow(abs(sin(atan(n.z,n.x)*18.0)),180.0)+pow(abs(sin(asin(clamp(n.y,-1.0,1.0))*18.0)),180.0);
-            color=color*0.4+vec3(0.07,0.7,0.95)*(0.45+grid*0.5);
-          }
+          float grid=pow(abs(sin(atan(n.z,n.x)*18.0)),180.0)+pow(abs(sin(asin(clamp(n.y,-1.0,1.0))*18.0)),180.0);
+          color=color*0.4+vec3(0.07,0.7,0.95)*(0.45+grid*0.5);
           gl_FragColor=vec4(color,1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
     });
-    if (!hologram) this.earthSurfaces.add(material);
     return material;
   }
 
   private build() {
     this.built = true;
-    this.scene.background = new THREE.Color("#030812");
+    // Preserve the actual astronomical background rendered before this local deck.
+    this.scene.background = null;
     this.scene.add(new THREE.HemisphereLight(0xcce6ff, 0x172c45, 1.65));
     const sunlight = new THREE.DirectionalLight(0xffdfb0, 2.1);
     sunlight.position.set(30, 20, -12);
@@ -429,7 +406,7 @@ export class StationInterior {
     ring(2.05, 0.035, [0, 1.35, -30.5], cyan);
     const holo = new THREE.Group();
     holo.position.set(0, 2.9, -30.5);
-    holo.add(new THREE.Mesh(new THREE.SphereGeometry(1.35, 64, 40), this.earthMaterial(true)));
+    holo.add(new THREE.Mesh(new THREE.SphereGeometry(1.35, 64, 40), this.hologramMaterial()));
     const orbital = new THREE.Mesh(new THREE.TorusGeometry(1.65, 0.012, 6, 96), cyan);
     orbital.rotation.x = Math.PI / 2.3;
     holo.add(orbital);
@@ -475,46 +452,8 @@ export class StationInterior {
   }
 
   private buildExterior() {
-    const earth = new THREE.Mesh(new THREE.SphereGeometry(330, 128, 80), this.earthMaterial());
-    earth.position.set(540, -135, -18);
-    earth.rotation.set(0.05, -0.25, -0.18);
-    earth.name = "Sunlit Earth through observation glazing";
-    const atmosphere = new THREE.Mesh(new THREE.SphereGeometry(334, 80, 48), new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-      vertexShader: `varying vec3 n,v;
-        #include <common>
-        #include <logdepthbuf_pars_vertex>
-        void main(){vec4 p=modelViewMatrix*vec4(position,1.0);n=normalMatrix*normal;v=-p.xyz;gl_Position=projectionMatrix*p;
-          #include <logdepthbuf_vertex>
-        }`,
-      fragmentShader: `varying vec3 n,v;
-        #include <logdepthbuf_pars_fragment>
-        void main(){
-          #include <logdepthbuf_fragment>
-          float rim=pow(1.0-max(0.0,dot(normalize(n),normalize(v))),5.0);
-        gl_FragColor=vec4(0.1,0.46,0.9,rim*0.5);}`,
-    }));
-    atmosphere.position.copy(earth.position);
-    this.exteriorEarth = new THREE.Group();
-    this.exteriorEarth.name = "Earth visible from the observation deck";
-    this.exteriorEarth.add(earth, atmosphere);
-    this.scene.add(this.exteriorEarth);
-    let seed = 19361;
-    const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
-    const positions: number[] = [], colors: number[] = [];
-    for (let index = 0; index < 1400; index++) {
-      const y = random() * 2 - 1, angle = random() * Math.PI * 2, radial = Math.sqrt(1 - y * y);
-      positions.push(Math.cos(angle) * radial * 1500, y * 1500, Math.sin(angle) * radial * 1500);
-      const brightness = 0.5 + random() * 0.5;
-      colors.push(brightness * 0.75, brightness * 0.86, brightness);
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-    this.scene.add(new THREE.Points(geometry, new THREE.PointsMaterial({ size: 1.8, vertexColors: true, sizeAttenuation: false, toneMapped: false })));
-    const solar = new THREE.Mesh(new THREE.SphereGeometry(9, 24, 16), new THREE.MeshBasicMaterial({ color: 0xffe6b9, toneMapped: false }));
-    solar.position.set(500, 400, 430);
-    this.scene.add(solar);
+    // Only nearby station hardware belongs to the metre-scale scene.
+    // Earth, Sun and stars are drawn by the same space scene used outside.
     // External solar trusses remain visible beyond the bay's pressure glazing.
     const hardware = new THREE.MeshStandardMaterial({ color: 0x586b7a, metalness: 0.85, roughness: 0.36 });
     const cells = new THREE.MeshStandardMaterial({ color: 0x122c50, metalness: 0.5, roughness: 0.23 });
@@ -581,9 +520,7 @@ export class StationInterior {
     materials.forEach(material => material.dispose());
     this.textures.forEach(texture => texture.dispose());
     this.textures.clear();
-    this.earthSurfaces.clear();
     this.scene.clear();
-    this.exteriorEarth = undefined;
     this.limbs.length = 0;
     this.holograms.length = 0;
     this.astronaut.clear();
