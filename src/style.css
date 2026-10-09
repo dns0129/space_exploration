@@ -2487,7 +2487,12 @@ body.photo-mode > :not(#app),
   .flight-ui[data-exploration="station"] .flight-title .eyebrow { display: none; }
   .flight-ui[data-exploration="station"] .flight-title h2 { font-size: 20px; letter-spacing: 3px; }
   .flight-mode #flight-ui[data-exploration="station"] .flight-toolbar { top: 84px; left: 190px; right: 12px; max-width: none; gap: 5px; }
-  .flight-mode #flight-ui[data-exploration="station"] .walking-panel { top: 176px; left: 16px; right: 16px; width: auto; padding: 10px 12px; }
+  .flight-mode #flight-ui[data-exploration="station"] .walking-panel { top: 176px; left: 16px; right: 16px; width: auto; padding: 10px 12px; max-height: none; overflow: visible; pointer-events: none; }
+  #flight-ui[data-exploration="station"] .walking-telemetry { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  #flight-ui[data-exploration="station"] .walking-telemetry > div:last-child { grid-column: auto; }
+  #flight-ui[data-exploration="station"] .walking-telemetry b { font-size: 13px; }
+  #flight-ui[data-exploration="station"] .walking-telemetry span,
+  #flight-ui[data-exploration="station"] .walking-telemetry small { font-size: 8px; }
   .flight-mode #flight-ui[data-exploration="station"] .flight-navigation { top: 274px; left: 16px; }
 }
 @media (max-width: 800px) and (max-height: 700px) {
