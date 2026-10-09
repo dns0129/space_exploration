@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { blackHoleSky } from "./black-hole-sky";
 
 export type GalaxyTextureFile = "milky-way-8k.jpg" | "milky-way-4k.jpg";
 export type GalaxySkyVariant = "milky-way" | "echo-rift" | "black-hole";
@@ -29,8 +28,30 @@ const skyFragment = /* glsl */ `
   uniform float hasMap;
   uniform float riftVariant;
   uniform float blackHoleVariant;
+  uniform vec3 lensDirection;
+  uniform float lensRadiusOverDistance;
+  uniform float lensEnabled;
   varying vec3 vDirection;
-  ${blackHoleSky}
+
+  // Bend the celestial direction before any panorama rotation. The same
+  // source direction then supplies both photographed dust and individual stars.
+  // This is a finite, radial lens approximation, not a GR geodesic integrator.
+  vec3 lensedDirection(vec3 ray) {
+    if (lensEnabled < 0.5 || lensRadiusOverDistance <= 0.0) return ray;
+    float facing = dot(ray, lensDirection);
+    if (facing <= 0.0) return ray;
+    vec3 tangent = ray - lensDirection * facing;
+    float sine = length(tangent);
+    if (sine < 0.000001) return ray;
+    float impact = sine / lensRadiusOverDistance;
+    float envelope = 1.0 - smoothstep(3.0, 9.0, impact);
+    if (envelope <= 0.0) return ray;
+    float weakBend = 0.77 / max(impact, 1.0);
+    float nearCritical = 0.09 * log(1.0 + 1.25 / max(impact - 1.0, 0.025));
+    nearCritical *= 1.0 - smoothstep(1.15, 2.8, impact);
+    float sourceAngle = atan(sine, facing) - (weakBend + nearCritical) * envelope;
+    return normalize(lensDirection * cos(sourceAngle) + tangent / sine * sin(sourceAngle));
+  }
 
   float starHash(vec2 p) {
     vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -117,14 +138,47 @@ const skyFragment = /* glsl */ `
     return tint * (core + halo) * present * gain * mix(0.28, 1.0, pow(magnitude, 3.0));
   }
 
+  // Convolve a small circular source star with its elliptical pixel footprint.
+  // The full derivative covariance retains tangential lens arcs without using
+  // the largest distorted derivative as a circular, over-bright star radius.
+  vec3 blackHoleStars(vec2 uv, vec2 dx, vec2 dy, float angularPixel,
+                      vec2 gridSize, float seed, float density, float gain) {
+    vec2 grid = uv * gridSize;
+    vec2 cell = floor(grid);
+    cell.x = mod(cell.x, gridSize.x);
+    float latitudeScale = max(cos((uv.y - 0.5) * 3.14159265359), 0.035);
+    float galacticPlane = exp(-abs(uv.y - 0.5) * 19.0);
+    float present = step(starHash(cell + seed), density * latitudeScale * (0.78 + 0.55 * galacticPlane));
+    vec2 center = vec2(starHash(cell + seed + 11.3), starHash(cell + seed + 53.7)) * 0.48 + 0.26;
+    vec2 metric = vec2(latitudeScale, 1.0);
+    vec2 offset = (fract(grid) - center) * metric;
+    vec2 footprintX = dx * gridSize * metric;
+    vec2 footprintY = dy * gridSize * metric;
+    float magnitude = starHash(cell + seed + 137.0);
+    float nativePixel = angularPixel * gridSize.y / 3.14159265359;
+    float radius = max(mix(0.006, 0.025, pow(magnitude, 8.0)), nativePixel * 0.38);
+    float sourceArea = radius * radius;
+    float cxx = sourceArea + 0.24 * (footprintX.x * footprintX.x + footprintY.x * footprintY.x);
+    float cyy = sourceArea + 0.24 * (footprintX.y * footprintX.y + footprintY.y * footprintY.y);
+    float cxy = 0.24 * (footprintX.x * footprintX.y + footprintY.x * footprintY.y);
+    float determinant = max(cxx * cyy - cxy * cxy, sourceArea * sourceArea);
+    float ellipse = max(0.0, (cyy * offset.x * offset.x - 2.0 * cxy * offset.x * offset.y
+                              + cxx * offset.y * offset.y) / determinant);
+    float energy = min(1.0, sourceArea / sqrt(determinant));
+    // When a pixel covers multiple source cells, the panorama mip levels carry
+    // the unresolved population; suppress hashed-cell patches at the critical edge.
+    float footprint = max(length(footprintX), length(footprintY));
+    float resolved = 1.0 - smoothstep(0.45, 1.25, footprint);
+    float core = exp(-ellipse) * energy * resolved;
+    float temperature = starHash(cell + seed + 303.0);
+    vec3 tint = mix(vec3(0.79, 0.85, 0.92), vec3(1.0, 0.89, 0.76), temperature);
+    return tint * core * present * gain * mix(0.30, 1.0, pow(magnitude, 3.0));
+  }
+
   void main() {
-    vec3 direction = normalize(skyRotation * normalize(vDirection));
-    if (blackHoleVariant > 0.5) {
-      gl_FragColor = vec4(blackHoleStarField(direction) * visibility, 1.0);
-      #include <tonemapping_fragment>
-      #include <colorspace_fragment>
-      return;
-    }
+    vec3 worldDirection = normalize(vDirection);
+    float angularPixel = max(length(dFdx(worldDirection)), length(dFdy(worldDirection)));
+    vec3 direction = normalize(skyRotation * lensedDirection(worldDirection));
     vec3 panoramaDirection = direction;
     if (riftVariant > 0.5) panoramaDirection = riftDirection(direction);
     vec2 uv = vec2(atan(panoramaDirection.z, panoramaDirection.x) / 6.28318530718 + 0.5,
@@ -139,10 +193,27 @@ const skyFragment = /* glsl */ `
     // it changes display exposure, without inventing higher-resolution clouds.
     vec3 radiance = photograph + sqrt(max(photograph, vec3(0.0))) * 0.024;
     if (riftVariant > 0.5) radiance = riftClouds(direction, panoramaDirection, radiance);
-    float starSeed = riftVariant * 113.7;
-    vec3 pinpoints = stars(uv, dx, dy, vec2(420.0, 210.0), 19.3 + starSeed, 0.052, 0.62);
-    if (detail > 0.5) {
-      pinpoints += stars(uv, dx, dy, vec2(1440.0, 720.0), 71.8 + starSeed, 0.022, 0.13);
+    vec3 pinpoints;
+    if (blackHoleVariant > 0.5) {
+      // Preserve the native photograph's dark lanes, with a muted warm-grey
+      // shadow lift that reveals dust instead of replacing it with a flat glow.
+      float luminance = dot(photograph, vec3(0.2126, 0.7152, 0.0722));
+      vec3 warmPhotograph = mix(photograph, vec3(luminance) * vec3(1.07, 0.96, 0.84), 0.56);
+      radiance = warmPhotograph + sqrt(max(warmPhotograph, vec3(0.0))) * 0.056;
+      pinpoints = blackHoleStars(uv, dx, dy, angularPixel, vec2(420.0, 210.0), 291.7, 0.135, 0.64);
+      pinpoints += blackHoleStars(uv, dx, dy, angularPixel, vec2(960.0, 480.0), 513.1, 0.078, 0.24);
+      // Fine pinpoints remain present in compact mode, where the photographic
+      // panorama is 4K; the optional fourth layer only adds faint micro-stars.
+      pinpoints += blackHoleStars(uv, dx, dy, angularPixel, vec2(1760.0, 880.0), 819.3, 0.044, 0.11);
+      if (detail > 0.5) {
+        pinpoints += blackHoleStars(uv, dx, dy, angularPixel, vec2(2800.0, 1400.0), 1127.9, 0.016, 0.045);
+      }
+    } else {
+      float starSeed = riftVariant * 113.7;
+      pinpoints = stars(uv, dx, dy, vec2(420.0, 210.0), 19.3 + starSeed, 0.052, 0.62);
+      if (detail > 0.5) {
+        pinpoints += stars(uv, dx, dy, vec2(1440.0, 720.0), 71.8 + starSeed, 0.022, 0.13);
+      }
     }
     gl_FragColor = vec4((radiance * intensity + pinpoints) * visibility, 1.0);
     #include <colorspace_fragment>
@@ -155,6 +226,10 @@ export class GalaxySky {
   private readonly rotation = new THREE.Euler();
   private readonly rotationMatrix = new THREE.Matrix4();
   private readonly blackTexture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+  private blackHoleLens: THREE.Object3D | null = null;
+  private readonly lensPosition = new THREE.Vector3();
+  private readonly lensScale = new THREE.Vector3();
+  private readonly cameraPosition = new THREE.Vector3();
 
   constructor(compact = false) {
     this.blackTexture.needsUpdate = true;
@@ -170,18 +245,49 @@ export class GalaxySky {
         hasMap: { value: 0 },
         riftVariant: { value: 0 },
         blackHoleVariant: { value: 0 },
+        lensDirection: { value: new THREE.Vector3(0, 0, -1) },
+        lensRadiusOverDistance: { value: 0 },
+        lensEnabled: { value: 0 },
       },
       side: THREE.BackSide,
       depthWrite: false,
       depthTest: false,
-      // Only the black-hole branch invokes filmic mapping; the existing sky
-      // branches keep their original radiance and output conversion unchanged.
-      toneMapped: true,
+      toneMapped: false,
     });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(10, 48, 32), material);
     this.mesh.name = "native-panorama-galaxy";
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = -1000;
+    this.mesh.onBeforeRender = (_renderer, _scene, camera) => {
+      const uniforms = this.mesh.material.uniforms;
+      const target = this.blackHoleLens;
+      if (!target || uniforms.blackHoleVariant.value < 0.5) {
+        uniforms.lensEnabled.value = 0;
+        uniforms.lensRadiusOverDistance.value = 0;
+        return;
+      }
+      target.getWorldPosition(this.lensPosition);
+      target.getWorldScale(this.lensScale);
+      camera.getWorldPosition(this.cameraPosition);
+      this.lensPosition.sub(this.cameraPosition);
+      const distance = this.lensPosition.length();
+      const radius = Math.abs(this.lensScale.x);
+      const enabled = distance > radius && radius > 0;
+      uniforms.lensEnabled.value = enabled ? 1 : 0;
+      uniforms.lensRadiusOverDistance.value = enabled ? radius / distance : 0;
+      if (enabled) uniforms.lensDirection.value.copy(this.lensPosition).multiplyScalar(1 / distance);
+    };
+  }
+
+  /** The target's unit radius is its shadow; uniform world scale supplies flight units. */
+  setBlackHoleLens(target: THREE.Object3D | null) {
+    this.blackHoleLens = target;
+    if (!target) {
+      const uniforms = this.mesh.material.uniforms;
+      uniforms.lensEnabled.value = 0;
+      uniforms.lensRadiusOverDistance.value = 0;
+      uniforms.lensDirection.value.set(0, 0, -1);
+    }
   }
 
   /** The caller owns panorama texture loading and disposal. */
@@ -215,6 +321,7 @@ export class GalaxySky {
   }
 
   dispose() {
+    this.setBlackHoleLens(null);
     this.mesh.geometry.dispose();
     this.mesh.material.dispose();
     this.blackTexture.dispose();

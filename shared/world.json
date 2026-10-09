@@ -1058,7 +1058,7 @@
       ],
       "primaryStar": "gargantua",
       "backgroundFile": "milky-way-4k.jpg",
-      "backgroundIntensity": 0.015,
+      "backgroundIntensity": 1.05,
       "backgroundRotation": [
         0,
         0,

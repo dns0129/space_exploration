@@ -714,10 +714,18 @@ export class SolarScene {
     if (sky.mesh.material.uniforms.skyMap.value !== texture) {
       sky.setTexture(texture);
     }
+    const variant = id === "black-hole" ? "black-hole" : id === "echo-rift" ? "echo-rift" : "milky-way";
     sky.setView(system.backgroundRotation, system.backgroundIntensity,
       this.flying ? this.surfaceScene.spaceVisibility : 1, this.starsEnabled,
-      id === "black-hole" ? "black-hole" : id === "echo-rift" ? "echo-rift" : "milky-way");
-    this.renderer.domElement.dataset.backgroundVariant = id === "black-hole" ? "black-hole" : id === "echo-rift" ? "echo-rift" : "milky-way";
+      variant);
+    // The sky bends its own sampling rays around the same world-space shadow
+    // that the disk renderer uses, in both observation and ship-relative flight.
+    const blackHole = id === "black-hole"
+      ? this.flying ? this.flightModelById.get("gargantua") : this.currentModel
+      : undefined;
+    sky.setBlackHoleLens(blackHole?.body.kind === "black-hole" && blackHole.group.visible
+      ? blackHole.group : null);
+    this.renderer.domElement.dataset.backgroundVariant = variant;
     this.backgroundSystem = id;
     if (this.renderer.domElement.dataset.system !== id) this.renderer.domElement.dataset.system = id;
     if (this.renderer.domElement.dataset.background !== this.galaxyFile) {

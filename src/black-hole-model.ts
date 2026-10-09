@@ -1,30 +1,22 @@
 import * as THREE from "three";
 import type { PlanetModel } from "./planet-models";
-import { STAR_SYSTEMS } from "./solar-system";
 import type { CelestialBody } from "./solar-system";
-import { blackHoleSky } from "./black-hole-sky";
 
 /**
  * Fixed 3D disk, linear HDR emission and observer-dependent Doppler contrast.
- * Disk images and background bending are analytic artistic approximations,
+ * Disk images use analytic artistic approximations,
  * not GR geodesics. Units describe the apparent shadow, not a measured horizon.
  * The quad is a ray viewport; no static picture or whole-model spin is used.
  */
 export function createBlackHoleModel(body: CelestialBody): PlanetModel {
   const group = new THREE.Group();
   const time = { value: 0 };
-  const rotation = STAR_SYSTEMS.find(system => system.id === body.systemId)!.backgroundRotation;
-  const skyRotation = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRotationFromEuler(
-    new THREE.Euler(-rotation[0], -rotation[1], -rotation[2]),
-  ));
   const uniforms = {
     uTime: time,
     eye: { value: new THREE.Vector3() },
     right: { value: new THREE.Vector3() },
     up: { value: new THREE.Vector3() },
     forward: { value: new THREE.Vector3() },
-    localToSky: { value: new THREE.Matrix3() },
-    skyVisibility: { value: 0 },
   };
   const surface = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.ShaderMaterial({
     uniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide,
@@ -42,11 +34,9 @@ export function createBlackHoleModel(body: CelestialBody): PlanetModel {
     fragmentShader: /* glsl */ `
       #include <common>
       #include <logdepthbuf_pars_fragment>
-      uniform float uTime, skyVisibility;
+      uniform float uTime;
       uniform vec3 eye, right, up, forward;
-      uniform mat3 localToSky;
       varying vec3 rayPoint;
-      ${blackHoleSky}
 
       float plasmaHash(vec2 p) {
         vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -127,13 +117,11 @@ export function createBlackHoleModel(body: CelestialBody): PlanetModel {
         float viewportMask = (1.0 - smoothstep(5.1, 6.2, b)) * planeMask;
         if (viewportMask < 0.001) discard;
 
-        // Thin-lens angular remapping fades into the unchanged sky. Both passes
-        // sample identical celestial directions; replacing the local background
-        // prevents duplicate unbent stars. This is not GR ray integration.
-        float bend = 2.4 / (max(length(eye), 1.0) * max(b, 1.02));
-        bend *= (1.0 - smoothstep(2.0, 5.1, b)) * planeMask;
-        vec3 bentRay = normalize(ray - impact / max(b, 0.001) * bend);
-        vec3 color = blackHoleStarField(localToSky * bentRay) * skyVisibility * outside;
+        // GalaxySky bends the photograph and every star together. Only plasma,
+        // the shadow and the photon ring contribute opacity in this viewport;
+        // an opaque local star field would erase the underlying Milky Way.
+        vec3 color = vec3(0.0);
+        float alpha = shadow;
 
         vec3 normal = vec3(0.0, 1.0, 0.0);
         float inclination = abs(dot(normalize(eye), normal));
@@ -158,7 +146,8 @@ export function createBlackHoleModel(body: CelestialBody): PlanetModel {
         vec3 source = sourceR * (diskRight * cos(sourceAngle) - nearDirection * sin(sourceAngle));
         vec3 lensLight = diskLight(source, normalize(eye - source));
         lensLight *= vertical < 0.0 ? 0.61 : 0.94;
-        color = mix(color, lensLight, lensMask);
+        color += lensLight * lensMask;
+        alpha += (1.0 - alpha) * lensMask;
 
         // Finite thickness preserves an exactly edge-on view. Accumulate thin
         // Gaussian plasma front-to-back instead of lighting a uniform annulus.
@@ -202,11 +191,15 @@ export function createBlackHoleModel(body: CelestialBody): PlanetModel {
         float halo = exp(-pow((b - 1.025) / 0.045, 2.0)) * 0.045;
         vec3 ringLight = vec3(1.0, 0.90, 0.72) * (photon * 3.2 + halo) * outside;
         color = (color + ringLight) * transmission + emission;
+        float ringOpacity = clamp(photon + halo, 0.0, 1.0) * outside;
+        alpha += (1.0 - alpha) * ringOpacity;
+        alpha = 1.0 - (1.0 - alpha) * transmission;
+        if (alpha * viewportMask < 0.001) discard;
 
         #include <logdepthbuf_fragment>
-        // Composite HDR first, then use the existing ACES mapper once; no
-        // color/alpha amplification, broad bloom or global exposure change.
-        gl_FragColor = vec4(color, viewportMask);
+        // Normal blending expects unpremultiplied foreground radiance. The
+        // background stays visible through the thin outer plasma and empty sky.
+        gl_FragColor = vec4(color / max(alpha, 0.001), alpha * viewportMask);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }
@@ -214,18 +207,14 @@ export function createBlackHoleModel(body: CelestialBody): PlanetModel {
   }));
   surface.frustumCulled = false;
   const inverse = new THREE.Matrix4();
-  const orientation = new THREE.Matrix4();
   const cameraWorld = new THREE.Vector3();
-  surface.onBeforeRender = (_renderer, scene, camera) => {
+  surface.onBeforeRender = (_renderer, _scene, camera) => {
     inverse.copy(group.matrixWorld).invert();
     camera.getWorldPosition(cameraWorld);
     uniforms.eye.value.copy(cameraWorld).applyMatrix4(inverse);
     uniforms.right.value.setFromMatrixColumn(camera.matrixWorld, 0).transformDirection(inverse);
     uniforms.up.value.setFromMatrixColumn(camera.matrixWorld, 1).transformDirection(inverse);
     uniforms.forward.value.copy(uniforms.eye.value).normalize();
-    uniforms.localToSky.value.setFromMatrix4(orientation.extractRotation(group.matrixWorld)).premultiply(skyRotation);
-    const sky = scene.getObjectByName("native-panorama-galaxy") as THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial> | undefined;
-    uniforms.skyVisibility.value = sky?.visible ? Number(sky.material.uniforms.visibility.value) : 0;
   };
   group.add(surface);
   return { body, group, surface, layers: {}, spinning: [], timeUniforms: [time] };
