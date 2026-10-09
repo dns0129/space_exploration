@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { chromium, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
+import { verifyBlackHoleFlight } from "./verify-black-hole.mjs";
 import { verifyEchoRiftFlight } from "./verify-echo-rift.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
@@ -36,6 +37,10 @@ try {
     viewport: { width: 1280, height: 900 },
     reducedMotion: "reduce",
   });
+  // Software rendering of the existing shattered bodies can block several
+  // browser frames. Give real UI actions the same bounded budget as captures;
+  // destination, pixel, flight-state and disconnected-network checks remain.
+  context.setDefaultTimeout(90000);
   const page = await context.newPage();
   const documentUrl = `http://127.0.0.1:${origin.address().port}/`;
   const errors = [],
@@ -68,10 +73,11 @@ try {
     "miranda", "ariel", "umbriel", "titania", "oberon",
     "naiad", "thalassa", "despina", "galatea", "larissa", "proteus", "triton", "nereid",
     "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-c", "proxima-d", "betelgeuse",
-    "echo-pulsar", "veyl", "echo-thalassa", "cinder", "ruin", "shard",
+    "echo-pulsar", "veyl", "echo-thalassa", "cinder", "ruin", "shard", "gargantua",
   ]) {
     if (id === "betelgeuse") await page.locator("#star-system").selectOption("betelgeuse");
     if (id === "alpha-centauri-a") await page.locator("#star-system").selectOption("alpha-centauri");
+    if (id === "gargantua") await page.locator("#star-system").selectOption("black-hole");
     if (id === "echo-pulsar") await page.locator("#star-system").selectOption("echo-rift");
     if (await page.locator(`button[data-body="${id}"]`).count()) {
       if (id !== "earth") await page.locator(`button[data-body="${id}"]`).click();
@@ -98,7 +104,10 @@ try {
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-resolution", "8192x4096");
       console.log(`Offline ${id}: native 8K imagery loaded without network requests`);
     }
-    const shot = PNG.sync.read(await page.locator("canvas").screenshot());
+    // Late in the full offline tour, software WebGL may need more than the
+    // default 30 s to present a stable frame of an existing complex model.
+    // Keep the actual rendered-pixel assertion and bound the wait as for Earth.
+    const shot = PNG.sync.read(await page.locator("canvas").screenshot({ timeout: 90000, animations: "disabled" }));
     let surface = 0;
     for (let i = 0; i < shot.data.length; i += 4) {
       if (shot.data[i] + shot.data[i + 1] + shot.data[i + 2] > 240) surface++;
@@ -171,12 +180,13 @@ try {
   assert.equal(await page.locator("canvas").count(), 1);
   await verifyBetelgeuseFlight(page);
   await verifyEchoRiftFlight(page);
+  await verifyBlackHoleFlight(page);
   await verifySurfaceFlight(page);
   await verifyWalkingFlight(page);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(
-    "PASS: all 50 destinations, original and echo-rift galactic skies, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
+    "PASS: all 51 destinations including black-hole, original and echo-rift galactic skies, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
   );
 } finally {
   await browser.close();

@@ -274,7 +274,7 @@ export class FlightInterface {
     if (this.scene?.walking) { this.notify("请先返回飞船，再设置导航目标"); return; }
     if (["charging", "transit", "arrival"].includes(this.warpPhase)) return;
     this.scene?.setDestination(id);
-    $("#flight-target").textContent = getBody(id).name;
+    this.sync();
   }
   private jump() {
     if (this.scene?.walking) { this.notify("人物正在舱外探索，请先返回飞船再启动跃迁"); return; }
@@ -321,7 +321,7 @@ export class FlightInterface {
     $("#flight-assist").setAttribute("aria-pressed", String(state.assist));
     $<HTMLButtonElement>("#flight-assist").disabled = this.walking;
     $("#flight-assist").title = this.walking ? "人物离舱后，飞船停留原地；返舱后可设置驾驶辅助" : "辅助速度方向跟随船头";
-    $("#flight-target-label").textContent = this.walking ? "返回飞船" : "导航目标";
+    $("#flight-target-label").textContent = this.walking ? "返回飞船" : getBody(state.target).kind === "black-hole" ? "导航目标 · 距阴影边缘" : "导航目标";
     $("#flight-target").textContent = this.walking ? "VOYAGER 01" : getBody(state.target).name;
     $("#flight-speed-label").textContent = this.walking ? "移动速度" : "当前航速";
     $("#flight-key-guide").innerHTML = this.walking
@@ -483,7 +483,7 @@ export class FlightInterface {
     $<HTMLButtonElement>("#flight-resume").disabled = activeWarp || !this.saved;
     document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("[data-body], #satellite-target, #star-system").forEach((button) => { button.disabled = activeWarp; });
     $("#flight-nearest").textContent = getBody(stats.nearest).name;
-    $("#flight-altitude").textContent = `${number(stats.altitudeKm)} km 高度`;
+    $("#flight-altitude").textContent = `${number(stats.altitudeKm)} km ${getBody(stats.nearest).kind === "black-hole" ? "距阴影边缘" : "高度"}`;
     $("#flight-heading").textContent =
       `${Math.round(stats.heading).toString().padStart(3, "0")}°`;
     const seconds = Math.floor(stats.elapsed);
@@ -496,7 +496,7 @@ export class FlightInterface {
       : activeWarp
         ? labels[stats.warpPhase]
       : stats.collision
-        ? "碰撞已制动 · 请转向离开"
+        ? getBody(stats.collision).kind === "black-hole" ? "黑洞安全屏障已制动 · 请转向离开" : "碰撞已制动 · 请转向离开"
         : stats.boosting
           ? "加速航行 · 推力增强"
           : stats.speedKm < 1

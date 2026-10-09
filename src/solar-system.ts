@@ -53,9 +53,10 @@ export type BodyId =
   | "echo-thalassa"
   | "cinder"
   | "ruin"
-  | "shard";
-export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri" | "betelgeuse" | "echo-rift";
-export type SystemGroupId = "solar" | "alpha-centauri" | "betelgeuse" | "echo-rift";
+  | "shard"
+  | "gargantua";
+export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri" | "betelgeuse" | "echo-rift" | "black-hole";
+export type SystemGroupId = "solar" | "alpha-centauri" | "betelgeuse" | "echo-rift" | "black-hole";
 export type Layer = "clouds" | "atmosphere" | "stars" | "rings";
 
 export interface CelestialBody {
@@ -80,7 +81,7 @@ export interface CelestialBody {
   surfaceStyle?: number;
   surfaceSeed?: number;
   systemId?: SystemId;
-  kind?: "star" | "planet" | "station";
+  kind?: "star" | "planet" | "station" | "black-hole";
   hostStarId?: BodyId;
   temperatureK?: number;
   spectralType?: string;
@@ -310,7 +311,15 @@ export const EXPLORATION_BODIES: readonly CelestialBody[] = [
     caption: "TERRA ORBITAL / ALTITUDE 400 KM · FICTIONAL SCALE", layers: ["stars"],
   },
 ];
-export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...EXPLORATION_BODIES, ...ECHO_RIFT_BODIES].map(body => ({
+export const BLACK_HOLE_BODIES: readonly CelestialBody[] = [{
+  id: "gargantua", systemId: "black-hole", kind: "black-hole", name: "暗渊黑洞", english: "GARGANTUA",
+  color: "#ffc078", radiusKm: 30000, axialTiltDeg: 0, flattening: 1,
+  distanceFromSunMillionKm: 0, orbitalPeriodDays: 0, rotationSpeed: 0,
+  tags: ["黑洞 · 无固体地表", "引力透镜 · 艺术近似"], caption: "BLACK HOLE / ARTISTIC LENSING",
+  description: "中央阴影、细亮光子环与暖金吸积盘。<br>背面光带经简化引力透镜形成上下拱弧。<br>阴影视觉半径 30,000 km，非事件视界实测值；系统距离为虚构。<br>三维盘面与视角相关的解析光带为艺术近似，未进行广义相对论光线追踪。<br>无固体地表；游戏安全屏障在阴影半径的 6 倍处，禁止着陆。",
+  layers: ["stars"],
+}];
+export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...EXPLORATION_BODIES, ...ECHO_RIFT_BODIES, ...BLACK_HOLE_BODIES].map(body => ({
   ...body, atmosphereKm: worldData.bodies.find(config => config.id === body.id)?.atmosphereKm,
 }));
 export const STAR_SYSTEMS = worldData.systems;

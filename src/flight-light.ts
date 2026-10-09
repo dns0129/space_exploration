@@ -53,6 +53,13 @@ export class FlightLight {
 
   update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sun: THREE.PointLight) {
     camera.updateMatrixWorld();
+    if (!ship.activeBodies.some(body => body.kind === "star")) {
+      this.illumination = 0;
+      this.mesh.visible = false;
+      this.material.uniforms.glow.value = 0;
+      this.material.uniforms.entry.value = 0;
+      return;
+    }
     this.illumination = this.stellarVisibility(ship, this.origin, sun.position);
     const visibility = this.stellarVisibility(ship, camera.position, sun.position);
     this.projected.copy(this.ray).applyQuaternion(this.cameraInverse.copy(camera.quaternion).invert());

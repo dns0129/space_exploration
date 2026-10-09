@@ -853,6 +853,18 @@
       },
       "orbitRadiusKm": 720000,
       "radius": 1.3969549521268247
+    },
+    {
+      "id": "gargantua",
+      "systemId": "black-hole",
+      "kind": "black-hole",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "radius": 4.708836917281431,
+      "radiusKm": 30000
     }
   ],
   "lightYearKm": 9460730472580.8,
@@ -945,6 +957,24 @@
         0.24,
         2.18,
         -0.21
+      ]
+    },
+    {
+      "id": "black-hole",
+      "groupId": "black-hole",
+      "name": "黑洞星系 · 暗渊",
+      "positionLy": [
+        -80,
+        12,
+        100
+      ],
+      "primaryStar": "gargantua",
+      "backgroundFile": "milky-way-4k.jpg",
+      "backgroundIntensity": 0.015,
+      "backgroundRotation": [
+        0,
+        0,
+        0
       ]
     }
   ],

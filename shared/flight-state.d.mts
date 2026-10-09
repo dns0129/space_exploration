@@ -61,7 +61,7 @@ export interface WorldConfig {
     boostAccelerationKm: number;
   }[];
   warp: { chargeSeconds: number; travelSeconds: number; arrivalSeconds: number; cooldownSeconds: number };
-  bodies: { id: BodyId; radius: number; position: number[]; previousPosition?: number[]; orbit?: { inclinationDeg: number; ascendingNodeDeg: number; longitudeDeg: number }; systemId: SystemId; kind?: "star" | "planet" | "station"; hostStarId?: BodyId; parentId?: BodyId; orbitRadiusKm?: number; atmosphereKm?: number }[];
+  bodies: { id: BodyId; radius: number; position: number[]; previousPosition?: number[]; orbit?: { inclinationDeg: number; ascendingNodeDeg: number; longitudeDeg: number }; systemId: SystemId; kind?: "star" | "planet" | "station" | "black-hole"; hostStarId?: BodyId; parentId?: BodyId; orbitRadiusKm?: number; atmosphereKm?: number }[];
 }
 export const world: WorldConfig;
 /** Maximum capsule foot lift above radial terrain while touching a slope. */

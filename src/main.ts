@@ -6,7 +6,7 @@ import { SolarScene } from "./planet-scene";
 import { surfaceMapLabel } from "./body-textures";
 import type { SurfacePlacement, View } from "./planet-scene";
 import { surfaceProfile } from "../shared/surface.mjs";
-import { SOLAR_SYSTEM, PRIMARY_BODIES, EXPLORATION_BODIES, MOONS, CENTAURI_BODIES, BETELGEUSE_BODIES, ECHO_RIFT_BODIES, STAR_SYSTEMS, getBodySystem, getSystemGroup, getBody, isBodyId } from "./solar-system";
+import { SOLAR_SYSTEM, PRIMARY_BODIES, EXPLORATION_BODIES, MOONS, CENTAURI_BODIES, BETELGEUSE_BODIES, ECHO_RIFT_BODIES, BLACK_HOLE_BODIES, STAR_SYSTEMS, getBodySystem, getSystemGroup, getBody, isBodyId } from "./solar-system";
 import type { BodyId, Layer } from "./solar-system";
 
 const icons: Record<string, string> = {
@@ -46,11 +46,11 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
     <nav class="planet-rail" aria-label="太阳系天体">
       <span class="rail-label">SOLAR<br>SYSTEM</span>
-      ${[...PRIMARY_BODIES, ...EXPLORATION_BODIES, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...ECHO_RIFT_BODIES].map((planet, index) => `<button data-body="${planet.id}" class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" aria-label="${planet.name}，${planet.id === "earth" ? "当前观测天体" : "切换观测"}" ${planet.id === "earth" ? 'aria-current="page"' : ""} title="${planet.name} · ${planet.english}"><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.id === "ceres" ? "小行星带" : planet.id === "earth-station" ? "空间站" : planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
+      ${[...PRIMARY_BODIES, ...EXPLORATION_BODIES, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...ECHO_RIFT_BODIES, ...BLACK_HOLE_BODIES].map((planet, index) => `<button data-body="${planet.id}" class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" aria-label="${planet.name}，${planet.id === "earth" ? "当前观测天体" : "切换观测"}" ${planet.id === "earth" ? 'aria-current="page"' : ""} title="${planet.name} · ${planet.english}"><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.id === "ceres" ? "小行星带" : planet.id === "earth-station" ? "空间站" : planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
       <span class="rail-progress"><b>${SOLAR_SYSTEM.length}</b> / ${SOLAR_SYSTEM.length}</span>
     </nav>
 
-    <div class="destination-selectors"><label class="system-navigation">恒星系统 <select id="star-system" class="scene-control" aria-label="恒星系统" disabled><option value="solar">太阳系</option><option value="alpha-centauri">半人马座 α</option><option value="betelgeuse">参宿四</option><option value="echo-rift">回声裂隙 · 虚构</option></select></label>
+    <div class="destination-selectors"><label class="system-navigation">恒星系统 <select id="star-system" class="scene-control" aria-label="恒星系统" disabled><option value="solar">太阳系</option><option value="alpha-centauri">半人马座 α</option><option value="betelgeuse">参宿四</option><option value="echo-rift">回声裂隙 · 虚构</option><option value="black-hole">黑洞星系 · 暗渊</option></select></label>
     <label class="satellite-navigation">卫星导航 <select id="satellite-target" class="scene-control" aria-label="卫星导航" disabled><option value="">选择卫星</option>${["earth", "jupiter", "saturn", "uranus", "neptune"].map(parent => `<optgroup label="${getBody(parent as BodyId).name}系统">${MOONS.filter(moon => moon.parentId === parent).map(moon => `<option value="${moon.id}">${moon.name} · ${moon.english}</option>`).join("")}</optgroup>`).join("")}</select></label></div>
     <main class="main">
       <aside class="planet-info" aria-label="地球信息">
@@ -215,9 +215,14 @@ async function savePhoto() {
 }
 
 function updatePause() {
+  const blackHole = getBody(state.body).kind === "black-hole";
+  const motion = blackHole ? "光带流动" : "自转";
   const button = $("#pause");
   button.innerHTML = icon(state.paused ? "play" : "pause");
-  button.setAttribute("aria-label", state.paused ? "继续自转" : "暂停自转");
+  button.setAttribute("aria-label", `${state.paused ? "继续" : "暂停"}${motion}`);
+  $(".rotation .control-label").innerHTML = blackHole ? "光带流动 <small>FLOW</small>" : "星球自转 <small>ROTATION</small>";
+  $("#speed").setAttribute("aria-label", `${motion}演示速度`);
+  $(".interaction-hint").innerHTML = `<span class="mouse-icon"></span> 拖动环绕 <i>·</i> 滚轮缩放 <i>·</i> <kbd>空格</kbd> 暂停${motion}`;
   button.setAttribute("aria-pressed", String(state.paused));
   scene?.setPaused(state.paused);
 }
@@ -252,7 +257,7 @@ function updateBodyInfo(id: BodyId) {
   $<HTMLSelectElement>("#star-system").value = group;
   $(".satellite-navigation").hidden = group !== "solar";
   $(".planet-rail").setAttribute("aria-label", `${system.name}天体`);
-  $(".rail-label").innerHTML = group === "solar" ? "SOLAR<br>SYSTEM" : group === "betelgeuse" ? "BETEL<br>GEUSE" : group === "echo-rift" ? "ECHO<br>RIFT" : "ALPHA<br>CENTAURI";
+  $(".rail-label").innerHTML = group === "solar" ? "SOLAR<br>SYSTEM" : group === "betelgeuse" ? "BETEL<br>GEUSE" : group === "black-hole" ? "BLACK<br>HOLE" : group === "echo-rift" ? "ECHO<br>RIFT" : "ALPHA<br>CENTAURI";
   const destinations = SOLAR_SYSTEM.filter(item => getSystemGroup(item.id) === group).length;
   $(".rail-progress").innerHTML = `<b>${destinations}</b> / ${destinations}`;
   const number = SOLAR_SYSTEM.findIndex((item) => item.id === id);
@@ -291,6 +296,7 @@ function updateBodyInfo(id: BodyId) {
       ? isStar ? ["距太阳", format(Math.hypot(...system.positionLy), 3), "光年"] : ["地表模型", "探索示意", ""]
       : ["地轴倾角", format(body.axialTiltDeg), "°"],
   ];
+  if (body.kind === "black-hole") facts.splice(0, 4, ["阴影视觉半径", format(body.radiusKm, 0), "km"], ["渲染模型", "三维盘面 / 透镜艺术近似", ""], ["地表登陆", "不可登陆", ""], ["安全屏障", "6 倍阴影半径", ""]);
   if (body.kind === "station") facts.splice(0, 4, ["设施跨度", "120", "km"], ["轨道高度", "400", "km"], ["设施类型", "科幻空间站", ""], ["对接功能", "暂未开放", ""]);
   $(".facts").innerHTML = facts
     .map(
@@ -306,12 +312,12 @@ function updateBodyInfo(id: BodyId) {
   $(".top-coordinate").innerHTML =
     `<span>SECTOR ${String(number).padStart(3, "0")}</span><span>${system.name} · ${body.name}</span>`;
   $(".earth-caption").innerHTML = `<i></i><span>${body.caption}</span>`;
-  $(".sun-label").hidden = isStar;
+  $(".sun-label").hidden = isStar || body.kind === "black-hole";
   $(".sun-label span").textContent = body.hostStarId ? `${getBody(body.hostStarId).name}光方向` : "太阳光方向";
   $("#error-panel h2").textContent = `暂时无法打开${body.name}场景`;
   const nightButton = $('[data-view="night"]');
   nightButton.hidden = isStar;
-  nightButton.innerHTML = `${icon("moon")} ${id === "earth" ? "夜景" : "背光"}`;
+  nightButton.innerHTML = `${icon("moon")} ${body.kind === "black-hole" ? "侧观" : id === "earth" ? "夜景" : "背光"}`;
   $('.segmented [data-view="close"]').innerHTML =
     `${icon("compass")} ${id === "earth" ? "近地" : "近观"}`;
   document
