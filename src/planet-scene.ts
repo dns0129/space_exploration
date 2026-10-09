@@ -478,7 +478,8 @@ export class SolarScene {
     this.currentModel = model;
     this.publishSurfaceResolution(model);
     this.useSystemBackground(getBody(id).systemId ?? "solar");
-    this.controls.maxDistance = id === "echo-pulsar" ? 20 : id === "saturn" ? 12 : 7;
+    this.controls.minDistance = id === "gargantua" ? 6 : 1.25;
+    this.controls.maxDistance = id === "gargantua" ? 30 : id === "echo-pulsar" ? 20 : id === "saturn" ? 12 : 7;
     this.targetPosition = null;
     this.controls.reset();
     this.camera.position.copy(this.viewPosition("overview"));
@@ -1398,6 +1399,19 @@ export class SolarScene {
   private updateSpaceWorld(surface = false) {
     const ship = this.dynamics!;
     const environment = ship.environment;
+    // This ray renderer owns just one geometry/material. Release it when its
+    // system leaves the active flight; a later return creates fresh resources.
+    for (const model of [...this.flightModels]) {
+      if (model.body.kind !== "black-hole" || model.body.systemId === ship.systemId) continue;
+      model.group.removeFromParent();
+      model.surface.geometry.dispose();
+      const materials = Array.isArray(model.surface.material) ? model.surface.material : [model.surface.material];
+      materials.forEach(material => material.dispose());
+      this.flightSpheres.delete(model);
+      this.flightModelById.delete(model.body.id);
+      this.flightModels.splice(this.flightModels.indexOf(model), 1);
+    }
+    this.renderer.domElement.dataset.blackHoleResources = String(this.flightModels.some(model => model.body.kind === "black-hole"));
     if (!surface) this.renderer.domElement.dataset.spaceUpdates = String(++this.spaceUpdates);
     const pixelsPerRadian = this.flightHeight * this.renderer.getPixelRatio()
       / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)));
@@ -1408,7 +1422,7 @@ export class SolarScene {
     }
     // CPU positions remain in double precision. GPU objects are relative to the ship.
     for (const model of this.flightModels) model.group.visible = false;
-    const stars = ship.activeBodies.filter(body => body.kind === "star");
+    const stars = ship.activeBodies.filter(body => body.kind === "star" || body.kind === "black-hole");
     const localStar = stars.reduce((closest, body) =>
       this.flightRelative.fromArray(body.position).distanceToSquared(ship.position)
         < this.flightForward.fromArray(closest.position).distanceToSquared(ship.position) ? body : closest);
@@ -1488,12 +1502,13 @@ export class SolarScene {
     }
     if (mode === "space") this.updateSpaceWorld();
     else this.updateSpaceWorld(true);
-    const stars = ship.activeBodies.filter(body => body.kind === "star");
+    const stars = ship.activeBodies.filter(body => body.kind === "star" || body.kind === "black-hole");
     const light = stars.reduce((closest, body) =>
       this.flightRelative.fromArray(body.position).distanceToSquared(ship.position)
         < this.flightForward.fromArray(closest.position).distanceToSquared(ship.position) ? body : closest);
     this.flightSun.position.fromArray(light.position).sub(ship.position);
     this.flightSun.color.set(getBody(light.id).color);
+    this.flightSun.intensity = light.kind === "black-hole" ? 0 : 2.5;
     this.shipSun.color.copy(this.flightSun.color);
     this.useSystemBackground(ship.systemId);
     // Use the same 24 m surface lander as walking, growing smoothly back to flight scale on ascent.
@@ -1673,6 +1688,12 @@ export class SolarScene {
   }
 
   private viewPosition(view: View): THREE.Vector3 {
+    if (this.currentModel?.body.kind === "black-hole")
+      return {
+        overview: new THREE.Vector3(0, 0.85, 10.5).multiplyScalar(Math.max(1, 0.9 / this.camera.aspect)),
+        close: new THREE.Vector3(0, 0.5, 7),
+        night: new THREE.Vector3(7, 5, -7),
+      }[view];
     if (this.currentModel?.body.id === "echo-pulsar" && view === "overview")
       return new THREE.Vector3(0, 0.35, 9.4).multiplyScalar(Math.max(1, 0.70 / this.camera.aspect));
     if (this.currentModel?.body.id === "saturn") {

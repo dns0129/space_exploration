@@ -4,6 +4,7 @@ import { getEchoTerrainHeightField, echoTerrainDefinitions } from "./echo-terrai
 // Gameplay profiles: density and inferred rocky relief are illustrative. Earth
 // macrorelief uses the same shipped GEBCO elevation as its visible surface.
 const profiles = {
+  gargantua: { solid: false, gravity: 0, landingReason: "黑洞没有固体地表，无法着陆；请留在吸积盘外的安全航区" },
   "earth-station": { solid: false, gravity: 0 },
   ceres: { ground: "#82776a", gravity: 0.27 },
   sun: { solid: false, sky: "#ff9b42", gravity: 274 },

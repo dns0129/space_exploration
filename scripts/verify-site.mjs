@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { chromium, expect, devices } from "@playwright/test";
 import { PNG } from "pngjs";
 import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
+import { verifyBlackHoleFlight } from "./verify-black-hole.mjs";
 import { verifyEchoRiftFlight } from "./verify-echo-rift.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
@@ -228,6 +229,7 @@ try {
     await page.screenshot({ path: resolve(output, `centauri-${name}.png`) });
     await verifyBetelgeuseFlight(page);
     await verifyEchoRiftFlight(page);
+    await verifyBlackHoleFlight(page);
     await verifySurfaceFlight(page);
     await verifyWalkingFlight(page);
     await page.screenshot({ path: resolve(output, `landed-${name}.png`) });

@@ -483,7 +483,7 @@ export class FlightInterface {
     $<HTMLButtonElement>("#flight-resume").disabled = activeWarp || !this.saved;
     document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("[data-body], #satellite-target, #star-system").forEach((button) => { button.disabled = activeWarp; });
     $("#flight-nearest").textContent = getBody(stats.nearest).name;
-    $("#flight-altitude").textContent = `${number(stats.altitudeKm)} km 高度`;
+    $("#flight-altitude").textContent = `${number(stats.altitudeKm)} km ${getBody(stats.nearest).kind === "black-hole" ? "距阴影边缘" : "高度"}`;
     $("#flight-heading").textContent =
       `${Math.round(stats.heading).toString().padStart(3, "0")}°`;
     const seconds = Math.floor(stats.elapsed);
@@ -496,7 +496,7 @@ export class FlightInterface {
       : activeWarp
         ? labels[stats.warpPhase]
       : stats.collision
-        ? "碰撞已制动 · 请转向离开"
+        ? getBody(stats.collision).kind === "black-hole" ? "黑洞安全屏障已制动 · 请转向离开" : "碰撞已制动 · 请转向离开"
         : stats.boosting
           ? "加速航行 · 推力增强"
           : stats.speedKm < 1

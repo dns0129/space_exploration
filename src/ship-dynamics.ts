@@ -163,7 +163,8 @@ export class ShipDynamics {
       const earth = this.config.bodies.find(candidate => candidate.id === "earth")!;
       side.copy(center).sub(new THREE.Vector3().fromArray(earth.position)).normalize();
     }
-    const distance = Math.max(body.radius * (id === "saturn" ? 5 : 3.8), body.radius + 1100 / this.config.unitsKm);
+    if (body.kind === "black-hole") side.normalize();
+    const distance = Math.max(body.radius * (body.kind === "black-hole" ? 8 : id === "saturn" ? 5 : 3.8), body.radius + 1100 / this.config.unitsKm);
     this.position.copy(center).addScaledVector(side, distance);
     this.velocity.set(0, 0, 0);
     this.target = id;
@@ -543,7 +544,7 @@ export class ShipDynamics {
       radial.copy(center).sub(new THREE.Vector3().fromArray(earth.position)).normalize();
     }
     const radius = Math.max(target.radius + Math.max(1100, (target.atmosphereKm ?? 0) + 300) / this.config.unitsKm,
-      target.radius * (target.kind === "star" ? 1.35 : target.id === "saturn" ? 2.45 : 1.015));
+      target.radius * (target.kind === "black-hole" ? 8 : target.kind === "star" ? 1.35 : target.id === "saturn" ? 2.45 : 1.015));
     const end = center.clone().addScaledVector(radial, radius);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
     this.warpUp.copy(up);
@@ -627,10 +628,12 @@ export class ShipDynamics {
           const center = new THREE.Vector3().fromArray(body.position);
           const t = THREE.MathUtils.clamp(center.clone().sub(a).dot(line) / lengthSq, 0, 1);
           const closest = a.clone().addScaledVector(line, t);
-          // Avoid physical terrain and body geometry, without atmosphere or
-          // proximity shells. Surface departures first clear terrain radially.
+          // Avoid physical terrain and body geometry. Black holes instead use
+          // the same fictional 6R exclusion barrier as manual flight; this is
+          // game safety, not an event horizon or relativistic orbit model.
+          // Surface departures first clear terrain radially.
           const terrainKm = surfaceProfile(body.id).solid ? terrainMaxHeightKm(body.id) + LANDING_CLEARANCE_KM : 0;
-          const radius = body.radius + (terrainKm + SURFACE_EPSILON_KM) / this.config.unitsKm;
+          const radius = body.radius * (body.kind === "black-hole" ? 6 : 1) + (terrainKm + SURFACE_EPSILON_KM) / this.config.unitsKm;
           if (closest.distanceTo(center) >= radius) continue;
           const aRadial = a.clone().sub(center), bRadial = b.clone().sub(center);
           const aDistance = aRadial.length(), bDistance = bRadial.length();
@@ -800,6 +803,8 @@ export class ShipDynamics {
     }
   }
   private physicalRadius(body: WorldConfig["bodies"][number], position: THREE.Vector3) {
+    // No solid surface or GR collision is implied by this gameplay barrier.
+    if (body.kind === "black-hole") return body.radius * 6;
     if (!surfaceProfile(body.id).solid) return body.radius;
     const normal = position.clone().sub(new THREE.Vector3().fromArray(body.position));
     const length = Math.hypot(normal.x, normal.y, normal.z);
@@ -857,6 +862,8 @@ export class ShipDynamics {
 
   get landingBlockReason(): string | null {
     if (this.warping) return "跃迁期间无法着陆";
+    const target = this.config.bodies.find(body => body.id === this.target);
+    if (target?.kind === "black-hole") return surfaceProfile(target.id).landingReason ?? "黑洞没有可着陆的固体地表";
     const environment = this.environment;
     if (this.target === "earth-station") return "空间站暂不支持自动对接，请手动近距离观测";
     if (!environment.profile.solid) return environment.profile.landingReason ?? (environment.body.kind === "star" ? "恒星无法着陆" : "气态或冰巨行星没有可降落的固体地表，请选择卫星");

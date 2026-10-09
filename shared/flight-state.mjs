@@ -81,7 +81,7 @@ function validateWalkingTerrain(value, flight, config, heightAt) {
     || !vector(flight.position, 3, Infinity) || !vector(flight.velocity, 3, Infinity)
     || Math.hypot(...flight.velocity) > 1e-9) return null;
   const body = config.bodies.find(candidate => candidate.id === value.bodyId);
-  if (!body || !surfaceProfile(body.id).solid || body.kind === "star" || body.kind === "station"
+  if (!body || !surfaceProfile(body.id).solid || body.kind === "star" || body.kind === "black-hole" || body.kind === "station"
     || (body.systemId ?? "solar") !== (flight.systemId ?? "solar")) return null;
   const norm = Math.hypot(...value.orientation);
   if (norm < 0.95 || norm > 1.05) return null;
@@ -199,7 +199,7 @@ export function validateFlightState(value) {
   let walkingValue = value.walking;
   if (value.landedBody !== undefined) {
     const ground = world.bodies.find((b) => b.id === value.landedBody);
-    if (value.version !== 2 || !ground || ground.kind === "star" || !surfaceProfile(ground.id).solid
+    if (value.version !== 2 || !ground || ground.kind === "star" || ground.kind === "black-hole" || !surfaceProfile(ground.id).solid
       || (ground.systemId ?? "solar") !== (value.systemId ?? "solar") || Math.hypot(...value.velocity) > 1e-9) return null;
     const migrated = migrateLandedTerrain(value, position, ground, referenceFrame);
     if (!migrated) return null;
