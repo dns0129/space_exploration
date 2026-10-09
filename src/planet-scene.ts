@@ -13,6 +13,7 @@ import { WalkingDynamics } from "./walking-dynamics";
 import { initializeWalkingPhysics } from "./walking-physics";
 import { SpatialScale } from "../shared/spatial-frame.mjs";
 import { ExplorerView } from "./explorer-view";
+import { StationInterior } from "./station-interior";
 import { validateFlightState } from "../shared/flight-state.mjs";
 import { createShip, SHIP_LENGTH_KM } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
@@ -42,7 +43,7 @@ export interface SceneStats {
 
 export interface FlightStats {
   systemId: SystemId;
-  renderMode: FlightRenderMode;
+  renderMode: FlightRenderMode | "station";
   engine: ShipDynamics["engine"];
   cruiseSpeedKm: number;
   lowFlightSpeedMps: number;
@@ -66,6 +67,7 @@ export interface FlightStats {
   landingPhase: ShipDynamics["landingPhase"];
   landingBlockReason: string | null;
   walking: null | { gravity: number; speedMps: number; grounded: boolean; distanceToShipM: number; bodyId: BodyId; camera: "first" | "third" };
+  station: null | { zone: string };
 }
 export interface FlightTrackingStats extends FlightTargetStats {
   target: BodyId;
@@ -311,6 +313,7 @@ export class SolarScene {
   private readonly flightSpheres = new Map<PlanetModel, THREE.Mesh[]>();
   private dynamics?: ShipDynamics;
   private walker?: WalkingDynamics;
+  private stationInterior?: StationInterior;
   private readonly explorerView = new ExplorerView();
   private explorerCamera: "first" | "third" = "third";
   private flightControls?: FlightControls;
@@ -598,9 +601,9 @@ export class SolarScene {
 
   /** Only the current globe's original base image may finish loading locally. */
   private async waitForSpaceWork(file?: string) {
-    while (!this.destroyed && this.flying && this.renderPolicy.mode === "surface") {
+    while (!this.destroyed && this.flying && (this.inStation || this.renderPolicy.mode === "surface")) {
       const map = SURFACE_MAPS[this.dynamics!.environment.body.id];
-      if (file && (file === map?.file || file === map?.compactFile)) return;
+      if (!this.inStation && file && (file === map?.file || file === map?.compactFile)) return;
       await new Promise<void>(resolve => this.spaceWorkWaiters.add(resolve));
     }
   }
@@ -956,6 +959,7 @@ export class SolarScene {
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    this.stationInterior?.resize(width, height);
     this.configureRenderBudget();
   };
 
@@ -986,6 +990,10 @@ export class SolarScene {
   }
 
   private renderFlightWorld() {
+    if (this.inStation) {
+      this.renderer.render(this.stationInterior!.scene, this.stationInterior!.camera);
+      return;
+    }
     if (this.renderPolicy.mode === "space") {
       this.renderer.render(this.spaceScene, this.camera);
       return;
@@ -1050,11 +1058,11 @@ export class SolarScene {
     if (animating ? this.renderBudget.sample(delta) : this.stillSeconds > 0.4 && this.renderBudget.rest()) this.applyRenderBudget();
     if (this.flying) {
       this.animateFlight(delta, time);
-      if (this.renderPolicy.mode === "space") {
+      if (!this.inStation && this.renderPolicy.mode === "space") {
         this.updateSurfaceMaps(delta, time);
         this.updateEarthDetail(delta, time);
       }
-      const reuseFrame = this.flightPaused && this.renderPolicy.mode === "surface"
+      const reuseFrame = this.flightPaused && (this.inStation || this.renderPolicy.mode === "surface")
         && this.stillSeconds > 0.4 && !this.flightFrameDirty && this.flightCameraQuiet();
       this.renderer.domElement.dataset.surfaceFrameIdle = String(reuseFrame);
       // RAF, controls, tracking and HUD continue above; retain the last canvas frame instead of repeating GPU work.
@@ -1170,6 +1178,7 @@ export class SolarScene {
       throw error;
     }
     this.walker?.reset();
+    this.stationInterior?.leave();
     this.dynamics = dynamics;
     this.walker = walker;
     if (placement && id === "venus") {
@@ -1264,6 +1273,7 @@ export class SolarScene {
     if (!this.flying) return;
     this.flying = false;
     this.walker?.reset();
+    this.stationInterior?.leave();
     this.explorerView.group.visible = false;
     this.flightFrameDirty = true;
     this.renderPolicy.reset();
@@ -1303,6 +1313,8 @@ export class SolarScene {
   flightState(): FlightState | null {
     const state = this.dynamics?.snapshot();
     if (!state) return null;
+    const stationVisit = this.stationInterior?.snapshot();
+    if (stationVisit) return { ...state, stationVisit };
     const walking = this.walker?.snapshot();
     return walking ? { ...state, walking: { ...walking, camera: this.explorerCamera } } : state;
   }
@@ -1310,8 +1322,11 @@ export class SolarScene {
     const restored = this.dynamics?.restore(state) ?? false;
     if (restored) {
       const saved = validateFlightState(state)!;
+      this.stationInterior?.leave();
+      if (saved.stationVisit) this.getStationInterior().enter(saved.stationVisit);
+      else this.resumeSpaceWork();
       this.walker?.restore(saved.walking, this.dynamics!);
-      this.explorerCamera = saved.walking?.camera ?? "third";
+      this.explorerCamera = saved.stationVisit?.camera ?? saved.walking?.camera ?? "third";
       this.flightControls?.setWalking(this.walking);
       this.flightControls?.clear();
       this.camera.near = this.walking ? this.dynamics!.scale.metresToUniverseDistance(0.03) : 1e-8;
@@ -1321,15 +1336,31 @@ export class SolarScene {
     }
     return restored;
   }
-  get walking() { return this.walker?.active ?? false; }
+  get inStation() { return this.stationInterior?.active ?? false; }
+  get walking() { return this.inStation || (this.walker?.active ?? false); }
   get walkingCamera() { return this.explorerCamera; }
   setWalkingCamera(view: "first" | "third") {
     this.explorerCamera = view;
+    if (this.inStation) this.stationInterior!.setCamera(view);
     this.flightFrameDirty = true;
     if (this.walking) this.updateFlightCamera(1);
   }
   walkFlight(): string | null {
     if (!this.dynamics || !this.walker) return "飞船尚未就绪";
+    if (this.inStation) {
+      if (this.flightPaused) return "请先继续探索，再返回飞船";
+      if (!this.stationInterior!.grounded) return "请先落地，再返回飞船";
+      if (this.stationInterior!.distanceToShipM > 12) return "请沿引导线返回停泊区，在返舱点 12 米内按 E 返回飞船";
+      this.stationInterior!.leave();
+      this.resumeSpaceWork();
+      this.flightControls?.setWalking(false);
+      this.flightControls?.clear();
+      this.camera.near = 1e-8;
+      this.camera.updateProjectionMatrix();
+      this.flightFrameDirty = true;
+      this.updateFlightCamera(1);
+      return null;
+    }
     const error = this.walking ? this.walker.board(this.dynamics) : this.walker.disembark(this.dynamics);
     if (!error) {
       this.flightControls?.setWalking(this.walking);
@@ -1343,11 +1374,13 @@ export class SolarScene {
     return error;
   }
   setDestination(id: BodyId) {
+    if (this.walking) return;
     if (this.dynamics && !this.dynamics.warping) this.dynamics.target = id;
     // Prefetch so the destination is already high resolution on arrival.
     this.touchSurfaceMap(id);
   }
   alignFlight() {
+    if (this.walking) return;
     if (this.dynamics?.landingPhase !== "manual") return;
     this.flightFrameDirty = true;
     this.dynamics?.align();
@@ -1375,8 +1408,10 @@ export class SolarScene {
     return this.dynamics?.setLowFlightSpeed(mps) ?? (this.dynamics ? null : "飞船尚未就绪");
   }
   landFlight(): string | null {
+    if (this.inStation) return this.walkFlight();
     if (this.walking) return "请先返回飞船，再起飞";
     if (!this.dynamics) return "飞船尚未就绪";
+    if (this.dynamics.target === "earth-station" && this.dynamics.landingPhase === "manual") return this.dockStation();
     this.flightControls?.clear();
     if (this.dynamics.landingPhase !== "manual" && this.dynamics.landingPhase !== "landed") {
       this.flightFrameDirty = true;
@@ -1385,6 +1420,46 @@ export class SolarScene {
     const error = this.dynamics.landingPhase === "landed" ? this.dynamics.takeOff() : this.dynamics.startLanding();
     if (!error) this.flightFrameDirty = true;
     return error;
+  }
+  private getStationInterior() {
+    if (!this.stationInterior) this.stationInterior = new StationInterior();
+    this.stationInterior.setEarthMap(this.earthMaps?.[0]);
+    this.stationInterior.resize(this.flightWidth, this.flightHeight);
+    return this.stationInterior;
+  }
+  get stationDockBlockReason(): string | null {
+    const ship = this.dynamics;
+    if (!ship) return "飞船尚未就绪";
+    if (ship.systemId !== "solar") return "请先跃迁至地球空间站";
+    if (ship.warpPhase !== "ready") return "请等待跃迁结束与引擎冷却，再停泊";
+    if (ship.landingPhase !== "manual" || this.walking) return "请先返回飞船并离开地表";
+    const station = ship.config.bodies.find(body => body.id === "earth-station")!;
+    if (ship.position.distanceTo(new THREE.Vector3(...station.position)) > station.radius + 1800 / ship.config.unitsKm)
+      return "请靠近空间站至 1800 km 内，或先按 J 跃迁至空间站";
+    return null;
+  }
+  private dockStation(): string | null {
+    const reason = this.stationDockBlockReason;
+    if (reason) return reason;
+    const ship = this.dynamics!;
+    const station = ship.config.bodies.find(body => body.id === "earth-station")!;
+    const center = new THREE.Vector3(...station.position);
+    // The orbital hull is a fictional megastructure; its airlock opens a metre-scale interior.
+    // Keep the parked ship outside the orbital collision sphere until the pilot returns.
+    ship.position.copy(center).add(new THREE.Vector3(0, 0, station.radius + 200 / ship.config.unitsKm));
+    ship.velocity.set(0, 0, 0);
+    ship.angularVelocity.set(0, 0, 0);
+    ship.bank = 0;
+    ship.collision = null;
+    ship.orientation.setFromRotationMatrix(new THREE.Matrix4().lookAt(center, ship.position, new THREE.Vector3(0, 1, 0)));
+    this.getStationInterior().enter();
+    this.explorerCamera = "first";
+    this.flightControls?.setWalking(true);
+    this.flightControls?.clear();
+    this.flightFrameDirty = true;
+    this.flightMetrics = 0;
+    this.updateFlightCamera(1);
+    return null;
   }
   setFlightCamera(view: "cockpit" | "chase") {
     if (this.walking) return;
@@ -1482,6 +1557,23 @@ export class SolarScene {
 
   private updateFlightCamera(blend: number) {
     const ship = this.dynamics!;
+    if (this.inStation) {
+      const interior = this.stationInterior!;
+      interior.updateCamera();
+      this.ship.group.visible = false;
+      this.renderer.domElement.dataset.renderMode = "station";
+      this.renderer.domElement.dataset.spaceWorkActive = "false";
+      this.renderer.domElement.dataset.exploration = "station";
+      this.renderer.domElement.dataset.physicsEngine = "station-collision";
+      this.renderer.domElement.dataset.stationZone = interior.zone;
+      this.renderer.domElement.dataset.stationPositionM = JSON.stringify(interior.positionM.toArray());
+      this.renderer.domElement.dataset.stationCamera = interior.cameraView;
+      this.renderer.domElement.setAttribute("aria-label", "空间站探索：WASD 行走，Shift 奔跑，空格跳跃，方向键或拖动看向，C 切换视角，返回停泊区按 E 返舱");
+      return;
+    }
+    delete this.renderer.domElement.dataset.stationZone;
+    delete this.renderer.domElement.dataset.stationPositionM;
+    delete this.renderer.domElement.dataset.stationCamera;
     const environment = ship.environment;
     const previousMode = this.renderPolicy.mode;
     const mode = this.renderPolicy.update({ bodyId: environment.body.id,
@@ -1617,7 +1709,10 @@ export class SolarScene {
     const ship = this.dynamics!;
     const input = this.flightControls!.read();
     if (!this.flightPaused) {
-      if (this.walking) {
+      if (this.inStation) {
+        this.stationInterior!.step(delta, input);
+        ship.elapsed += delta;
+      } else if (this.walking) {
         this.walker!.step(delta, input);
         // The parked ship advances its clock and cooldown with no pilot input.
         ship.step(delta, { ...input, throttle: 0, strafe: 0, lift: 0, yaw: 0, pitch: 0,
@@ -1629,7 +1724,7 @@ export class SolarScene {
     const exhaust = this.flightPaused || ship.warping ? 0.1 : input.boost && input.throttle > 0 ? 2.4 : input.throttle > 0 ? 1 : 0.22;
     this.ship.exhaust.scale.z = THREE.MathUtils.lerp(this.ship.exhaust.scale.z, exhaust, 1 - Math.exp(-delta * 10));
     this.updateFlightCamera(1 - Math.exp(-delta * 9));
-    if (!this.flightPaused && !this.paused && this.renderPolicy.mode === "space")
+    if (!this.inStation && !this.flightPaused && !this.paused && this.renderPolicy.mode === "space")
       for (const model of this.flightModels) {
         if (!model.group.visible) continue;
         // Keep surface features fixed in the collision frame while flying; clouds still drift.
@@ -1640,9 +1735,9 @@ export class SolarScene {
       }
     const target = ship.config.bodies.find((b) => b.id === ship.target)!;
     this.flightRelative.copy(ship.targetRelative);
-    const markerRelative = this.walking ? ship.environment.outward.clone()
+    const markerRelative = this.inStation ? new THREE.Vector3(0, 0.3, 24) : this.walking ? ship.environment.outward.clone()
       .multiplyScalar(ship.scale.metresToUniverseDistance(-6)) : this.flightRelative;
-    const tracking = projectFlightTarget(markerRelative, this.camera);
+    const tracking = projectFlightTarget(markerRelative, this.inStation ? this.stationInterior!.camera : this.camera);
     const aim = this.flightControls!.aim;
     this.flightTargetHandler?.({ ...tracking, target: ship.target, deceleration: ship.deceleration,
       aimX: aim.x, aimY: aim.y, steering: aim.active && !this.flightPaused,
@@ -1651,11 +1746,11 @@ export class SolarScene {
     this.flightMetrics = time;
     const environment = ship.environment;
     const forward = this.flightForward.set(0, 0, -1).applyQuaternion(
-      this.camera.quaternion,
+      this.inStation ? this.stationInterior!.camera.quaternion : this.camera.quaternion,
     );
     this.flightHandler?.({
       systemId: ship.systemId,
-      renderMode: this.renderPolicy.mode,
+      renderMode: this.inStation ? "station" : this.renderPolicy.mode,
       engine: ship.engine,
       cruiseSpeedKm: ship.cruiseSpeedKm,
       lowFlightSpeedMps: ship.lowFlightSpeedMps,
@@ -1681,14 +1776,22 @@ export class SolarScene {
       boosting: input.boost,
       collision: ship.collision,
       landingPhase: ship.landingPhase,
-      landingBlockReason: ship.landingBlockReason,
-      walking: this.walking ? { gravity: this.walker!.gravity, speedMps: this.walker!.speedMps,
+      landingBlockReason: ship.target === "earth-station" ? this.stationDockBlockReason : ship.landingBlockReason,
+      station: this.inStation ? { zone: this.stationInterior!.zone } : null,
+      walking: this.inStation ? { gravity: 9.81, speedMps: this.stationInterior!.speedMps,
+        grounded: this.stationInterior!.grounded, distanceToShipM: this.stationInterior!.distanceToShipM,
+        bodyId: "earth-station", camera: this.explorerCamera } : this.walking ? { gravity: this.walker!.gravity, speedMps: this.walker!.speedMps,
         grounded: this.walker!.grounded, distanceToShipM: this.walker!.distanceToShipM,
         bodyId: this.walker!.bodyId!, camera: this.explorerCamera } : null,
     });
   }
 
   private viewPosition(view: View): THREE.Vector3 {
+    if (this.currentModel?.body.kind === "station") return {
+      overview: new THREE.Vector3(0, 2.4, 4.8).multiplyScalar(Math.max(1, 1 / this.camera.aspect)),
+      close: new THREE.Vector3(0.6, 1.05, 2.4).multiplyScalar(Math.max(1, 0.8 / this.camera.aspect)),
+      night: new THREE.Vector3(3.6, 1.5, -3.6).multiplyScalar(Math.max(1, 1 / this.camera.aspect)),
+    }[view];
     if (this.currentModel?.body.kind === "black-hole")
       return {
         overview: new THREE.Vector3(0, 0.85, 10.5).multiplyScalar(Math.max(1, 1.3 / this.camera.aspect)),
@@ -1807,6 +1910,7 @@ export class SolarScene {
   dispose() {
     this.destroyed = true;
     this.walker?.reset();
+    this.stationInterior?.dispose();
     this.photoCapture?.reject(new Error("场景已关闭，照片未能生成"));
     this.photoCapture = undefined;
     this.resumeSpaceWork();

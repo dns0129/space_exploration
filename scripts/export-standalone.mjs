@@ -114,7 +114,7 @@ html = html.replace(
     `<link rel="icon" href="data:image/svg+xml;base64,${favicon.toString("base64")}">`,
 );
 
-const instructions = `远航 VOYAGER · 太阳系、半人马座 α、巴纳德星、参宿四、回声裂隙与地表探索
+const instructions = `远航 VOYAGER · 太阳系、半人马座 α、巴纳德星、参宿四、回声裂隙、地表与空间站探索
 
 立即驾驶：解压后将 voyager-warp.html 拖入 Chrome 或 Edge。
 点击顶部“自由航行”，从当前行星附近出发。
@@ -124,6 +124,7 @@ W 前进，S 减速（停稳后倒车），A/D 平移，R/F 升降，Q/E 翻滚�
 Shift 加速，空格刹车，C 切换座舱/外部视角，J 启动跃迁，L 自动着陆/起飞/中止。手机使用触屏驾驶按钮。
 选择并靠近岩石行星或卫星，按 L 连续下降并展开起落架；着陆后 L 或 R 起飞，升至离地 2 km 恢复手动驾驶。空格或手动操纵中止自动下降/起飞，暂停冻结进度。太阳和巨行星没有可着陆的固体地表。
 落地后按 E 离舱；WASD 行走，Shift 奔跑，空格跳跃，方向键或拖动看向，C 切换第一/第三人称。落地且距离停泊点12m内按E返舱，返舱后再L/R起飞。不同天体重力改变跳跃高度、滞空与抓地；极低重力有宇航服回落辅助。人物位置、速度、腾空和视角支持保存恢复。徒步场景用24m登陆艇表示返舱入口，飞行船停泊坐标不变。
+地球空间站位于向阳面2400km高度，跨度360km，拥有双层居住环、玻璃观测舱、主控塔楼及三座青蓝/琥珀发光停泊港。自由航行选择“空间站”，按J跃迁或自行靠近；跃迁结束、引擎冷却且距站体边缘1800km内，按L或点击停泊按钮进入停泊舱。WASD行走、Shift奔跑、空格跳跃，方向键或拖动查看四周，手机使用触屏按钮；沿廊道探索主控室和观测舱，导览图显示位置。落地并回到停泊入口12m内，按E或点击“返回飞船”继续航行。暂停冻结舱内运动；本机及包内后端存档均支持舱内人物位置、视角与空间站访问状态。观测页的地表放置不用于空间站。
 地表网格、着陆与徒步碰撞继续共用高度场：地球为GEBCO高度和海陆分类，其他固体天体为影像推断高度或固定程序坑场。原有有效着陆、徒步存档仍可恢复。轨道材质恢复到增强升级前版本。
 地球100km已进入稀薄大气，蓝色地平线与天空散射随下降逐步增强、星空逐步淡出，晨昏出现暖色散射；外部镜头保持飞船附近的高度。光学密度为游戏美术参数，大气阻力仍按稀薄高空密度计算。辅助驾驶补偿近地重力；关闭后需自行施加升力。
 导航目标可收起，引擎控制独立放在下方。一根滑条选择五档目标航速：1–100、100–1000、1000–10000、10000–50000、50000–150000km/s，默认100km/s；档位按钮可快速选择区间。飞船逐渐加减速接近目标，换档或拖动滑条不瞬间跳速，Shift增强推力响应，空格刹车。
@@ -222,6 +223,7 @@ const zip = archive([
   ["shared/world.json", await readFile(join(project, "shared/world.json"))],
   ["shared/surface.mjs", await readFile(join(project, "shared/surface.mjs"))],
   ["shared/spatial-frame.mjs", await readFile(join(project, "shared/spatial-frame.mjs"))],
+  ["shared/station-layout.mjs", await readFile(join(project, "shared/station-layout.mjs"))],
   ["shared/echo-terrain.mjs", await readFile(join(project, "shared/echo-terrain.mjs"))],
   ["shared/terrain-fields.mjs", backendTerrainModule],
   ["shared/propulsion.mjs", await readFile(join(project, "shared/propulsion.mjs"))],

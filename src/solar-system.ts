@@ -324,12 +324,12 @@ export const EXPLORATION_BODIES: readonly CelestialBody[] = [
   },
   {
     id: "earth-station", name: "近地轨道空间站", english: "TERRA ORBITAL STATION",
-    kind: "station", color: "#8edcfa", radiusKm: 60, axialTiltDeg: 0,
-    flattening: 1, distanceFromSunMillionKm: 149.6, orbitalPeriodDays: 0.064,
-    rotationSpeed: 0, parentId: "earth", orbitRadiusKm: 6771,
-    tags: ["400 km 近地轨道", "科幻大型设施"],
-    description: "蓝色地球上空的轨道前哨。<br>居住舱、通信天线与成排太阳能翼。<br>跨度 120 km，适配游戏巨型飞船；固定轨道示意，暂不支持对接。",
-    caption: "TERRA ORBITAL / ALTITUDE 400 KM · FICTIONAL SCALE", layers: ["stars"],
+    kind: "station", color: "#8edcfa", radiusKm: 180, axialTiltDeg: 0,
+    flattening: 1, distanceFromSunMillionKm: 149.6, orbitalPeriodDays: 0.095,
+    rotationSpeed: 0, parentId: "earth", orbitRadiusKm: 8771,
+    tags: ["2400 km 向阳轨道", "360 km 科幻空间站", "停泊与舱内探索"],
+    description: "停驻在地球向阳面的巨型环状空间站。<br>双层居住环、主控室、玻璃观测舱与三座发光停泊港。<br>跨度 360 km，设有可步行的舱内区域；轨道与设施尺度为科幻游戏设定。",
+    caption: "TERRA ORBITAL / SUNLIT · ALTITUDE 2400 KM · FICTIONAL SCALE", layers: ["stars"],
   },
 ];
 export const BLACK_HOLE_BODIES: readonly CelestialBody[] = [{

@@ -741,8 +741,13 @@
       "id": "earth-station",
       "kind": "station",
       "systemId": "solar",
-      "radius": 0.009417673834562863,
+      "radius": 0.02825302150368859,
       "position": [
+        0.21645392616582673,
+        0.13528370385274308,
+        23479.713039589944
+      ],
+      "previousPosition": [
         0.8502275937857732,
         0,
         23481.70354732381
@@ -1079,5 +1084,5 @@
       ]
     }
   ],
-  "layoutVersion": 2
+  "layoutVersion": 3
 }

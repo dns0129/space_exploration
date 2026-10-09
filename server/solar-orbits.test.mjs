@@ -56,7 +56,7 @@ test("orbit samples cross the ascending node northwards and recover the referenc
 });
 
 test("world planets retain their heliocentric radii and occupy the specified distinct orbital planes", () => {
-  assert.equal(world.layoutVersion, 2);
+  assert.equal(world.layoutVersion, 3);
   for (const [id, [inclination, node]] of Object.entries(references)) {
     const body = bodyById(id);
     assert.equal(body.orbit.inclinationDeg, inclination, `${id} reference inclination`);
@@ -78,7 +78,7 @@ test("world planets retain their heliocentric radii and occupy the specified dis
   assert(Math.abs(earth.dot(mercury.cross(venus))) > 0.01, "planets do not all share a plane through the Sun");
 });
 
-test("moving parent planets preserves every satellite's local offset and the station's 400 km altitude", () => {
+test("moving parent planets preserves every satellite's local offset and station has its sunlit 2400 km orbit", () => {
   for (const moon of moons) {
     const body = bodyById(moon.id), parent = bodyById(moon.parentId);
     const offset = vec(body.position).sub(vec(parent.position));
@@ -88,7 +88,7 @@ test("moving parent planets preserves every satellite's local offset and the sta
     if (parent.previousPosition) assert(body.previousPosition, `${moon.id} carries a migration anchor`);
   }
   const earth = bodyById("earth"), station = bodyById("earth-station");
-  assert(Math.abs((vec(station.position).distanceTo(vec(earth.position)) - earth.radius) * world.unitsKm - 400) < 1e-5);
+  assert(Math.abs((vec(station.position).distanceTo(vec(earth.position)) - earth.radius) * world.unitsKm - 2400) < 1e-5);
 });
 
 test("belt spans independent orbital planes while keeping the main belt bounds and Kirkwood gaps", () => {
@@ -128,7 +128,7 @@ test("belt spans independent orbital planes while keeping the main belt bounds a
 
 test("old local flight saves migrate around their nearest body independently of the navigation target", () => {
   const normal = new THREE.Vector3(0.4, 0.7, -0.5).normalize();
-  for (const body of world.bodies.filter(candidate => candidate.previousPosition)) {
+  for (const body of world.bodies.filter(candidate => candidate.previousPosition && candidate.kind !== "station")) {
     const offset = normal.clone().multiplyScalar(body.radius + 2000 / world.unitsKm);
     const oldPosition = vec(body.previousPosition).add(offset).toArray();
     for (const layoutMarker of [undefined, 1]) {
@@ -138,7 +138,7 @@ test("old local flight saves migrate around their nearest body independently of 
       });
       const original = structuredClone(input), migrated = validateFlightState(input);
       assert(migrated, `${body.id} old local save is valid`);
-      assert.equal(migrated.worldLayoutVersion, 2);
+      assert.equal(migrated.worldLayoutVersion, 3);
       closeVector(migrated.position, vec(body.position).add(offset).toArray(), `${body.id} preserves ship offset`);
       assert.deepEqual(migrated.velocity, input.velocity);
       assert.deepEqual(migrated.orientation, input.orientation);
@@ -215,12 +215,12 @@ test("deep-space, unchanged systems and saves already using the new layout keep 
     const currentPosition = vec(body.position).add(new THREE.Vector3(0, body.radius + 3000 / world.unitsKm, 0)).toArray();
     const unmarkedCurrent = validateFlightState(stateAt(currentPosition));
     assert.deepEqual(unmarkedCurrent.position, currentPosition, `${body.id} current local coordinates win over the old anchor`);
-    const markedOldPosition = stateAt([...body.previousPosition], "earth", { worldLayoutVersion: 2 });
+    const markedOldPosition = stateAt([...body.previousPosition], "earth", { worldLayoutVersion: world.layoutVersion });
     assert.deepEqual(validateFlightState(markedOldPosition).position, body.previousPosition, `${body.id} explicit new layout does not migrate`);
   }
   const snapshot = new ShipDynamics().snapshot();
-  assert.equal(snapshot.worldLayoutVersion, 2, "fresh gameplay saves identify their layout");
+  assert.equal(snapshot.worldLayoutVersion, 3, "fresh gameplay saves identify their layout");
   assert.deepEqual(validateFlightState(snapshot).position, snapshot.position);
-  for (const marker of [0, -1, 3, "2", null])
+  for (const marker of [0, -1, 4, "2", null])
     assert.equal(validateFlightState(stateAt([1e6, 0, 0], "earth", { worldLayoutVersion: marker })), null, "invalid layout markers are rejected");
 });

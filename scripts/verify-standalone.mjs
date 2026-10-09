@@ -9,6 +9,7 @@ import { verifyBarnardFlight } from "./verify-barnard.mjs";
 import { verifyEchoRiftFlight } from "./verify-echo-rift.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
+import { verifyStationVisit } from "./verify-station.mjs";
 import { createServer } from "node:http";
 
 const html = await readFile(
@@ -187,10 +188,11 @@ try {
   await verifyBarnardFlight(page);
   await verifySurfaceFlight(page);
   await verifyWalkingFlight(page);
+  await verifyStationVisit(page);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(
-    "PASS: all 56 destinations including Barnard and black-hole, original and echo-rift galactic skies, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
+    "PASS: all 56 destinations including Barnard and black-hole, original and echo-rift galactic skies, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff, station docking/interior walking and local save/restore; zero HTTP requests or browser errors.",
   );
 } finally {
   await browser.close();

@@ -11,6 +11,7 @@ import { verifyBarnardFlight } from "./verify-barnard.mjs";
 import { verifyEchoRiftFlight } from "./verify-echo-rift.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
+import { verifyStationVisit } from "./verify-station.mjs";
 
 const root = fileURLToPath(new URL("../dist-site/", import.meta.url));
 const output = fileURLToPath(new URL("../test-results/site/", import.meta.url));
@@ -247,6 +248,8 @@ try {
     await verifySurfaceFlight(page);
     await verifyWalkingFlight(page);
     await page.screenshot({ path: resolve(output, `landed-${name}.png`) });
+    await verifyStationVisit(page);
+    await page.screenshot({ path: resolve(output, `station-interior-${name}.png`) });
     // A changed deployment offers refresh and leaves the current flight intact.
     await page.route("**/version.json?*", (route) =>
       route.fulfill({
@@ -287,7 +290,7 @@ try {
     assert.deepEqual(failed, [], "All deployed paths must return successfully");
     assert.deepEqual(errors, [], "Online website must have no browser errors");
     console.log(
-      `${name}: homepage, planet links, rendered game, direct flight, local save after refresh, warp and deployment update passed`,
+      `${name}: homepage, planet links, rendered game, direct flight, local save after refresh, warp, station docking/interior save/restore and deployment update passed`,
     );
     await context.close();
   }

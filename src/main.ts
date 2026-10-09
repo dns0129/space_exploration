@@ -298,7 +298,7 @@ function updateBodyInfo(id: BodyId) {
       : ["地轴倾角", format(body.axialTiltDeg), "°"],
   ];
   if (body.kind === "black-hole") facts.splice(0, 4, ["阴影视觉半径", format(body.radiusKm, 0), "km"], ["渲染模型", "三维盘面 / 透镜艺术近似", ""], ["地表登陆", "不可登陆", ""], ["安全屏障", "6 倍阴影半径", ""]);
-  if (body.kind === "station") facts.splice(0, 4, ["设施跨度", "120", "km"], ["轨道高度", "400", "km"], ["设施类型", "科幻空间站", ""], ["对接功能", "暂未开放", ""]);
+  if (body.kind === "station") facts.splice(0, 4, ["设施跨度", format(body.radiusKm * 2, 0), "km"], ["轨道高度", format((body.orbitRadiusKm ?? 0) - 6371, 0), "km"], ["站内设施", "主控室 / 观测舱", ""], ["停泊与探索", "L 停泊 · WASD 行走", ""]);
   $(".facts").innerHTML = facts
     .map(
       ([label, value, unit]) =>
@@ -482,6 +482,7 @@ $(".brand").addEventListener("click", (event) => {
   if (publicSite) return;
   event.preventDefault();
   if (state.mode === "flight") {
+    if (scene?.walking) { toast("请先返回飞船，再选择航行目的地"); return; }
     flight.target("earth");
     state.body = "earth";
     updateBodyInfo("earth");

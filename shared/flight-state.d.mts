@@ -9,6 +9,14 @@ export interface WalkingState {
   grounded: boolean;
   camera?: "first" | "third";
 }
+export interface StationVisitState {
+  bodyId: "earth-station";
+  /** Feet in metres along the station's interior room axes. */
+  positionM: number[];
+  yaw: number;
+  pitch: number;
+  camera: "first" | "third";
+}
 import type { EngineMode } from "./propulsion.mjs";
 export type { EngineMode } from "./propulsion.mjs";
 /** Persisted physical reference, independent of the temporary floating origin. */
@@ -37,6 +45,7 @@ export interface FlightState {
   lowFlightSpeedMps?: number;
   landedBody?: BodyId;
   walking?: WalkingState;
+  stationVisit?: StationVisitState;
   systemId: SystemId;
 }
 export interface WorldConfig {
@@ -68,3 +77,4 @@ export const world: WorldConfig;
 export const WALKING_GROUNDED_CLEARANCE_M: number;
 export function validateFlightState(value: unknown): FlightState | null;
 export function validateWalkingState(value: unknown, flight: Pick<FlightState, "position" | "velocity" | "landedBody" | "systemId" | "referenceFrame">, config?: WorldConfig): WalkingState | null;
+export function validateStationVisitState(value: unknown, flight: Pick<FlightState, "position" | "velocity" | "target" | "systemId" | "landedBody" | "walking">, config?: WorldConfig): StationVisitState | null;

@@ -2,6 +2,7 @@ import world from "./world.json" with { type: "json" };
 import { surfaceProfile, terrainHeightKm, legacyTerrainHeightKm, TERRAIN_VERSION, LANDING_CLEARANCE_KM } from "./surface.mjs";
 import { propulsionBand } from "./propulsion.mjs";
 import { SpatialScale, METRES_PER_KILOMETRE } from "./spatial-frame.mjs";
+import { stationWalkable } from "./station-layout.mjs";
 export { world };
 // A rounded character capsule rests slightly above the radial height on a
 // slope. This is a contact allowance, not permission to restore below ground.
@@ -49,22 +50,55 @@ function validateReferenceFrame(value, position) {
   const radialM = bodyRadialM(world, body, position, reference);
   return radialM ? { kind: "body-fixed", bodyId: body.id, radialM } : null;
 }
-// Layout 1 placed every planet in the ecliptic. Preserve local ship/terrain
-// offsets near moved bodies, including landed and walking saves. Deep-space
-// positions retain their absolute coordinates. Current saves carry the layout
-// version so a normalized save can never be translated twice.
+// Layout 1 placed every planet in the ecliptic; layout 2 already has the current
+// planet positions, but precedes the station's move to Earth's sunlit side.
+// Keep those histories separate so upgrading the station never moves a v2
+// planet save a second time. Deep-space coordinates remain absolute.
 function migrateLayoutPosition(value, position) {
   if (value.version !== 2 || (value.worldLayoutVersion ?? 1) >= (world.layoutVersion ?? 1)) return position;
+  const layout = value.worldLayoutVersion ?? 1;
   const bodies = world.bodies.filter(body => (body.systemId ?? "solar") === (value.systemId ?? "solar"));
-  const distanceTo = (body, previous) => Math.hypot(...position.map((n, i) => n - (previous ? body.previousPosition ?? body.position : body.position)[i]));
+  const previousPosition = body => layout < 2 || body.id === "earth-station"
+    ? body.previousPosition ?? body.position : body.position;
+  const distanceTo = (body, previous) => Math.hypot(...position.map((n, i) => n - (previous ? previousPosition(body) : body.position)[i]));
+  // Earth's large surface can be nearer than the small station itself. A save
+  // explicitly approaching the station retains that destination's local offset.
+  const station = !value.landedBody && value.target === "earth-station"
+    ? bodies.find(body => body.id === "earth-station") : undefined;
+  const stationApproach = station && distanceTo(station, true) <= station.radius + 1800 / world.unitsKm;
   const anchor = value.landedBody ? bodies.find(body => body.id === value.landedBody)
+    : stationApproach ? station
     : bodies.reduce((nearest, body) => !nearest || distanceTo(body, true) - body.radius < distanceTo(nearest, true) - nearest.radius ? body : nearest, undefined);
-  if (!anchor?.previousPosition) return position;
+  if (!anchor || previousPosition(anchor).every((n, i) => n === anchor.position[i])) return position;
   const oldDistance = distanceTo(anchor, true);
   const currentDistance = Math.min(...bodies.map(body => distanceTo(body, false) - body.radius));
-  if (oldDistance - anchor.radius >= currentDistance
+  if ((!stationApproach && oldDistance - anchor.radius >= currentDistance)
     || (!value.landedBody && oldDistance - anchor.radius > Math.max(1e6 / world.unitsKm, anchor.radius * 20))) return position;
-  return position.map((n, i) => anchor.position[i] + (n - anchor.previousPosition[i]));
+  return position.map((n, i) => anchor.position[i] + (n - previousPosition(anchor)[i]));
+}
+// The ship remains parked safely outside the station while the character uses
+// a separate metre-scale room frame. Visit saves never become planet landings.
+export function validateStationVisitState(value, flight, config = world) {
+  if (!value || typeof value !== "object" || !flight || value.bodyId !== "earth-station"
+    || !vector(value.positionM, 3, 1e4) || value.positionM[1] < 0 || value.positionM[1] > 2.4
+    || !stationWalkable(value.positionM)
+    || typeof value.yaw !== "number" || !Number.isFinite(value.yaw) || Math.abs(value.yaw) > 1e6
+    || typeof value.pitch !== "number" || !Number.isFinite(value.pitch) || Math.abs(value.pitch) > 1.25
+    || !["first", "third"].includes(value.camera)
+    || (flight.systemId ?? "solar") !== "solar" || flight.target !== "earth-station"
+    || flight.landedBody !== undefined || flight.walking !== undefined
+    || !vector(flight.position, 3, Infinity) || !vector(flight.velocity, 3, Infinity)
+    || Math.hypot(...flight.velocity) > 1e-9) return null;
+  const station = config.bodies.find(body => body.id === "earth-station");
+  const earth = config.bodies.find(body => body.id === "earth");
+  if (!station || station.kind !== "station" || !earth) return null;
+  const stationDistance = Math.hypot(...flight.position.map((n, i) => n - station.position[i]));
+  const earthDistance = Math.hypot(...flight.position.map((n, i) => n - earth.position[i]));
+  const earthClearance = Math.max(config.flightSafety.nearSurfaceMinKm / config.unitsKm,
+    earth.radius * config.flightSafety.nearSurfaceRadiusFactor, earth.radius * .002);
+  if (stationDistance < station.radius * 1.002 || stationDistance > station.radius + 1800 / config.unitsKm
+    || earthDistance < earth.radius + earthClearance) return null;
+  return { bodyId: "earth-station", positionM: [...value.positionM], yaw: value.yaw, pitch: value.pitch, camera: value.camera };
 }
 // Keep walking saves in the ship's metre-scale frame; never subtract two AU-scale character positions.
 export function validateWalkingState(value, flight, config = world) {
@@ -159,7 +193,7 @@ export function validateFlightState(value) {
     typeof value !== "object" ||
     ![1, 2].includes(value.version) ||
     (value.coordinateVersion !== undefined && value.coordinateVersion !== 1) ||
-    (value.worldLayoutVersion !== undefined && ![1, world.layoutVersion ?? 1].includes(value.worldLayoutVersion)) ||
+    (value.worldLayoutVersion !== undefined && ![1, 2, world.layoutVersion ?? 1].includes(value.worldLayoutVersion)) ||
     (value.terrainVersion !== undefined && ![1, TERRAIN_VERSION].includes(value.terrainVersion)) ||
     !vector(value.position, 3, value.version === 1 ? 1e6 : Infinity) ||
     !vector(value.velocity, 3, value.version === 1 ? 120 : Infinity) ||
@@ -192,9 +226,23 @@ export function validateFlightState(value) {
     ? value.position.map((n, i) => body.position[i] + (n - old[1][i]) / old[0] * body.radius)
     : migrateLayoutPosition(value, [...value.position]);
   if (!vector(position, 3, Infinity)) return null;
+  let referenceValue = value;
+  if (value.version === 2
+    && value.referenceFrame?.kind === "body-fixed" && value.referenceFrame.bodyId === "earth"
+    && position.some((n, i) => n !== value.position[i])) {
+    // Approaches to the old station used Earth's nearby simulation frame. Its
+    // exact radial must follow the moved ship, after proving the original frame
+    // agreed with the original position. Planet landings retain their radials.
+    const earth = world.bodies.find(body => body.id === "earth");
+    const originalRadial = bodyRadialM(world, earth, value.position, value.referenceFrame);
+    if (!originalRadial) return null;
+    const displacementM = new SpatialScale(world.unitsKm).universeDeltaToMetres(position, value.position);
+    referenceValue = { ...value, referenceFrame: { kind: "body-fixed", bodyId: "earth",
+      radialM: originalRadial.map((n, i) => n + displacementM[i]) } };
+  }
   // Compressed-world v1 positions predate reference metadata. Their migration
   // retains the existing target-relative rule and constructs a fresh frame.
-  let referenceFrame = value.version === 1 ? undefined : validateReferenceFrame(value, position);
+  let referenceFrame = value.version === 1 ? undefined : validateReferenceFrame(referenceValue, position);
   if (referenceFrame === null) return null;
   let walkingValue = value.walking;
   if (value.landedBody !== undefined) {
@@ -211,6 +259,11 @@ export function validateFlightState(value) {
     position, velocity: value.velocity, landedBody: value.landedBody, systemId: value.systemId ?? "solar", referenceFrame,
   });
   if (value.walking !== undefined && (value.version !== 2 || !walking)) return null;
+  const stationVisit = value.stationVisit === undefined ? undefined : validateStationVisitState(value.stationVisit, {
+    position, velocity: value.velocity, target: value.target, systemId: value.systemId ?? "solar",
+    landedBody: value.landedBody, walking: value.walking,
+  });
+  if (value.stationVisit !== undefined && (value.version !== 2 || !stationVisit)) return null;
   const cruiseSpeedKm = Math.max(1, Math.min(150000, value.version === 2 ? value.cruiseSpeedKm ?? 100 : 100));
   const legacyLowSpeed = Number.isFinite(value.atmosphericSpeedMps) ? value.atmosphericSpeedMps : 1000;
   const lowFlightSpeedMps = Math.max(1, Math.min(1000, value.version === 2 ? value.lowFlightSpeedMps ?? legacyLowSpeed : 1000));
@@ -232,6 +285,7 @@ export function validateFlightState(value) {
     terrainVersion: TERRAIN_VERSION,
     ...(value.landedBody ? { landedBody: value.landedBody } : {}),
     ...(walking ? { walking } : {}),
+    ...(stationVisit ? { stationVisit } : {}),
     systemId: value.version === 1 ? "solar" : value.systemId ?? "solar",
     engineMode: propulsionBand(cruiseSpeedKm).id,
     cruiseSpeedKm,
