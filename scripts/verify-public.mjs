@@ -27,15 +27,20 @@ try {
   assert.equal(evidence.version?.revision, expected, "Public version.json must match the deployed commit");
   const home = await get("");
   const game = await get("game.html");
-  const scripts = [...new Set([...((home + game).matchAll(/<script[^>]+src="([^"]+)"/g)), ...((home + game).matchAll(/<link[^>]+rel="modulepreload"[^>]+href="([^"]+)"/g))].map(match => match[1]))];
-  assert(scripts.length > 0, "Public game must load a built JavaScript entry");
-  let revisionEmbedded = false;
-  for (const path of scripts) {
-    const asset = await get(path);
-    assert(asset.length > 1000, `Public asset ${path} must be available`);
-    revisionEmbedded ||= asset.includes(expected);
+  const downloaded = new Map();
+  for (const [name, html] of [["home", home], ["game", game]]) {
+    const entries = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(match => match[1]);
+    assert(entries.length > 0, `Public ${name} must load a built JavaScript entry`);
+    const preloads = [...html.matchAll(/<link[^>]+rel="modulepreload"[^>]+href="([^"]+)"/g)].map(match => match[1]);
+    let revisionEmbedded = false;
+    for (const path of new Set([...entries, ...preloads])) {
+      if (!downloaded.has(path)) downloaded.set(path, await get(path));
+      const asset = downloaded.get(path);
+      assert(asset.length > 1000, `Public asset ${path} must be available`);
+      revisionEmbedded ||= asset.includes(expected);
+    }
+    assert(revisionEmbedded, `Public ${name} JavaScript must embed the exact build revision`);
   }
-  assert(revisionEmbedded, "Public JavaScript must embed the exact build revision");
   evidence.checkedAt = new Date().toISOString();
   console.log(`PASS public home/game/assets HTTP 200; version.json revision ${expected}`);
 } finally {

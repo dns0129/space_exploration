@@ -479,7 +479,7 @@ export class SolarScene {
     this.publishSurfaceResolution(model);
     this.useSystemBackground(getBody(id).systemId ?? "solar");
     this.controls.minDistance = id === "gargantua" ? 6 : 1.25;
-    this.controls.maxDistance = id === "gargantua" ? 30 : id === "echo-pulsar" ? 20 : id === "saturn" ? 12 : 7;
+    this.controls.maxDistance = id === "gargantua" ? 50 : id === "echo-pulsar" ? 20 : id === "saturn" ? 12 : 7;
     this.targetPosition = null;
     this.controls.reset();
     this.camera.position.copy(this.viewPosition("overview"));
@@ -1690,9 +1690,9 @@ export class SolarScene {
   private viewPosition(view: View): THREE.Vector3 {
     if (this.currentModel?.body.kind === "black-hole")
       return {
-        overview: new THREE.Vector3(0, 0.85, 10.5).multiplyScalar(Math.max(1, 0.9 / this.camera.aspect)),
+        overview: new THREE.Vector3(0, 0.85, 10.5).multiplyScalar(Math.max(1, 1.3 / this.camera.aspect)),
         close: new THREE.Vector3(0, 0.5, 7),
-        night: new THREE.Vector3(7, 5, -7),
+        night: new THREE.Vector3(7, 5, -7).multiplyScalar(Math.max(1, 1.3 / this.camera.aspect)),
       }[view];
     if (this.currentModel?.body.id === "echo-pulsar" && view === "overview")
       return new THREE.Vector3(0, 0.35, 9.4).multiplyScalar(Math.max(1, 0.70 / this.camera.aspect));

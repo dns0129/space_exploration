@@ -307,12 +307,12 @@ function updateBodyInfo(id: BodyId) {
   $(".top-coordinate").innerHTML =
     `<span>SECTOR ${String(number).padStart(3, "0")}</span><span>${system.name} · ${body.name}</span>`;
   $(".earth-caption").innerHTML = `<i></i><span>${body.caption}</span>`;
-  $(".sun-label").hidden = isStar;
+  $(".sun-label").hidden = isStar || body.kind === "black-hole";
   $(".sun-label span").textContent = body.hostStarId ? `${getBody(body.hostStarId).name}光方向` : "太阳光方向";
   $("#error-panel h2").textContent = `暂时无法打开${body.name}场景`;
   const nightButton = $('[data-view="night"]');
   nightButton.hidden = isStar;
-  nightButton.innerHTML = `${icon("moon")} ${id === "earth" ? "夜景" : "背光"}`;
+  nightButton.innerHTML = `${icon("moon")} ${body.kind === "black-hole" ? "侧观" : id === "earth" ? "夜景" : "背光"}`;
   $('.segmented [data-view="close"]').innerHTML =
     `${icon("compass")} ${id === "earth" ? "近地" : "近观"}`;
   document
