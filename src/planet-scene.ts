@@ -244,6 +244,7 @@ export class SolarScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly spaceScene = new THREE.Scene();
   private readonly surfaceWorldScene = new THREE.Scene();
+  private readonly surfaceCelestialScene = new THREE.Scene();
   private readonly renderPolicy = new FlightRenderPolicy();
   private readonly spaceWorkWaiters = new Set<() => void>();
   private readonly pendingSurfaceMaps = new Set<string>();
@@ -426,7 +427,8 @@ export class SolarScene {
     });
     this.spaceScene.add(this.planet);
     this.spaceScene.add(this.galaxySky.mesh);
-    this.surfaceWorldScene.add(this.surfaceGalaxySky.mesh, this.surfaceScene.group, this.surfaceScene.sky, this.explorerView.group);
+    this.surfaceWorldScene.add(this.surfaceScene.group, this.surfaceScene.sky, this.explorerView.group);
+    this.surfaceCelestialScene.add(this.surfaceGalaxySky.mesh, new THREE.AmbientLight(0x9dbde8, 0.09));
     this.observeSun.position.set(-3, 1.8, 4);
     this.flightRoot.visible = false;
     this.flightSun.visible = false;
@@ -981,6 +983,20 @@ export class SolarScene {
     this.renderer.domElement.dataset.worldRenderCount = String(++this.worldRenderCount);
   }
 
+  private renderFlightWorld() {
+    if (this.renderPolicy.mode === "space") {
+      this.renderer.render(this.spaceScene, this.camera);
+      return;
+    }
+    // Keep astronomical distances in universe units, then let metre-scale
+    // terrain and the atmospheric overlay occlude the distant sky.
+    this.renderer.render(this.surfaceCelestialScene, this.camera);
+    this.renderer.autoClear = false;
+    this.renderer.clearDepth();
+    this.renderer.render(this.surfaceWorldScene, this.localRenderCamera);
+    this.renderer.autoClear = true;
+  }
+
   setPhotoMode(active: boolean) {
     this.explorerView.setPhotoMode(active);
     this.resize();
@@ -1041,8 +1057,7 @@ export class SolarScene {
       this.renderer.domElement.dataset.surfaceFrameIdle = String(reuseFrame);
       // RAF, controls, tracking and HUD continue above; retain the last canvas frame instead of repeating GPU work.
       if (reuseFrame) return;
-      this.renderer.render(this.renderPolicy.mode === "surface" ? this.surfaceWorldScene : this.spaceScene,
-        this.renderPolicy.mode === "surface" ? this.localRenderCamera : this.camera);
+      this.renderFlightWorld();
       this.recordFlightRender();
       if (this.ship.group.visible) {
         // The hull pass uses the same physical scale as the world camera.
@@ -1191,7 +1206,7 @@ export class SolarScene {
     const scene = this.renderPolicy.mode === "surface" ? this.surfaceWorldScene : this.spaceScene;
     const renderCamera = this.renderPolicy.mode === "surface" ? this.localRenderCamera : this.camera;
     this.renderer.compile(scene, renderCamera);
-    this.renderer.render(scene, renderCamera);
+    this.renderFlightWorld();
     this.recordFlightRender();
     onProgress(100);
     if (!this.frame) this.animate(0);
@@ -1380,29 +1395,38 @@ export class SolarScene {
   setFlightAssist(assist: boolean) {
     if (this.dynamics && !this.walking) this.dynamics.assist = assist;
   }
-  private updateSpaceWorld() {
+  private updateSpaceWorld(surface = false) {
     const ship = this.dynamics!;
     const environment = ship.environment;
-    this.renderer.domElement.dataset.spaceUpdates = String(++this.spaceUpdates);
+    if (!surface) this.renderer.domElement.dataset.spaceUpdates = String(++this.spaceUpdates);
     const pixelsPerRadian = this.flightHeight * this.renderer.getPixelRatio()
       / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)));
-    if (this.asteroidBelt) {
+    if (!surface && this.asteroidBelt) {
       this.asteroidBelt.visible = ship.systemId === "solar";
       this.asteroidBelt.position.copy(ship.position).negate();
       this.container.dataset.asteroidBelt = String(this.asteroidBelt.visible);
     }
     // CPU positions remain in double precision. GPU objects are relative to the ship.
     for (const model of this.flightModels) model.group.visible = false;
+    const stars = ship.activeBodies.filter(body => body.kind === "star");
+    const localStar = stars.reduce((closest, body) =>
+      this.flightRelative.fromArray(body.position).distanceToSquared(ship.position)
+        < this.flightForward.fromArray(closest.position).distanceToSquared(ship.position) ? body : closest);
+    const celestialBodies: string[] = [];
     for (const body of ship.activeBodies) {
+      if (surface && (body.id === environment.body.id || body.id === localStar.id)) continue;
       this.flightRelative.fromArray(body.position).sub(ship.position);
       const angularRadius = body.radius / Math.max(this.flightRelative.length(), 1e-9);
       const pixelRadius = angularRadius * pixelsPerRadian;
       if (pixelRadius <= 0.65) continue;
       const model = this.flightModelById.get(body.id) ?? this.createFlightModel(body);
+      const parent = surface ? this.surfaceCelestialScene : this.flightRoot;
+      if (model.group.parent !== parent) parent.add(model.group);
       model.group.position.copy(this.flightRelative);
       model.group.visible = true;
+      if (surface) celestialBodies.push(body.id);
       // Maps stream in as bodies grow beyond a few pixels; far ones keep the procedural fallback.
-      if (pixelRadius > 4) this.touchSurfaceMap(model.body.id);
+      if (!surface && pixelRadius > 4) this.touchSurfaceMap(model.body.id);
       const lod = pixelRadius < 8 ? this.tinySphere : pixelRadius < 100 ? this.distantSphere : pixelRadius < 280 ? this.mediumSphere : pixelRadius < 700 ? this.largeSphere : undefined;
       for (const sphere of this.flightSpheres.get(model)!) sphere.geometry = lod ?? this.flightGeometries.get(sphere)!;
       // The local curved tile adds detail above the coarse globe; clouds stay overhead.
@@ -1419,9 +1443,10 @@ export class SolarScene {
         this.updateCloudShadow(model);
       }
     }
+    this.renderer.domElement.dataset.surfaceCelestialBodies = JSON.stringify(celestialBodies);
   }
 
-  /** Take resident asset references once at entry; the local world never traverses or updates space models. */
+  /** Take resident asset references without streaming global terrain detail. */
   private snapshotSurfaceMaps(bodyId: BodyId) {
     const model = this.flightModelById.get(bodyId);
     const axialTilt = getBody(bodyId).axialTiltDeg;
@@ -1451,6 +1476,7 @@ export class SolarScene {
     if (mode !== previousMode || this.surfaceScene.sky.parent !== (mode === "surface" ? this.surfaceWorldScene : this.spaceScene)) {
       const scene = mode === "surface" ? this.surfaceWorldScene : this.spaceScene;
       scene.add(this.surfaceScene.sky, this.flightLight.mesh);
+      (mode === "surface" ? this.surfaceCelestialScene : this.spaceScene).add(this.flightSun);
       if (mode === "space") this.resumeSpaceWork();
     }
     this.renderer.domElement.dataset.renderMode = mode;
@@ -1461,6 +1487,7 @@ export class SolarScene {
       this.snapshotSurfaceMaps(environment.body.id);
     }
     if (mode === "space") this.updateSpaceWorld();
+    else this.updateSpaceWorld(true);
     const stars = ship.activeBodies.filter(body => body.kind === "star");
     const light = stars.reduce((closest, body) =>
       this.flightRelative.fromArray(body.position).distanceToSquared(ship.position)
@@ -1794,6 +1821,7 @@ export class SolarScene {
       }
     };
     this.spaceScene.traverse(collect);
+    this.surfaceCelestialScene.traverse(collect);
     this.surfaceWorldScene.traverse(collect);
     this.shipScene.traverse(collect);
     this.surfaceWorldScene.traverse(collect);
