@@ -5,6 +5,7 @@ import { expect } from "@playwright/test";
 export async function verifyBlackHoleFlight(page) {
   const selector = page.locator("#star-system");
   await selector.selectOption("black-hole");
+  await expect(page.locator("#flight-target-label")).toHaveText("导航目标 · 距阴影边缘");
   await expect(page.locator("button[data-body]:visible")).toHaveCount(1);
   await expect(page.locator('button[data-body="gargantua"]')).toBeVisible();
   await expect(page.locator("#flight-distance-unit")).toHaveText("光年");
@@ -28,6 +29,7 @@ export async function verifyBlackHoleFlight(page) {
   assert(saved.position.every(Number.isFinite));
   assert(Math.hypot(...saved.position) >= 6 * 30000 / 6371);
   await selector.selectOption("solar");
+  await expect(page.locator("#flight-target-label")).toHaveText("导航目标");
   await page.locator("#flight-jump").click();
   await expect(page.locator("#warp-engine")).not.toHaveAttribute("data-phase", "ready");
   await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready", { timeout: 60000 });
@@ -36,5 +38,6 @@ export async function verifyBlackHoleFlight(page) {
   await page.locator("#flight-resume").click();
   await expect(page.locator("canvas")).toHaveAttribute("data-system", "black-hole");
   await expect(selector).toHaveValue("black-hole");
+  await expect(page.locator("#flight-target-label")).toHaveText("导航目标 · 距阴影边缘");
   await expect(page.locator("#flight-land")).toBeDisabled();
 }

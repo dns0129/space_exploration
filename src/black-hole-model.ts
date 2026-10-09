@@ -42,14 +42,24 @@ export function createBlackHoleModel(body: CelestialBody): PlanetModel {
       vec3 diskLight(float r, float angle) {
         float heat = 1.0 - smoothstep(1.35, 4.35, r);
         float flow = angle + uTime * (0.22 + 0.55 / max(r, 1.0));
-        float wave = sin(flow * 13.0 + r * 8.0) * 0.035;
-        float phase = r * 120.0 + wave * 35.0 + sin(flow * 7.0) * 0.8;
-        float bands = sin(phase) * exp(-pow(fwidth(phase) * 0.48, 2.0));
-        float fine = sin(r * 265.0 + flow * 21.0) * exp(-pow(fwidth(r) * 130.0, 2.0));
-        float structure = 0.78 + 0.18 * bands + 0.08 * fine + 0.12 * sin(flow * 9.0 + r * 7.0);
+        // The lens compresses several source radii into a small image arc.
+        // Include resolved broad filaments as well as finer strata, otherwise
+        // derivative filtering correctly removes every band in that arc.
+        float wave = sin(flow * 13.0 + r * 5.0) * 0.8 + sin(flow * 7.0) * 0.5;
+        float coarsePhase = r * 22.0 + wave;
+        float bandPhase = r * 58.0 + wave * 1.6 + flow * 3.0;
+        float finePhase = r * 137.0 + wave * 2.3 + flow * 11.0;
+        float coarse = sin(coarsePhase) * exp(-pow(fwidth(coarsePhase) * 0.28, 2.0));
+        float bands = sin(bandPhase) * exp(-pow(fwidth(bandPhase) * 0.28, 2.0));
+        float fine = sin(finePhase) * exp(-pow(fwidth(finePhase) * 0.28, 2.0));
+        float structure = clamp(0.61 + 0.29 * coarse + 0.17 * bands + 0.06 * fine
+          + 0.10 * sin(flow * 9.0 + r * 7.0), 0.12, 1.15);
         vec3 color = mix(vec3(1.0, 0.24, 0.025), vec3(1.0, 0.88, 0.63), heat);
         float doppler = 0.85 + 0.25 * cos(angle);
-        return color * structure * doppler * (0.65 + 2.5 * heat);
+        // Keep disk radiance below the photon ring. ACES must retain filament
+        // contrast and the warm temperature gradient instead of flattening a
+        // large bright arch into an almost uniform white band.
+        return color * structure * doppler * (0.45 + 1.35 * heat);
       }
       float diskMask(float r) {
         return smoothstep(1.28, 1.43, r) * (1.0 - smoothstep(3.6, 4.4, r));
@@ -94,26 +104,45 @@ export function createBlackHoleModel(body: CelestialBody): PlanetModel {
         color += vec3(1.0, 0.44, 0.11) * lensGlow;
         alpha = max(alpha, lensGlow);
 
-        // A thin volume rather than a zero-thickness plane remains visible at
-        // exactly edge-on inclination. Five strata integrate the disk emission.
+        // Integrate a fixed 3D annular volume, not a few discrete horizontal
+        // sheets: sheets miss the disk entirely for some exactly edge-on pixel
+        // rays. Clip the ray to its outer cylinder and thin vertical slab, then
+        // accumulate emission front-to-back with a stylized optical depth.
+        const float halfHeight = 0.10;
+        float radialA = max(dot(ray.xz, ray.xz), 0.000001);
+        float radialB = dot(eye.xz, ray.xz);
+        float radialC = dot(eye.xz, eye.xz) - 4.4 * 4.4;
+        float discriminant = radialB * radialB - radialA * radialC;
+        float root = sqrt(max(discriminant, 0.0));
+        float nearT = max(0.0, (-radialB - root) / radialA);
+        float farT = (-radialB + root) / radialA;
+        float volumeVisible = step(0.0, discriminant);
+        if (abs(ray.y) > 0.00001) {
+          float bottomT = (-halfHeight - eye.y) / ray.y;
+          float topT = (halfHeight - eye.y) / ray.y;
+          nearT = max(nearT, min(bottomT, topT));
+          farT = min(farT, max(bottomT, topT));
+        } else {
+          volumeVisible *= step(abs(eye.y), halfHeight);
+        }
+        float segment = max(0.0, farT - nearT);
+        float stepLength = segment / 8.0;
         vec3 emission = vec3(0.0);
-        float diskAlpha = 0.0;
-        for (int i = 0; i < 5; i++) {
-          float height = (float(i) - 2.0) * 0.022;
-          float denom = ray.y;
-          float t = (height - eye.y) / (abs(denom) < 0.00001 ? (denom < 0.0 ? -0.00001 : 0.00001) : denom);
+        float transmission = 1.0;
+        for (int i = 0; i < 8; i++) {
+          float t = nearT + (float(i) + 0.5) * stepLength;
           vec3 hit = eye + ray * t;
           float r = length(hit.xz);
-          float mask = diskMask(r);
+          float density = diskMask(r) * exp(-pow(hit.y / 0.052, 2.0)) * volumeVisible;
           // Only emission in front of the shadow may cross its black center.
           float front = step(t, closest);
-          mask *= step(0.0, t) * mix(1.0 - shadow, 1.0, front);
-          float weight = exp(-pow(float(i) - 2.0, 2.0) * 0.5) * 0.33;
-          emission += diskLight(r, atan(hit.z, hit.x)) * mask * weight;
-          diskAlpha += mask * weight;
+          density *= mix(1.0 - shadow, 1.0, front);
+          float opacity = 1.0 - exp(-density * stepLength * 18.0);
+          emission += diskLight(r, atan(hit.z, hit.x)) * opacity * transmission;
+          transmission *= 1.0 - opacity;
         }
         color += emission;
-        alpha = max(alpha, min(1.0, diskAlpha));
+        alpha = max(alpha, 1.0 - transmission);
         if (alpha < 0.001) discard;
         #include <logdepthbuf_fragment>
         // Normal alpha blending needs unpremultiplied radiance. Shadow pixels

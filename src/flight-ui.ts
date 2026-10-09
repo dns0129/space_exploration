@@ -274,7 +274,7 @@ export class FlightInterface {
     if (this.scene?.walking) { this.notify("请先返回飞船，再设置导航目标"); return; }
     if (["charging", "transit", "arrival"].includes(this.warpPhase)) return;
     this.scene?.setDestination(id);
-    $("#flight-target").textContent = getBody(id).name;
+    this.sync();
   }
   private jump() {
     if (this.scene?.walking) { this.notify("人物正在舱外探索，请先返回飞船再启动跃迁"); return; }

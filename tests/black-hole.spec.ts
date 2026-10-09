@@ -143,6 +143,7 @@ test("黑洞真实透视着色器显示阴影、光子环、前侧吸积盘与�
   expect(errors, "生产着色器应成功编译且无运行时错误").toEqual([]);
   expect(result.glError).toBe(0);
   const nearSide = result.views.find(view => view.name === "near-side")!;
+  const edgeOn = result.views.find(view => view.name === "edge-on")!;
   const pole = result.views.find(view => view.name === "pole-on")!;
   for (const view of result.views) {
     expect(view.lit, `${view.name} 应有实际吸积盘与光环像素`).toBeGreaterThan(300);
@@ -152,10 +153,11 @@ test("黑洞真实透视着色器显示阴影、光子环、前侧吸积盘与�
   }
   expect(nearSide.foregroundDisk, "吸积盘的前侧应穿过阴影中央").toBeGreaterThan(20);
   expect(nearSide.outerDisk, "近侧观察应呈现横向延伸的盘面").toBeGreaterThan(120);
+  expect(edgeOn.outerDisk, "精确侧视仍应保留可见的盘面两翼").toBeGreaterThan(120);
   expect(nearSide.upperArcMean, "阴影上方应有宽阔透镜光弧").toBeGreaterThan(35);
   expect(nearSide.lowerArcMean, "阴影下方应有弯曲透镜光弧").toBeGreaterThan(25);
   expect(nearSide.warm / nearSide.lit, "吸积盘应保留暖白至金橙色渐变").toBeGreaterThan(0.4);
-  expect(nearSide.tones, "盘面应有多层明暗纹理").toBeGreaterThan(20);
+  expect(nearSide.tones, "暖色盘面应保留多级色调").toBeGreaterThan(20);
   expect(nearSide.exteriorAxisRatio, "近侧观察的外盘应横向延伸").toBeGreaterThan(2);
   expect(pole.exteriorAxisRatio, "极点观察的三维盘面应转为近圆形").toBeGreaterThan(0.75);
   expect(pole.exteriorAxisRatio).toBeLessThan(1.3);
