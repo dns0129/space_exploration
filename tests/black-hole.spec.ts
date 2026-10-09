@@ -186,6 +186,9 @@ test("现有导航实际进入单黑洞星系，禁止地表放置并可跃迁�
   await expect(page.locator('button[data-body="gargantua"]')).toBeVisible();
   await expect(page.locator("h1")).toContainText("暗渊黑洞");
   await expect(page.locator(".description")).toContainText("艺术近似");
+  await expect(page.locator(".rotation .control-label")).toContainText("光带流动");
+  await expect(page.locator("#pause")).toHaveAttribute("aria-label", /光带流动/);
+  await expect(page.locator(".sun-label")).toBeHidden();
   await expect(page.locator("#place-ship")).toBeDisabled();
   await expect(page.locator("#place-person")).toBeDisabled();
   await expect(page.locator("#surface-availability")).toContainText("黑洞");

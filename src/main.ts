@@ -215,9 +215,14 @@ async function savePhoto() {
 }
 
 function updatePause() {
+  const blackHole = getBody(state.body).kind === "black-hole";
+  const motion = blackHole ? "光带流动" : "自转";
   const button = $("#pause");
   button.innerHTML = icon(state.paused ? "play" : "pause");
-  button.setAttribute("aria-label", state.paused ? "继续自转" : "暂停自转");
+  button.setAttribute("aria-label", `${state.paused ? "继续" : "暂停"}${motion}`);
+  $(".rotation .control-label").innerHTML = blackHole ? "光带流动 <small>FLOW</small>" : "星球自转 <small>ROTATION</small>";
+  $("#speed").setAttribute("aria-label", `${motion}演示速度`);
+  $(".interaction-hint").innerHTML = `<span class="mouse-icon"></span> 拖动环绕 <i>·</i> 滚轮缩放 <i>·</i> <kbd>空格</kbd> 暂停${motion}`;
   button.setAttribute("aria-pressed", String(state.paused));
   scene?.setPaused(state.paused);
 }
