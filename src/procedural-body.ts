@@ -51,6 +51,13 @@ const presets: Partial<Record<CelestialBody["id"], Partial<Parameters>>> = {
   "proxima-b": { terrain: [5.9, 23, 0.58, 0], ridgeMix: 0.5 },
   "proxima-c": { ...gas, weather: [29, 1.45, 0.003, 11], stretch: [0.5, 2.4, 0.5] },
   "proxima-d": { terrain: [7.2, 31, 0.54, 0], ridgeMix: 0.46 },
+  // Barnard's surface units are concepts, with distinct dry mineral/regolith
+  // morphology; all keep the same filtered 32K spatial-frequency budget.
+  "barnard-star": { ...star, terrain: [8.2, 0, 0.35, 0], weather: [0, 1.1, 0.001, 38], ridgeMix: 0.32 },
+  "barnard-b": { terrain: [5.4, 29, 0.43, 0], stretch: [1.15, 0.9, 1.1], ridgeMix: 0.45 },
+  "barnard-c": { terrain: [6.7, 37, 0.51, 0], stretch: [0.9, 1.2, 1], ridgeMix: 0.53 },
+  "barnard-d": { terrain: [7.2, 23, 0.58, 0], stretch: [1.3, 0.85, 1.15], ridgeMix: 0.59 },
+  "barnard-e": { terrain: [4.9, 41, 0.36, 0], stretch: [1, 1.05, 0.95], ridgeMix: 0.38 },
 };
 
 function hashIdentity(identity: string): number {

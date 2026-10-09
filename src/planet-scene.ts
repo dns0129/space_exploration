@@ -20,6 +20,7 @@ import { FlightLight } from "./flight-light";
 import { GalaxySky, selectGalaxyFile } from "./galaxy-sky";
 import type { GalaxyTextureFile } from "./galaxy-sky";
 import { SurfaceScene } from "./surface-scene";
+import { BARNARD_LIGHT_COLOR } from "./stellar-light";
 import { atmosphereStrength } from "./atmosphere";
 import { surfaceProfile, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { projectFlightTarget } from "./flight-target";
@@ -1507,7 +1508,7 @@ export class SolarScene {
       this.flightRelative.fromArray(body.position).distanceToSquared(ship.position)
         < this.flightForward.fromArray(closest.position).distanceToSquared(ship.position) ? body : closest);
     this.flightSun.position.fromArray(light.position).sub(ship.position);
-    this.flightSun.color.set(getBody(light.id).color);
+    this.flightSun.color.set(light.id === "barnard-star" ? BARNARD_LIGHT_COLOR : getBody(light.id).color);
     this.flightSun.intensity = light.kind === "black-hole" ? 0 : 2.5;
     this.shipSun.color.copy(this.flightSun.color);
     this.useSystemBackground(ship.systemId);

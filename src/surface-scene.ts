@@ -32,6 +32,8 @@ export class SurfaceScene {
     groundCamera: { value: new THREE.Vector3() },
     groundFog: { value: new THREE.Color() },
     groundSun: { value: new THREE.Vector3() },
+    groundLightTint: { value: new THREE.Color(0xffffff) },
+    groundNightFloor: { value: 0.015 },
     groundVisibility: { value: 1 },
     groundAtmosphere: { value: 0 },
     groundExtent: { value: 10000 },
@@ -54,11 +56,11 @@ export class SurfaceScene {
       sun: { value: new THREE.Vector3() }, sunColor: { value: new THREE.Color() }, color: { value: new THREE.Color() },
       altitude: { value: 0 }, radius: { value: 6371 }, height: { value: 160 }, strength: { value: 1.5 },
       cloudVolume: { value: 0 }, cloudScale: { value: 1 }, cloudCoverage: { value: 0 }, cloudColor: { value: new THREE.Color() }, time: { value: 0 },
-      aspect: { value: 1 }, fov: { value: 1 } },
+      aspect: { value: 1 }, fov: { value: 1 }, stellarDiskRadius: { value: 0 } },
     vertexShader: `varying vec2 screen; void main() { screen = uv * 2.0 - 1.0; gl_Position = vec4(position.xy, 1.0, 1.0); }`,
     fragmentShader: `
       uniform mat3 rotation; uniform vec3 up, sun, sunColor, color, cloudColor;
-      uniform float altitude, radius, height, strength, aspect, fov, cloudVolume, cloudScale, cloudCoverage, time; varying vec2 screen;
+      uniform float altitude, radius, height, strength, aspect, fov, cloudVolume, cloudScale, cloudCoverage, time, stellarDiskRadius; varying vec2 screen;
       ${atmosphereScattering}
       ${entryClouds}
       void main() {
@@ -81,7 +83,9 @@ export class SurfaceScene {
         // The local sky owns its sun, so it needs no solar-system sphere layer.
         float horizonDip = sqrt(max(altitude * (2.0 * radius + altitude), 0.0)) / (radius + altitude);
         float sunlight = smoothstep(-horizonDip - 0.01, -horizonDip + 0.01, dot(up, sun));
-        float disk = smoothstep(0.999972, 0.999987, dot(ray, sun)) * sunlight * solarTransmission;
+        float disk = (stellarDiskRadius > 0.0
+          ? smoothstep(cos(stellarDiskRadius * 1.025), cos(stellarDiskRadius * 0.975), dot(ray, sun))
+          : smoothstep(0.999972, 0.999987, dot(ray, sun))) * sunlight * solarTransmission;
         float sunset = 1.0 - smoothstep(-0.02, 0.18, dot(up, sun));
         vec3 solarColor = mix(vec3(3.4, 3.15, 2.55), vec3(3.6, 1.35, 0.36), sunset * min(strength, 1.0)) * sunColor;
         atmosphere.rgb = mix(atmosphere.rgb, solarColor, disk);
@@ -135,6 +139,10 @@ export class SurfaceScene {
     uniforms.up.value.copy(cameraRadial).normalize();
     uniforms.sun.value.copy(sun);
     uniforms.sunColor.value.copy(sunlight.color);
+    const source = env.body.systemId === "barnard"
+      ? ship.activeBodies.find(body => body.id === "barnard-star") : undefined;
+    uniforms.stellarDiskRadius.value = source
+      ? Math.asin(Math.min(1, source.radius / Math.max(sunlight.position.length(), source.radius))) : 0;
     uniforms.color.value.set(env.profile.sky);
     uniforms.altitude.value = cameraAltitudeKm;
     uniforms.radius.value = env.body.radius * ship.config.unitsKm;
@@ -175,6 +183,10 @@ export class SurfaceScene {
     this.terrainUniforms.groundCamera.value.copy(camera.position).sub(this.group.position);
     this.updateCollisionGround(ship, walker);
     this.terrainUniforms.groundSun.value.copy(sun);
+    const barnard = env.body.systemId === "barnard";
+    this.terrainUniforms.groundLightTint.value.set(0xffffff);
+    if (barnard) this.terrainUniforms.groundLightTint.value.copy(sunlight.color);
+    this.terrainUniforms.groundNightFloor.value = barnard ? 0.0035 : 0.015;
     this.terrainUniforms.groundFog.value.set(env.profile.sky).multiplyScalar(0.035 + day * 0.7);
     this.terrainUniforms.groundVisibility.value = 1 - THREE.MathUtils.smoothstep(env.groundAltitudeKm, 38, 70);
     this.terrainUniforms.groundAtmosphere.value = env.body.atmosphereKm ? day : 0;
@@ -183,9 +195,9 @@ export class SurfaceScene {
     this.terrainUniforms.groundMapBlend.value = 1;
     this.terrainUniforms.groundCloudMapBlend.value = THREE.MathUtils.smoothstep(env.altitudeKm, 18, 36);
     this.light.position.copy(sun).multiplyScalar(10);
-    this.light.color.set(0xffffff);
+    this.light.color.copy(this.terrainUniforms.groundLightTint.value);
     this.light.intensity = 2.2 * day;
-    this.ambient.intensity = 0.12 + day * 0.55;
+    this.ambient.intensity = (barnard ? 0.028 : 0.12) + day * 0.55;
     this.ambient.position.copy(env.outward);
   }
   private rebuildHorizon(ship: ShipDynamics, outward: THREE.Vector3) {
@@ -248,7 +260,8 @@ export class SurfaceScene {
         "#include <common>\nvarying vec3 groundPosition, groundRadial; attribute vec3 surfaceRadial; uniform vec3 groundVertexOffset;")
         .replace("#include <begin_vertex>", `#include <begin_vertex>\ngroundPosition = position + groundVertexOffset; groundRadial = surfaceRadial;`);
       shader.fragmentShader = shader.fragmentShader.replace("#include <common>", `#include <common>
-        varying vec3 groundPosition, groundRadial; uniform vec3 groundCamera, groundFog, groundSun, groundMapTint;
+        varying vec3 groundPosition, groundRadial; uniform vec3 groundCamera, groundFog, groundSun, groundMapTint, groundLightTint;
+        uniform float groundNightFloor;
         uniform sampler2D groundHorizonMap, groundHorizonCloudMap;
         uniform mat3 groundMapRotation, groundCloudRotation;
         uniform vec3 groundPatchCenter, groundPatchRight, groundPatchForward;
@@ -285,7 +298,7 @@ export class SurfaceScene {
           // Base photography uses the same simple day response as the orbital
           // view; local PBR and extra ground haze emerge only during descent.
           float horizonDay = max(dot(normalize(groundRadial), groundSun), 0.0);
-          vec3 photoLight = horizonPhoto * (0.015 + horizonDay * 1.08) * (1.0 - horizonCover * 0.26);
+          vec3 photoLight = horizonPhoto * (vec3(groundNightFloor) + groundLightTint * horizonDay * 1.08) * (1.0 - horizonCover * 0.26);
           photoLight = mix(photoLight, vec3(0.92, 0.96, 1.0) * (0.035 + horizonDay * 1.1), horizonCover * 0.82);
           outgoingLight = mix(outgoingLight, photoLight, groundMapReady * groundMapBlend);
           float groundDistance = length(groundPosition - groundCamera);

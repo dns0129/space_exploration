@@ -10,6 +10,7 @@ import { PROCEDURAL_DETAIL_WIDTH, proceduralBodyProfile } from "./procedural-bod
 import { SATURN_RING_INNER, SATURN_RING_OUTER, saturnRingOptics } from "./saturn-rings";
 import { createBlackHoleModel } from "./black-hole-model";
 import { createEchoModel } from "./echo-models";
+import { BARNARD_LIGHT_COLOR } from "./stellar-light";
 
 export interface PlanetModel {
   body: CelestialBody;
@@ -207,6 +208,7 @@ const planetFragment = /* glsl */ `
   uniform vec3 moonColor;
   uniform float moonSeed, moonStyle;
   uniform vec3 stellarTint;
+  uniform vec3 illuminantTint;
   uniform float stellarIllustration;
   uniform vec3 bodySeed, detailStretch;
   uniform vec4 bodyTerrain, bodyWeather;
@@ -220,6 +222,14 @@ const planetFragment = /* glsl */ `
   varying vec3 vAxisZ;
   ${noise}
   ${mapSampling}
+  #ifdef BARNARD_RED_DWARF
+    // An M3.5 photosphere remains a luminous copper/amber continuum. Sparse
+    // cooler magnetic regions alter radiance; this is a concept, not imaging.
+    vec3 barnardPhotosphere(float heat) {
+      return mix(vec3(1.42,0.40,0.16),vec3(2.55,1.25,0.57),heat)
+        * (0.84+0.22*heat);
+    }
+  #endif
   #if BODY_KIND == 4
     ${saturnRingOptics}
   #endif
@@ -245,6 +255,15 @@ const planetFragment = /* glsl */ `
       if (stellarIllustration > 0.5) color = stellarTint * (1.2+granules*2.4) * (0.84+fine*0.23);
       float sunspots = smoothstep(0.69,0.78,fbm(p*8.0+bodySeed+vec3(17.0)));
       color *= 1.0-sunspots*0.85;
+      #ifdef BARNARD_RED_DWARF
+        float granuleFootprint = max(length(dFdx(p)),length(dFdy(p)));
+        // The fallback shares the native map's small photospheric grain, with
+        // screen filtering that prevents sparkling while the map is loading.
+        float granuleDetail = (noise3(p*1150.0+bodySeed)-0.5)
+          * clamp(1.5-granuleFootprint*2300.0,0.0,1.0);
+        color = barnardPhotosphere(smoothstep(0.24,0.72,granules)+granuleDetail*0.12)
+          * (1.0-sunspots*0.22);
+      #endif
       #ifdef RED_SUPERGIANT
         // Much larger, slower convection than the fine granules of a main-sequence star.
         float convection = fbm(p*bodyTerrain.x+bodySeed+vec3(0.0,uTime*bodyWeather.z,0.0));
@@ -261,11 +280,21 @@ const planetFragment = /* glsl */ `
           #ifdef RED_SUPERGIANT
             stellar = photo * 1.8 * (0.94+convection*0.16);
           #endif
+          #ifdef BARNARD_RED_DWARF
+            // The native spherical map is monochrome radiance. It has no
+            // directional shading, so limb darkening is correct from any view.
+            float heat = smoothstep(0.22,0.79,mapLuminance(photo));
+            stellar = barnardPhotosphere(heat)*(0.985+terrain*0.03);
+          #endif
           color = mix(color, stellar * (1.0 + grain.x * mapGrain * 2.0), mapReady);
         }
       #endif
       vec3 viewDirection = normalize(cameraPosition-vWorldPosition);
+      #ifdef BARNARD_RED_DWARF
+      color *= 0.42+0.58*pow(max(dot(normalize(vNormal),viewDirection),0.0),0.43);
+      #else
       color *= 0.55+0.45*pow(max(dot(normalize(vNormal),viewDirection),0.0),0.3);
+      #endif
       #include <logdepthbuf_fragment>
       gl_FragColor = vec4(color,1.0);
       #include <tonemapping_fragment>
@@ -392,7 +421,13 @@ const planetFragment = /* glsl */ `
       }
     #endif
     #include <logdepthbuf_fragment>
+    #ifdef BARNARD_ROCK
+    // Host-spectrum tint is shared with ship and surface lighting. Dry regolith
+    // has a restrained neutral night floor, with no invented lava emission.
+    gl_FragColor = vec4(max(color*(vec3(0.0035)+illuminantTint*diffuse*1.05),vec3(0.0)),1.0);
+    #else
     gl_FragColor = vec4(max(color*(0.009+diffuse*1.05),vec3(0.0)),1.0);
+    #endif
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #endif
@@ -417,10 +452,17 @@ export const atmosphereFragment = /* glsl */ `
     vec3 ray = normalize(vWorldPosition-cameraPosition);
     #ifdef SOLAR_CORONA
       float impact = length(cross(cameraPosition-planetCenter,ray))/bodyRadius;
+      #ifdef BARNARD_CORONA
+      float envelope = exp(-max(impact-1.0,0.0)*46.0)*(1.0-smoothstep(1.035,1.09,impact));
+      float streamers = 0.94+0.06*sin(normal.y*31.0+normal.x*17.0+uTime*0.025);
+      vec3 color = atmosphereColor*1.25;
+      float opacity = envelope*strength*streamers*0.42;
+      #else
       float envelope = exp(-max(impact-1.0,0.0)*18.0)*(1.0-smoothstep(1.08,1.2,impact));
       float streamers = 0.85+0.15*sin(normal.y*38.0+normal.x*21.0+uTime*0.08);
       vec3 color = atmosphereColor*1.6;
       float opacity = envelope*strength*streamers*0.68;
+      #endif
     #else
       vec3 origin = (cameraPosition-planetCenter)/bodyRadius;
       vec4 scattering = scatterAtmosphere(normalize(origin), max(0.0, length(origin)-1.0),
@@ -619,7 +661,12 @@ export function createPlanetModel(
     new THREE.ShaderMaterial({
       vertexShader: modelVertex,
       fragmentShader: planetFragment,
-      defines: { BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds], ...(mapOnSurface ? { SURFACE_MAP: 1 } : {}), ...(body.id === "betelgeuse" ? { RED_SUPERGIANT: 1 } : {}) },
+      defines: {
+        BODY_KIND: body.kind === "star" ? 7 : body.parentId ? 8 : body.systemId && body.systemId !== "solar" ? body.surfaceStyle === 6 ? 6 : 9 : kinds[body.id as keyof typeof kinds],
+        ...(mapOnSurface ? { SURFACE_MAP: 1 } : {}),
+        ...(body.id === "betelgeuse" ? { RED_SUPERGIANT: 1 } : {}),
+        ...(body.id === "barnard-star" ? { BARNARD_RED_DWARF: 1 } : body.systemId === "barnard" ? { BARNARD_ROCK: 1 } : {}),
+      },
       uniforms: {
         ...proceduralUniforms,
         ...(mapOnSurface ? mapUniforms : {}),
@@ -633,6 +680,7 @@ export function createPlanetModel(
         moonSeed: { value: profile.grainSeed },
         moonStyle: { value: body.surfaceStyle ?? 0 },
         stellarTint: { value: new THREE.Color(body.color) },
+        illuminantTint: { value: new THREE.Color(body.systemId === "barnard" ? BARNARD_LIGHT_COLOR : "#ffffff") },
         stellarIllustration: { value: body.kind === "star" ? 1 : 0 },
       },
     }),
@@ -655,11 +703,11 @@ export function createPlanetModel(
     const solar = body.id === "sun" || body.kind === "star";
     // The shell slightly circumscribes the analytic atmosphere so coarse distant meshes never facet its edge.
     const halo = new THREE.Mesh(
-      new THREE.SphereGeometry((solar ? 1.23 : 1 + (body.atmosphereKm ?? 90) / body.radiusKm) * 1.02, 96, 64),
+      new THREE.SphereGeometry((solar ? body.id === "barnard-star" ? 1.10 : 1.23 : 1 + (body.atmosphereKm ?? 90) / body.radiusKm) * 1.02, 96, 64),
       new THREE.ShaderMaterial({
         vertexShader: modelVertex,
         fragmentShader: atmosphereFragment,
-        defines: solar ? { SOLAR_CORONA: 1 } : {},
+        defines: solar ? { SOLAR_CORONA: 1, ...(body.id === "barnard-star" ? { BARNARD_CORONA: 1 } : {}) } : {},
         uniforms: {
           sunDirection: { value: sunDirection },
           planetCenter: { value: placement.center },
@@ -668,7 +716,7 @@ export function createPlanetModel(
             value: new THREE.Color(solar ? body.id === "sun" ? "#ff8f2c" : body.color : surfaceProfile(body.id).sky),
           },
           atmosphereHeight: { value: (body.atmosphereKm ?? 90) / body.radiusKm },
-          strength: { value: solar ? 0.95 : atmosphereStrength(body.id) },
+          strength: { value: solar ? body.id === "barnard-star" ? 0.32 : 0.95 : atmosphereStrength(body.id) },
           uTime,
         },
         side: solar ? THREE.BackSide : THREE.FrontSide,

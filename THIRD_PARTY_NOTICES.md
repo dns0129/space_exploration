@@ -266,3 +266,6 @@ NASA Earth Observatory / MODIS Blue Marble Next Generation (September 2004 day m
       of your accepting any such warranty or additional liability.
 
    END OF TERMS AND CONDITIONS
+# Barnard's star original artwork
+
+The ten `barnard-*-8k.jpg` / `barnard-*-4k.jpg` stellar and planetary surface assets are original generated project artwork, released under CC0-1.0. They are not observed images. The existing Milky Way panorama retains its Solar System Scope CC BY 4.0 attribution. Scientific parameter references and image checksums are recorded in ASSETS.md and public/textures/provenance.json.

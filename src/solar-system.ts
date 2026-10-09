@@ -1,6 +1,7 @@
 import centauriData from "../shared/centauri.json" with { type: "json" };
 import betelgeuseData from "../shared/betelgeuse.json" with { type: "json" };
 import echoRiftData from "../shared/echo-rift.json" with { type: "json" };
+import barnardData from "../shared/barnard.json" with { type: "json" };
 import worldData from "../shared/world.json" with { type: "json" };
 import moonData from "../shared/moons.json" with { type: "json" };
 export type BodyId =
@@ -46,6 +47,11 @@ export type BodyId =
   | "proxima-c"
   | "proxima-d"
   | "betelgeuse"
+  | "barnard-star"
+  | "barnard-d"
+  | "barnard-b"
+  | "barnard-c"
+  | "barnard-e"
   | "ceres"
   | "earth-station"
   | "echo-pulsar"
@@ -55,8 +61,8 @@ export type BodyId =
   | "ruin"
   | "shard"
   | "gargantua";
-export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri" | "betelgeuse" | "echo-rift" | "black-hole";
-export type SystemGroupId = "solar" | "alpha-centauri" | "betelgeuse" | "echo-rift" | "black-hole";
+export type SystemId = "solar" | "alpha-centauri" | "proxima-centauri" | "betelgeuse" | "barnard" | "echo-rift" | "black-hole";
+export type SystemGroupId = "solar" | "alpha-centauri" | "betelgeuse" | "barnard" | "echo-rift" | "black-hole";
 export type Layer = "clouds" | "atmosphere" | "stars" | "rings";
 
 export interface CelestialBody {
@@ -85,6 +91,10 @@ export interface CelestialBody {
   hostStarId?: BodyId;
   temperatureK?: number;
   spectralType?: string;
+  /** Radial-velocity lower bound, m sin i; the true mass is not measured. */
+  minimumMassEarth?: number;
+  /** Chosen for the exploration model where no radius has been measured. */
+  radiusConceptual?: boolean;
 }
 
 /** Single-body models use radius 1; real radii drive information and height readouts. */
@@ -281,6 +291,17 @@ export const BETELGEUSE_BODIES: readonly CelestialBody[] = betelgeuseData.map(bo
   rotationSpeed: 0.002, surfaceSeed: 91.4, caption: "BETELGEUSE / RED SUPERGIANT",
   layers: ["atmosphere", "stars"], atmosphereColor: body.color,
 }));
+export const BARNARD_BODIES: readonly CelestialBody[] = barnardData.map(body => ({
+  ...body, id: body.id as BodyId, systemId: "barnard", kind: body.kind as "star" | "planet",
+  hostStarId: body.hostStarId as BodyId | undefined,
+  // No measured obliquity or spin: retain the shared, static map/collision frame.
+  axialTiltDeg: 0, flattening: 1, distanceFromSunMillionKm: 0,
+  rotationSpeed: body.kind === "star" ? 0.003 : 0,
+  caption: body.kind === "star" ? "BARNARD'S STAR / M3.5 V · RED DWARF"
+    : `${body.english} / SHORT-PERIOD WORLD · CONCEPT SURFACE`,
+  layers: body.kind === "star" ? ["atmosphere", "stars"] : ["stars"],
+  atmosphereColor: body.kind === "star" ? body.color : undefined,
+}));
 export const ECHO_RIFT_BODIES: readonly CelestialBody[] = echoRiftData.map(body => ({
   ...body, id: body.id as BodyId, systemId: "echo-rift", kind: body.kind as "star" | "planet",
   hostStarId: body.hostStarId as BodyId | undefined, parentId: body.parentId as BodyId | undefined,
@@ -319,7 +340,7 @@ export const BLACK_HOLE_BODIES: readonly CelestialBody[] = [{
   description: "中央阴影、细亮光子环与暖金吸积盘。<br>背面光带经简化引力透镜形成上下拱弧。<br>阴影视觉半径 30,000 km，非事件视界实测值；系统距离为虚构。<br>三维盘面与视角相关的解析光带为艺术近似，未进行广义相对论光线追踪。<br>无固体地表；游戏安全屏障在阴影半径的 6 倍处，禁止着陆。",
   layers: ["stars"],
 }];
-export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...EXPLORATION_BODIES, ...ECHO_RIFT_BODIES, ...BLACK_HOLE_BODIES].map(body => ({
+export const SOLAR_SYSTEM: readonly CelestialBody[] = [...PRIMARY_BODIES, ...MOONS, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...EXPLORATION_BODIES, ...ECHO_RIFT_BODIES, ...BLACK_HOLE_BODIES, ...BARNARD_BODIES].map(body => ({
   ...body, atmosphereKm: worldData.bodies.find(config => config.id === body.id)?.atmosphereKm,
 }));
 export const STAR_SYSTEMS = worldData.systems;

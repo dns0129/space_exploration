@@ -124,45 +124,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: black-hole-offline-${{ github.sha }}
-          path: downloads/voyager-warp.zip
+          path: dist-standalone/voyager-warp.zip
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
-
-  refresh-offline-package:
-    needs: [verify, verify-offline]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/black-hole'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: black-hole-offline-${{ github.sha }}
-          path: downloads
-      - name: Commit only the verified package to the unchanged feature branch
-        env:
-          VERIFIED_SHA: ${{ github.sha }}
-          FEATURE_BRANCH: codex/black-hole
-        run: |
-          git fetch origin "$FEATURE_BRANCH"
-          if [ "$(git rev-parse FETCH_HEAD)" != "$VERIFIED_SHA" ]; then
-            echo "Feature branch moved after validation; refusing to publish a stale package." >&2
-            exit 1
-          fi
-          git add -- downloads/voyager-warp.zip
-          if git diff --cached --quiet; then
-            echo "The tracked offline package already matches the verified export." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Refresh verified black-hole offline package"
-          git push origin "HEAD:refs/heads/$FEATURE_BRANCH"
-          echo "Verified source revision: $VERIFIED_SHA" >> "$GITHUB_STEP_SUMMARY"
-          echo "Offline package commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
-          echo "The package commit uses GITHUB_TOKEN and does not trigger another push workflow. The source and verified ZIP are both gated by the complete independent verification jobs." >> "$GITHUB_STEP_SUMMARY"

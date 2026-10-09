@@ -73,6 +73,11 @@ export const SURFACE_MAPS: Partial<Record<BodyId, SurfaceMap>> = {
   "proxima-b": { ...rock("concept-makemake.jpg", 4096, 0.004, 0.1), concept: true },
   "proxima-c": { file: "concept-venuslike.jpg", width: 4096, relief: 0, grain: 0.04, streaks: true, concept: true, tint: [0.8, 0.96, 1.1] },
   "proxima-d": { ...rock("concept-ceres.jpg"), concept: true },
+  "barnard-star": { file: "barnard-star-8k.jpg", compactFile: "barnard-star-4k.jpg", width: 8192, relief: 0, grain: 0.04, concept: true },
+  "barnard-d": { ...rock("barnard-d-8k.jpg", 8192, 0.006, 0.12), compactFile: "barnard-d-4k.jpg", concept: true },
+  "barnard-b": { ...rock("barnard-b-8k.jpg", 8192, 0.005, 0.11), compactFile: "barnard-b-4k.jpg", concept: true },
+  "barnard-c": { ...rock("barnard-c-8k.jpg", 8192, 0.004, 0.1), compactFile: "barnard-c-4k.jpg", concept: true },
+  "barnard-e": { ...rock("barnard-e-8k.jpg", 8192, 0.007, 0.12), compactFile: "barnard-e-4k.jpg", concept: true },
 };
 
 export const surfaceMapLabel = (id: BodyId) => {

@@ -970,8 +970,8 @@ test("former thousand-kilometre and giant-atmosphere protection zones do not use
 });
 
 test("three Centauri stars and their planets use local coordinates and light-year navigation", () => {
-  assert.equal(world.systems.length, 6);
-  assert.equal(world.bodies.length, 51);
+  assert.equal(world.systems.length, 7);
+  assert.equal(world.bodies.length, 56);
   const ship = new ShipDynamics();
   ship.target = "alpha-centauri-a";
   assert(Math.abs(ship.targetRelative.length() * world.unitsKm / world.lightYearKm - 4.37) < 0.001);

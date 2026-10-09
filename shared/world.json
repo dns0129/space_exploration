@@ -865,6 +865,89 @@
       ],
       "radius": 4.708836917281431,
       "radiusKm": 30000
+    },
+    {
+      "id": "barnard-star",
+      "systemId": "barnard",
+      "kind": "star",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "radius": 20.201616700674933
+    },
+    {
+      "id": "barnard-d",
+      "systemId": "barnard",
+      "kind": "planet",
+      "position": [
+        366.3732700912199,
+        4.7607698207859865,
+        246.21291831147775
+      ],
+      "radius": 0.6906294145346099,
+      "hostStarId": "barnard-star",
+      "orbitRadiusKm": 2812439.96916,
+      "orbit": {
+        "inclinationDeg": 18,
+        "ascendingNodeDeg": 32,
+        "longitudeDeg": 34
+      }
+    },
+    {
+      "id": "barnard-b",
+      "systemId": "barnard",
+      "kind": "planet",
+      "position": [
+        -317.1814127141845,
+        165.2532473188622,
+        401.5298889619274
+      ],
+      "radius": 0.7298697221786219,
+      "hostStarId": "barnard-star",
+      "orbitRadiusKm": 3425791.23903,
+      "orbit": {
+        "inclinationDeg": 18,
+        "ascendingNodeDeg": 32,
+        "longitudeDeg": 128
+      }
+    },
+    {
+      "id": "barnard-c",
+      "systemId": "barnard",
+      "kind": "planet",
+      "position": [
+        -481.0230450316326,
+        -34.52398854832711,
+        -425.8688757536871
+      ],
+      "radius": 0.7534139067650291,
+      "hostStarId": "barnard-star",
+      "orbitRadiusKm": 4098981.65718,
+      "orbit": {
+        "inclinationDeg": 18,
+        "ascendingNodeDeg": 32,
+        "longitudeDeg": 222
+      }
+    },
+    {
+      "id": "barnard-e",
+      "systemId": "barnard",
+      "kind": "planet",
+      "position": [
+        621.0280265064412,
+        -268.2435359285713,
+        -585.4314181668456
+      ],
+      "radius": 0.6356929838329932,
+      "hostStarId": "barnard-star",
+      "orbitRadiusKm": 5699678.87367,
+      "orbit": {
+        "inclinationDeg": 18,
+        "ascendingNodeDeg": 32,
+        "longitudeDeg": 316
+      }
     }
   ],
   "lightYearKm": 9460730472580.8,
@@ -975,6 +1058,24 @@
         0,
         0,
         0
+      ]
+    },
+    {
+      "id": "barnard",
+      "groupId": "barnard",
+      "name": "巴纳德星 · 红矮星系",
+      "positionLy": [
+        -0.05683076754743976,
+        0.48790450086598447,
+        -5.94262245470481
+      ],
+      "primaryStar": "barnard-star",
+      "backgroundFile": "milky-way-4k.jpg",
+      "backgroundIntensity": 1.45,
+      "backgroundRotation": [
+        0.13,
+        2.72,
+        -0.16
       ]
     }
   ],

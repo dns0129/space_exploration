@@ -5,6 +5,7 @@ import { chromium, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
 import { verifyBlackHoleFlight } from "./verify-black-hole.mjs";
+import { verifyBarnardFlight } from "./verify-barnard.mjs";
 import { verifyEchoRiftFlight } from "./verify-echo-rift.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
@@ -73,9 +74,11 @@ try {
     "miranda", "ariel", "umbriel", "titania", "oberon",
     "naiad", "thalassa", "despina", "galatea", "larissa", "proteus", "triton", "nereid",
     "alpha-centauri-a", "alpha-centauri-b", "proxima-centauri", "proxima-b", "proxima-c", "proxima-d", "betelgeuse",
+    "barnard-star", "barnard-d", "barnard-b", "barnard-c", "barnard-e",
     "echo-pulsar", "veyl", "echo-thalassa", "cinder", "ruin", "shard", "gargantua",
   ]) {
     if (id === "betelgeuse") await page.locator("#star-system").selectOption("betelgeuse");
+    if (id === "barnard-star") await page.locator("#star-system").selectOption("barnard");
     if (id === "alpha-centauri-a") await page.locator("#star-system").selectOption("alpha-centauri");
     if (id === "gargantua") await page.locator("#star-system").selectOption("black-hole");
     if (id === "echo-pulsar") await page.locator("#star-system").selectOption("echo-rift");
@@ -181,12 +184,13 @@ try {
   await verifyBetelgeuseFlight(page);
   await verifyEchoRiftFlight(page);
   await verifyBlackHoleFlight(page);
+  await verifyBarnardFlight(page);
   await verifySurfaceFlight(page);
   await verifyWalkingFlight(page);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(
-    "PASS: all 51 destinations including black-hole, original and echo-rift galactic skies, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
+    "PASS: all 56 destinations including Barnard and black-hole, original and echo-rift galactic skies, interstellar warp, free flight, thrust, warp, camera, terrain landing, takeoff and local save/restore; zero HTTP requests or browser errors.",
   );
 } finally {
   await browser.close();

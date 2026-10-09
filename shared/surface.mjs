@@ -12,6 +12,13 @@ const profiles = {
   "alpha-centauri-b": { solid: false, sky: "#ffcb92", gravity: 300 },
   "proxima-centauri": { solid: false, sky: "#ff805a", gravity: 1000 },
   betelgeuse: { solid: false, sky: "#ff9d63", gravity: 0.007 },
+  "barnard-star": { solid: false, sky: "#ffc38f", gravity: 1298 },
+  // The radii and rocky surfaces are concepts; these gravities use minimum
+  // radial-velocity masses and illustrative radii, not measured surface values.
+  "barnard-d": { ground: "#a88565", gravity: 5.41, gravityEstimated: true },
+  "barnard-b": { ground: "#9c9283", gravity: 5.50, gravityEstimated: true },
+  "barnard-c": { ground: "#777d82", gravity: 5.79, gravityEstimated: true },
+  "barnard-e": { ground: "#b3afa0", gravity: 4.69, gravityEstimated: true },
   // Echo Rift is wholly fictional; gravity and atmosphere are gameplay values.
   "echo-pulsar": { solid: false, sky: "#a6e9ff", gravity: 0, landingReason: "脉冲星没有可着陆的固体地表" },
   veyl: { solid: false, sky: "#70bcca", gravity: 29, gravityEstimated: true, density: 2.5, scaleKm: 210, landingReason: "气态巨行星没有可降落的固体地表，请选择塔拉萨或烬岩" },

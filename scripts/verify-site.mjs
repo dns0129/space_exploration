@@ -7,6 +7,7 @@ import { chromium, expect, devices } from "@playwright/test";
 import { PNG } from "pngjs";
 import { verifyBetelgeuseFlight } from "./verify-betelgeuse.mjs";
 import { verifyBlackHoleFlight } from "./verify-black-hole.mjs";
+import { verifyBarnardFlight } from "./verify-barnard.mjs";
 import { verifyEchoRiftFlight } from "./verify-echo-rift.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
@@ -17,6 +18,9 @@ const base = process.env.VOYAGER_SITE_BASE || "/space_exploration/";
 const version = JSON.parse(
   await readFile(resolve(root, "version.json"), "utf8"),
 );
+assert.equal(version.download.revision, version.revision);
+assert.equal(version.download.url, base + "downloads/voyager-warp.zip");
+assert.match(version.download.sha256, /^[a-f0-9]{64}$/);
 const types = {
   ".html": "text/html",
   ".js": "text/javascript",
@@ -44,6 +48,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, {
       "Content-Type": types[extname(file)] || "application/octet-stream",
       "Cache-Control": "no-store",
+      "Content-Length": data.length,
     });
     res.end(data);
   } catch {
@@ -73,6 +78,10 @@ try {
       reducedMotion: "reduce",
     });
     const page = await context.newPage();
+    const offlineDownload = await page.request.head(origin + version.download.url);
+    assert.equal(offlineDownload.status(), 200, "The complete latest offline package is published under the site base path");
+    assert.equal(Number(offlineDownload.headers()["content-length"]), version.download.size);
+    await offlineDownload.dispose();
     const errors = [],
       requests = [],
       failed = [];
@@ -115,6 +124,10 @@ try {
         page.getByRole("button", { name: "打开导航" }),
       ).toHaveAttribute("aria-expanded", "false");
     }
+    await page.getByRole("button", { name: "巴纳德星 b", exact: true }).click();
+    await expect(page.locator("#destination-name")).toHaveText("巴纳德星 b");
+    await expect(page.locator("#destination-link")).toHaveAttribute("href", new RegExp("game.html.*#planet=barnard-b$"));
+    await expect(page.locator("#destination-description")).toContainText(/示意|概念/);
     await page.getByRole("button", { name: "海王星", exact: true }).click();
     await expect(page.locator("#destination-name")).toHaveText("海王星");
     await expect(page.locator("#destination-link")).toHaveAttribute(
@@ -230,6 +243,7 @@ try {
     await verifyBetelgeuseFlight(page);
     await verifyEchoRiftFlight(page);
     await verifyBlackHoleFlight(page);
+    await verifyBarnardFlight(page);
     await verifySurfaceFlight(page);
     await verifyWalkingFlight(page);
     await page.screenshot({ path: resolve(output, `landed-${name}.png`) });
