@@ -100,7 +100,10 @@ try {
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-resolution", "8192x4096");
       console.log(`Offline ${id}: native 8K imagery loaded without network requests`);
     }
-    const shot = PNG.sync.read(await page.locator("canvas").screenshot());
+    // Late in the full offline tour, software WebGL may need more than the
+    // default 30 s to present a stable frame of an existing complex model.
+    // Keep the actual rendered-pixel assertion and bound the wait as for Earth.
+    const shot = PNG.sync.read(await page.locator("canvas").screenshot({ timeout: 90000, animations: "disabled" }));
     let surface = 0;
     for (let i = 0; i < shot.data.length; i += 4) {
       if (shot.data[i] + shot.data[i + 1] + shot.data[i + 2] > 240) surface++;
