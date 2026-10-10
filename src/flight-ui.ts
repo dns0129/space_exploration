@@ -550,6 +550,8 @@ export class FlightInterface {
     $("#walking-gravity").textContent = `${gravity.toLocaleString("zh-CN", { maximumFractionDigits: 3 })} m/s²`;
     $("#walking-gravity-relative").textContent = station ? "站内人工重力" : `${relativeGravityLabel} 地球 g${estimatedGravity ? " · 估算" : ""}`;
     $("#walking-speed").textContent = `${(walking?.speedMps ?? 0).toFixed(1)} m/s`;
+    $(".walking-telemetry > div:last-child span").textContent = station ? "距离驾驶台" : "距离飞船";
+    $(".walking-telemetry > div:last-child small").textContent = station ? "星舰由驾驶辅助控制" : "飞船停留原地";
     $("#walking-distance").textContent = `${(walking?.distanceToShipM ?? 0).toLocaleString("zh-CN", { maximumFractionDigits: 1 })} m`;
     $("#walking-grounded").textContent = active ? walking?.grounded ? "在地面" : "腾空中" : "在飞船内 · 已停稳";
     $("#flight-exit").hidden = active;
@@ -593,7 +595,7 @@ export class FlightInterface {
     const flightLand = $<HTMLButtonElement>("#flight-land");
     flightLand.textContent = station ? "接管星舰（E）" : "返回飞船（E）";
     flightLand.disabled = this.paused || (station ? !this.scene?.helmAvailable : !walking?.grounded || walking.distanceToShipM > 12);
-    flightLand.title = this.paused ? "请先继续探索" : !walking?.grounded ? "请先落地，再返回飞船"
+    flightLand.title = station ? "落地并靠近驾驶室前窗驾驶台 3 米内，按 E 接管星舰" : this.paused ? "请先继续探索" : !walking?.grounded ? "请先落地，再返回飞船"
       : walking.distanceToShipM > 12 ? "请靠近停泊飞船至 12 米内，再进入飞船" : "返回飞船；返舱后可起飞";
     for (const id of ["flight-align", "flight-jump"]) {
       const button = $<HTMLButtonElement>(`#${id}`);

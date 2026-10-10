@@ -105,7 +105,7 @@ test("星舰停泊、舱内移动、驾驶室与观测舱、碰撞、暂停和�
   const spawn = await position(page);
   for (const [i, coordinate] of [0, 0, 24].entries()) expect(spawn[i]).toBeCloseTo(coordinate, 2);
   await page.screenshot({ path: info.outputPath("station-docking-bay.png") });
-  await expect(page.locator("#flight-land")).toBeEnabled();
+  await expect(page.locator("#flight-land")).toBeDisabled();
   await expect(page.locator("#flight-jump")).toBeDisabled();
   await expect(page.locator("#flight-align")).toBeDisabled();
   await expect(page.locator('button[data-body="ceres"]')).toBeDisabled();

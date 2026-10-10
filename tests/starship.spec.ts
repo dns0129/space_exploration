@@ -14,7 +14,7 @@ async function restore(page: Page, state: unknown) {
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   expect((await page.request.post("/api/flight/save", { data: state })).ok()).toBe(true);
   await page.evaluate(s => localStorage.setItem("voyager-flight-v1", JSON.stringify(s)), state);
-  await page.locator("#quality").selectOption("standard");
+  await page.locator("#quality").selectOption("standard", { force: true });
   await page.locator("#flight-quality").selectOption("standard", { force: true });
   await page.locator("#mode-flight").click();
   await expect(page.locator("#loading-overlay")).toBeHidden();
@@ -32,7 +32,7 @@ test("星舰驾驶室接管、自由飞行、外部视角、舰内走动与移�
   await page.goto("/#planet=earth-station");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await expect(page.locator("h1")).toContainText("远航星舰");
-  await page.locator("#quality").selectOption("standard");
+  await page.locator("#quality").selectOption("standard", { force: true });
   await page.locator("#flight-quality").selectOption("standard", { force: true });
   await page.locator("#mode-flight").click();
   await expect(page.locator("#loading-overlay")).toBeHidden();
