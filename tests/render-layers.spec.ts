@@ -36,6 +36,14 @@ test("局部大气和真空地表停止全局模型工作，返回太空重新�
       await expect(page.locator("canvas")).toHaveAttribute("data-render-mode", "observation");
     }
     await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
+    if (id === "earth" && altitudeKm === 100) await page.evaluate(async () => {
+      const { SolarScene } = await import("/src/planet-scene.ts");
+      const render = SolarScene.prototype["renderFlightWorld"];
+      SolarScene.prototype["renderFlightWorld"] = function () {
+        (window as any).renderLayersScene = this;
+        return render.call(this);
+      };
+    });
     await page.getByRole("button", { name: "自由航行", exact: true }).click();
     await expect(page.locator("#loading-overlay")).toBeHidden();
     await page.locator("#flight-quality").selectOption("standard");
@@ -56,7 +64,17 @@ test("局部大气和真空地表停止全局模型工作，返回太空重新�
       expect(Number(await canvas.getAttribute("data-space-updates"))).toBe(updates);
       expect(Number(await canvas.getAttribute("data-space-models"))).toBe(models);
       expect(detailRequests, "局部场景不得继续请求全球地球细节图层").toBe(downloads);
-    } else expect(Number(await canvas.getAttribute("data-space-updates"))).toBeGreaterThan(updates);
+    } else {
+      expect(Number(await canvas.getAttribute("data-space-updates"))).toBeGreaterThan(updates);
+      const layers = await page.evaluate(() => {
+        const scene = (window as any).renderLayersScene;
+        return {
+          earthVisible: scene.flightModelById.get("earth").group.visible,
+          atmosphereVisible: scene.flightModelById.get("earth").layers.atmosphere.visible,
+        };
+      });
+      expect(layers, "返回太空仍绘制地球，但隐藏其大气壳").toEqual({ earthVisible: true, atmosphereVisible: false });
+    }
     expect(models, "空间模型按需建立，启动时不生成全部天体").toBeLessThan(world.bodies.length);
   }
   expect(errors).toEqual([]);

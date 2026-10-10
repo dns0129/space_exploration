@@ -1578,7 +1578,11 @@ export class SolarScene {
       const lod = pixelRadius < 8 ? this.tinySphere : pixelRadius < 100 ? this.distantSphere : pixelRadius < 280 ? this.mediumSphere : pixelRadius < 700 ? this.largeSphere : undefined;
       for (const sphere of this.flightSpheres.get(model)!) sphere.geometry = lod ?? this.flightGeometries.get(sphere)!;
       // The local curved tile adds detail above the coarse globe; clouds stay overhead.
-      if (model.layers.atmosphere) model.layers.atmosphere.visible = pixelRadius > 12 && (model.body.id !== environment.body.id || !this.surfaceScene.usesAtmosphere(ship));
+      // Planetary atmospheres belong to surface views and station windows;
+      // stellar coronae and magnetospheres remain visible during space flight.
+      if (model.layers.atmosphere) model.layers.atmosphere.visible = pixelRadius > 12
+        && (surface || this.inStation || model.body.kind === "star")
+        && (model.body.id !== environment.body.id || !this.surfaceScene.usesAtmosphere(ship));
       if (model.layers.clouds) model.layers.clouds.visible = pixelRadius > 12;
       if (body.id === "earth") {
         const uniforms = (model.surface.material as THREE.ShaderMaterial).uniforms;
