@@ -54,7 +54,7 @@ async function launchStation(page: Page, checkpoint?: StationCheckpoint) {
     await page.locator("#flight-resume").click();
   } else {
     await expect(page.locator("#flight-land")).toBeEnabled();
-    await expect(page.locator("#flight-land")).toHaveText("停泊并进入空间站（L）");
+    await expect(page.locator("#flight-land")).toHaveText("停泊并进入星舰（L）");
     await page.locator("#flight-land").click();
   }
   await expect(page.locator("#canvas-host canvas")).toHaveAttribute("data-render-mode", "station");
@@ -89,7 +89,7 @@ async function moveUntil(page: Page, input: string[], mobile: boolean, check: ()
   finally { await release(); }
 }
 
-test("空间站停泊、舱内移动、主控室与观测舱、碰撞、暂停和存档恢复", async ({ page }, info) => {
+test("星舰停泊、舱内移动、驾驶室与观测舱、碰撞、暂停和存档恢复", async ({ page }, info) => {
   test.setTimeout(480_000);
   const mobile = info.project.name === "mobile";
   const errors: string[] = [];
@@ -148,7 +148,7 @@ test("空间站停泊、舱内移动、主控室与观测舱、碰撞、暂停�
   await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready");
 
   await moveUntil(page, ["KeyW", "ShiftLeft"], mobile, async () => {
-    await expect(host).toHaveAttribute("data-station-zone", "主控室");
+    await expect(host).toHaveAttribute("data-station-zone", "驾驶室");
     // Continue toward the visible central console. Collision must stop the
     // character before the console instead of allowing a walk through it.
     await expect.poll(async () => (await position(page))[2], { intervals: [100] }).toBeLessThan(-26);
@@ -170,7 +170,7 @@ test("空间站停泊、舱内移动、主控室与观测舱、碰撞、暂停�
   expect(frozen.elapsed).toEqual(command.elapsed);
 
   await launchStation(page, command);
-  await expect(host).toHaveAttribute("data-station-zone", "主控室");
+  await expect(host).toHaveAttribute("data-station-zone", "驾驶室");
   const restored = await saveState(page);
   expect(restored.position).toEqual(command.position);
   expect(restored.stationVisit).toEqual(command.stationVisit);
@@ -201,18 +201,11 @@ test("空间站停泊、舱内移动、主控室与观测舱、碰撞、暂停�
   expect(windowRestored.stationVisit).toEqual(windowPose.stationVisit);
   await page.screenshot({ path: info.outputPath("station-earth-window.png") });
 
-  // Resume the known pad checkpoint and use the desktop E / mobile return
-  // button to prove that the near-pad return path still works after a visit.
+  // The hangar remains walkable; the helm now requires reaching the bridge.
   await launchStation(page, parked);
   await page.locator("#flight-pause").click();
-  await expect(page.locator("#flight-land")).toBeEnabled();
-  if (mobile) await page.locator("#flight-land").click();
-  else await page.keyboard.press("KeyE");
-  await expect(page.locator("#flight-ui")).toHaveAttribute("data-exploration", "ship");
-  await expect(host).not.toHaveAttribute("data-render-mode", "station");
-  await page.locator("#flight-pause").click();
-  const returned = await saveState(page);
-  expect(returned.stationVisit).toBeUndefined();
-  expect(returned.position).toEqual(parked.position);
+  await expect(page.locator("#flight-land")).toBeDisabled();
+  await page.keyboard.press("KeyE");
+  await expect(page.locator("#flight-ui")).toHaveAttribute("data-exploration", "station");
   expect(errors).toEqual([]);
 });

@@ -151,3 +151,26 @@ test("old station approach snapshots carry Earth's precise reference frame throu
     radialM: source.referenceFrame.radialM.map((n, i) => n + (i === 0 ? 1 : 0)) } };
   assert.equal(validateFlightState(damaged), null, "relocation never legitimizes a contradictory original reference");
 });
+
+test("starship visits retain internal poses while flying and across stellar systems", () => {
+  for (const systemId of ["solar", "alpha-centauri", "proxima-centauri", "barnard"]) {
+    const body = world.bodies.find(b => (b.systemId ?? "solar") === systemId && b.kind === "star");
+    if (!body) continue;
+    for (const piloting of [true, false]) {
+      const source = savedFlight({ systemId, target: body.id,
+        position: atDistance(body.radius * world.unitsKm + 1000000, body.position), velocity: [0, 0, .001],
+        stationVisit: visit({ vessel: true, piloting, positionM: [0, 0, -36] }) });
+      const normalized = validateFlightState(source);
+      assert(normalized);
+      assert.equal(normalized.stationVisit.piloting, piloting);
+      assert.deepEqual(normalized.stationVisit.positionM, [0, 0, -36]);
+      assert.deepEqual(validateFlightState(normalized), normalized);
+      const ship = new ShipDynamics();
+      assert(ship.restore(normalized));
+      assert.equal(ship.systemId, systemId);
+      assert.deepEqual(ship.velocity.toArray(), normalized.velocity);
+    }
+  }
+  for (const flags of [{ vessel: false }, { vessel: "true" }, { piloting: true }, { vessel: true, piloting: 1 }])
+    assert.equal(validateFlightState(savedFlight({ stationVisit: visit(flags) })), null);
+});

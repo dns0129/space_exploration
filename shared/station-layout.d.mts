@@ -10,6 +10,7 @@ export interface StationRoom extends StationRectangle {
   readonly height: number;
 }
 export type StationPosition = readonly number[] | { readonly x: number; readonly y: number; readonly z: number };
+export const STATION_HELM: readonly number[];
 export const STATION_SPAWN: readonly number[];
 export const STATION_ROOMS: readonly StationRoom[];
 export const STATION_OBSTACLES: readonly StationRectangle[];

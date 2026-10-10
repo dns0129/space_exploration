@@ -46,7 +46,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
     <nav class="planet-rail" aria-label="太阳系天体">
       <span class="rail-label">SOLAR<br>SYSTEM</span>
-      ${[...PRIMARY_BODIES, ...EXPLORATION_BODIES, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...ECHO_RIFT_BODIES, ...BLACK_HOLE_BODIES, ...BARNARD_BODIES].map((planet, index) => `<button data-body="${planet.id}" class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" aria-label="${planet.name}，${planet.id === "earth" ? "当前观测天体" : "切换观测"}" ${planet.id === "earth" ? 'aria-current="page"' : ""} title="${planet.name} · ${planet.english}"><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.id === "ceres" ? "小行星带" : planet.id === "earth-station" ? "空间站" : planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
+      ${[...PRIMARY_BODIES, ...EXPLORATION_BODIES, ...CENTAURI_BODIES, ...BETELGEUSE_BODIES, ...ECHO_RIFT_BODIES, ...BLACK_HOLE_BODIES, ...BARNARD_BODIES].map((planet, index) => `<button data-body="${planet.id}" class="planet-item ${planet.id === "earth" ? "active" : ""}" style="--planet-color:${planet.color}" aria-label="${planet.name}，${planet.id === "earth" ? "当前观测天体" : "切换观测"}" ${planet.id === "earth" ? 'aria-current="page"' : ""} title="${planet.name} · ${planet.english}"><span class="planet-dot ${planet.id}"></span><span class="planet-name">${planet.id === "ceres" ? "小行星带" : planet.id === "earth-station" ? "星舰" : planet.name}</span><span class="planet-order">${String(index).padStart(2, "0")}</span></button>`).join("")}
       <span class="rail-progress"><b>${SOLAR_SYSTEM.length}</b> / ${SOLAR_SYSTEM.length}</span>
     </nav>
 
@@ -298,7 +298,7 @@ function updateBodyInfo(id: BodyId) {
       : ["地轴倾角", format(body.axialTiltDeg), "°"],
   ];
   if (body.kind === "black-hole") facts.splice(0, 4, ["阴影视觉半径", format(body.radiusKm, 0), "km"], ["渲染模型", "三维盘面 / 透镜艺术近似", ""], ["地表登陆", "不可登陆", ""], ["安全屏障", "6 倍阴影半径", ""]);
-  if (body.kind === "station") facts.splice(0, 4, ["设施跨度", format(body.radiusKm * 2, 0), "km"], ["轨道高度", format((body.orbitRadiusKm ?? 0) - 6371, 0), "km"], ["站内设施", "主控室 / 观测舱", ""], ["停泊与探索", "L 停泊 · WASD 行走", ""]);
+  if (body.kind === "station") facts.splice(0, 4, ["设施跨度", format(body.radiusKm * 2, 0), "km"], ["轨道高度", format((body.orbitRadiusKm ?? 0) - 6371, 0), "km"], ["舰内设施", "驾驶室 / 观测舱", ""], ["停泊与探索", "L 停泊 · WASD 行走", ""]);
   $(".facts").innerHTML = facts
     .map(
       ([label, value, unit]) =>

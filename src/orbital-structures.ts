@@ -4,8 +4,8 @@ import type { CelestialBody } from "./solar-system";
 import type { PlanetModel } from "./planet-models";
 import { orbitPosition } from "../shared/solar-orbits.mjs";
 
-/** Original fictional megastructure; unit radius bounds the complete 360 km span.
- * Local +Y is the tower axis and all three berth approaches face local +Z.
+/** Fictional starship, bounded by a unit radius.
+ * Local -Z points forward; the aft hangar approaches from +Z.
  * Keep the group unrotated: navigation uses this same station-local frame.
  */
 export function createStationModel(body: CelestialBody): PlanetModel {
@@ -24,93 +24,33 @@ export function createStationModel(body: CelestialBody): PlanetModel {
     const batch = pieces.get(material) ?? [];
     batch.push(geometry); pieces.set(material, batch);
   }
-  const horizontalRing = new THREE.Euler(Math.PI / 2, 0, 0);
-  const alongX = new THREE.Euler(0, 0, Math.PI / 2);
-  // Twin habitat decks, continuous light ribbons and individually armored sectors.
-  add(new THREE.TorusGeometry(0.585, 0.061, 10, 96), hull, 0, 0.035, 0, horizontalRing);
-  add(new THREE.TorusGeometry(0.585, 0.028, 8, 96), frame, 0, -0.065, 0, horizontalRing);
-  for (const y of [-0.012, 0.082]) add(new THREE.TorusGeometry(0.62, 0.006, 5, 96), cyan, 0, y, 0, horizontalRing);
-  add(new THREE.TorusGeometry(0.585, 0.007, 5, 96), amber, 0, -0.093, 0, horizontalRing);
-  for (let sector = 0; sector < 20; sector++) {
-    const angle = sector * Math.PI * 2 / 20;
-    const x = Math.cos(angle), z = Math.sin(angle);
-    const tangent = new THREE.Euler(0, -angle - Math.PI / 2, 0);
-    add(new THREE.BoxGeometry(0.142, 0.056, 0.094), armor, x * 0.585, 0.095, z * 0.585, tangent);
-    add(new THREE.BoxGeometry(0.1, 0.004, 0.043), frame, x * 0.585, 0.125, z * 0.585, tangent);
-    add(new THREE.BoxGeometry(0.065, 0.006, 0.006), sector % 5 === 0 ? amber : cyan, x * 0.639, 0.036, z * 0.639, tangent);
-    // Tall rib plates establish thickness when seen almost edge-on.
-    add(new THREE.BoxGeometry(0.012, 0.15, 0.085), gold, x * 0.585, 0.022, z * 0.585, tangent);
-  }
-  for (let spoke = 0; spoke < 8; spoke++) {
-    const angle = spoke * Math.PI / 4;
-    const x = Math.cos(angle), z = Math.sin(angle);
-    const radial = new THREE.Euler(0, -angle, 0);
-    add(new THREE.BoxGeometry(0.39, 0.07, 0.064), frame, x * 0.397, 0.018, z * 0.397, radial);
-    add(new THREE.BoxGeometry(0.36, 0.008, 0.011), cyan, x * 0.397, 0.057, z * 0.397, radial);
-    add(new THREE.BoxGeometry(0.16, 0.096, 0.083), hull, x * 0.37, 0.03, z * 0.37, radial);
-    add(new THREE.BoxGeometry(0.008, 0.101, 0.09), gold, x * 0.4, 0.03, z * 0.4, radial);
-  }
-
-  // Central main-control deck: panoramic blue windows above the service hull.
-  add(new THREE.CylinderGeometry(0.23, 0.27, 0.18, 32), hull, 0, 0.06, 0);
-  add(new THREE.CylinderGeometry(0.205, 0.235, 0.10, 32), frame, 0, -0.072, 0);
-  add(new THREE.TorusGeometry(0.25, 0.014, 6, 48), gold, 0, 0.128, 0, horizontalRing);
-  add(new THREE.CylinderGeometry(0.221, 0.221, 0.082, 32, 1, true), glass, 0, 0.213, 0);
-  add(new THREE.CylinderGeometry(0.15, 0.15, 0.07, 24), frame, 0, 0.21, 0);
-  for (const y of [0.168, 0.258]) {
-    add(new THREE.CylinderGeometry(0.239, 0.239, 0.016, 32), hull, 0, y, 0);
-    add(new THREE.TorusGeometry(0.236, 0.004, 5, 48), cyan, 0, y + 0.01, 0, horizontalRing);
-  }
-  for (let window = 0; window < 12; window++) {
-    const angle = window * Math.PI / 6;
-    const x = Math.cos(angle), z = Math.sin(angle);
-    const tangent = new THREE.Euler(0, -angle - Math.PI / 2, 0);
-    add(new THREE.BoxGeometry(0.009, 0.086, 0.012), hull, x * 0.222, 0.213, z * 0.222, tangent);
-    add(new THREE.BoxGeometry(0.054, 0.022, 0.008), window % 3 === 0 ? amber : cyan, x * 0.16, 0.213, z * 0.16, tangent);
-  }
-
-  // Observation cupola with crossed structural arches and visible interior deck.
-  add(new THREE.CylinderGeometry(0.183, 0.183, 0.025, 32), armor, 0, 0.284, 0);
-  add(new THREE.SphereGeometry(0.18, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), glass, 0, 0.298, 0);
-  for (let rib = 0; rib < 4; rib++) {
-    add(new THREE.TorusGeometry(0.182, 0.005, 5, 40, Math.PI), hull, 0, 0.298, 0, new THREE.Euler(0, rib * Math.PI / 4, 0));
-  }
-  add(new THREE.TorusGeometry(0.181, 0.004, 5, 48), cyan, 0, 0.30, 0, horizontalRing);
-  add(new THREE.CylinderGeometry(0.057, 0.07, 0.04, 16), frame, 0, 0.321, 0);
-  add(new THREE.CylinderGeometry(0.035, 0.035, 0.007, 16), cyan, 0, 0.345, 0);
-  add(new THREE.CylinderGeometry(0.007, 0.011, 0.18, 8), gold, -0.13, 0.39, -0.14);
-  add(new THREE.SphereGeometry(0.017, 8, 6), amber, -0.13, 0.485, -0.14);
-
-  // Rear solar/radiator wings leave the forward docking approach unobstructed.
-  for (const sign of [-1, 1]) {
-    add(new THREE.CylinderGeometry(0.019, 0.019, 0.78, 8), frame, sign * 0.595, -0.012, -0.1, alongX);
-    add(new THREE.BoxGeometry(0.34, 0.018, 0.43), solar, sign * 0.76, -0.008, -0.1);
-    for (let row = 0; row <= 10; row++) add(new THREE.BoxGeometry(0.342, 0.006, 0.004), gold, sign * 0.76, 0.006, -0.315 + row * 0.043);
-    for (const dx of [-0.172, -0.085, 0, 0.085, 0.172]) add(new THREE.BoxGeometry(0.004, 0.006, 0.435), frame, sign * 0.76 + dx, 0.006, -0.1);
-    add(new THREE.BoxGeometry(0.012, 0.009, 0.435), cyan, sign * 0.939, 0.008, -0.1);
-    add(new THREE.SphereGeometry(0.011, 8, 6), amber, sign * 0.983, -0.012, -0.1);
-  }
-
-  // Three recessed berths, each with a broad pad, gantry and sequential beacons.
-  // Main berth center: (0, -0.14, 0.82); its unobstructed approach is from +Z.
-  for (const [bay, x] of [-0.23, 0, 0.23].entries()) {
-    add(new THREE.BoxGeometry(0.17, 0.04, 0.49), frame, x, -0.175, 0.66);
-    add(new THREE.BoxGeometry(0.136, 0.006, 0.43), armor, x, -0.152, 0.684);
-    for (const edge of [-1, 1]) {
-      add(new THREE.BoxGeometry(0.012, 0.062, 0.49), hull, x + edge * 0.079, -0.146, 0.66);
-      add(new THREE.BoxGeometry(0.004, 0.006, 0.447), cyan, x + edge * 0.071, -0.112, 0.681);
-      add(new THREE.BoxGeometry(0.018, 0.116, 0.028), hull, x + edge * 0.079, -0.097, 0.884);
-      add(new THREE.BoxGeometry(0.006, 0.099, 0.032), cyan, x + edge * 0.068, -0.097, 0.884);
-      for (let beacon = 0; beacon < 5; beacon++) {
-        add(new THREE.BoxGeometry(0.02, 0.007, 0.013), amber, x + edge * 0.059, -0.145, 0.53 + beacon * 0.073);
-      }
+  // Long armored cruiser: forward bridge (-Z), hangar aft, four drive nacelles.
+  add(new THREE.BoxGeometry(0.36, 0.18, 1.42), frame, 0, 0, 0);
+  add(new THREE.BoxGeometry(0.44, 0.11, 1.18), hull, 0, 0.06, 0.02);
+  add(new THREE.BoxGeometry(0.3, 0.08, 1.52), armor, 0, -0.1, -0.03);
+  add(new THREE.ConeGeometry(0.25, 0.38, 4), hull, 0, 0.015, -0.8, new THREE.Euler(-Math.PI / 2, 0, Math.PI / 4));
+  add(new THREE.BoxGeometry(0.32, 0.09, 0.3), frame, 0, 0.16, -0.56);
+  add(new THREE.BoxGeometry(0.27, 0.065, 0.018), glass, 0, 0.17, -0.716);
+  add(new THREE.BoxGeometry(0.28, 0.008, 0.023), cyan, 0, 0.13, -0.723);
+  for (const side of [-1, 1]) {
+    add(new THREE.BoxGeometry(0.1, 0.12, 1.08), armor, side * 0.27, -0.02, 0.13);
+    add(new THREE.BoxGeometry(0.025, 0.014, 1.16), cyan, side * 0.227, 0.07, 0.02);
+    add(new THREE.BoxGeometry(0.1, 0.1, 0.7), frame, side * 0.38, -0.02, 0.24);
+    for (const x of [0.29, 0.43]) {
+      add(new THREE.CylinderGeometry(0.066, 0.082, 0.66, 24), hull, side * x, -0.025, 0.32, new THREE.Euler(Math.PI / 2, 0, 0));
+      add(new THREE.CylinderGeometry(0.06, 0.06, 0.04, 24), frame, side * x, -0.025, 0.67, new THREE.Euler(Math.PI / 2, 0, 0));
+      add(new THREE.CylinderGeometry(0.044, 0.044, 0.012, 24), cyan, side * x, -0.025, 0.696, new THREE.Euler(Math.PI / 2, 0, 0));
     }
-    add(new THREE.BoxGeometry(0.176, 0.02, 0.028), hull, x, -0.031, 0.884);
-    add(new THREE.BoxGeometry(0.136, 0.005, 0.032), cyan, x, -0.043, 0.884);
-    add(new THREE.BoxGeometry(0.134, 0.104, 0.023), armor, x, -0.096, 0.435);
-    add(new THREE.BoxGeometry(0.085, 0.045, 0.004), cyan, x, -0.077, 0.45);
-    for (let stripe = 0; stripe <= bay; stripe++) add(new THREE.BoxGeometry(0.007, 0.004, 0.029), amber, x + (stripe - bay / 2) * 0.017, -0.146, 0.825);
+    for (let plate = 0; plate < 8; plate++) {
+      add(new THREE.BoxGeometry(0.13, 0.015, 0.095), armor, side * 0.14, 0.122, -0.46 + plate * 0.13);
+      add(new THREE.BoxGeometry(0.008, 0.02, 0.08), gold, side * 0.215, 0.09, -0.46 + plate * 0.13);
+    }
+    add(new THREE.BoxGeometry(0.016, 0.055, 0.44), glass, side * 0.228, 0.025, -0.05);
+    add(new THREE.BoxGeometry(0.024, 0.035, 0.035), amber, side * 0.47, 0.035, 0.56);
   }
+  add(new THREE.BoxGeometry(0.23, 0.09, 0.035), frame, 0, -0.01, 0.73);
+  add(new THREE.BoxGeometry(0.2, 0.008, 0.04), amber, 0, -0.05, 0.75);
+  add(new THREE.BoxGeometry(0.2, 0.11, 0.018), solar, 0, -0.015, 0.752);
 
   // Static material batches keep the detailed exterior to eight draw calls.
   let surface!: THREE.Mesh;

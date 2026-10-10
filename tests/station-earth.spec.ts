@@ -264,12 +264,12 @@ test("空间站窗外复用轨道地球、云层、夜景与大气，并保持�
   })).toEqual(frozen);
   expect(await page.evaluate(() => {
     const state = (window as any).stationEarthTest;
-    return state.scene.restoreFlight(state.pad);
+    return state.scene.restoreFlight({ ...state.pad, stationVisit: { ...state.pad.stationVisit, vessel: true, positionM: [0, 0, -36] } });
   })).toBe(true);
-  await expect(canvas).toHaveAttribute("data-station-zone", "停泊区");
+  await expect(canvas).toHaveAttribute("data-station-zone", "驾驶室");
   await page.locator("#flight-pause").click();
   await page.locator("#flight-land").click();
-  await expect(canvas).toHaveAttribute("data-exploration", "ship");
+  await expect(canvas).toHaveAttribute("data-exploration", "starship");
   expect(await page.evaluate(() => {
     const state = (window as any).stationEarthTest;
     const earth = state.scene.flightModelById.get("earth");

@@ -13,6 +13,7 @@ import { WalkingDynamics } from "./walking-dynamics";
 import { initializeWalkingPhysics } from "./walking-physics";
 import { SpatialScale } from "../shared/spatial-frame.mjs";
 import { ExplorerView } from "./explorer-view";
+import { createStationModel } from "./orbital-structures";
 import { StationInterior } from "./station-interior";
 import { STATION_SPAWN } from "../shared/station-layout.mjs";
 import { validateFlightState } from "../shared/flight-state.mjs";
@@ -315,6 +316,7 @@ export class SolarScene {
   private dynamics?: ShipDynamics;
   private walker?: WalkingDynamics;
   private stationInterior?: StationInterior;
+  private starshipHull?: THREE.Group;
   private readonly stationSpaceRotation = new THREE.Quaternion();
   private readonly stationSpaceOrigin = new THREE.Vector3();
   private readonly stationLocalOrigin = new THREE.Vector3().fromArray(STATION_SPAWN);
@@ -1011,7 +1013,7 @@ export class SolarScene {
   }
 
   private renderFlightWorld() {
-    if (this.inStation) {
+    if (this.bridgeView) {
       // Draw the actual orbital world, then let the local hull and glazing
       // occlude it. Celestial resources stay owned by the outer space scene.
       const autoClear = this.renderer.autoClear;
@@ -1093,14 +1095,14 @@ export class SolarScene {
         this.updateSurfaceMaps(delta, time);
         this.updateEarthDetail(delta, time);
       }
-      const reuseFrame = this.flightPaused && (this.inStation || this.renderPolicy.mode === "surface")
+      const reuseFrame = this.flightPaused && (this.bridgeView || this.renderPolicy.mode === "surface")
         && this.stillSeconds > 0.4 && !this.flightFrameDirty && this.flightCameraQuiet();
       this.renderer.domElement.dataset.surfaceFrameIdle = String(reuseFrame);
       // RAF, controls, tracking and HUD continue above; retain the last canvas frame instead of repeating GPU work.
       if (reuseFrame) return;
       this.renderFlightWorld();
       this.recordFlightRender();
-      if (this.ship.group.visible) {
+      if (this.ship.group.visible || this.starshipHull?.visible) {
         // The hull pass uses the same physical scale as the world camera.
         const camera = this.shipCamera;
         if (camera.aspect !== this.camera.aspect || camera.fov !== this.camera.fov) {
@@ -1354,7 +1356,10 @@ export class SolarScene {
     if (restored) {
       const saved = validateFlightState(state)!;
       this.stationInterior?.leave();
-      if (saved.stationVisit) this.getStationInterior().enter(saved.stationVisit);
+      if (saved.stationVisit) {
+        this.getStationInterior().enter(saved.stationVisit);
+        if (!saved.stationVisit.vessel) this.dynamics!.orientation.copy(this.stationSpaceRotation);
+      }
       else this.resumeSpaceWork();
       this.walker?.restore(saved.walking, this.dynamics!);
       this.explorerCamera = saved.stationVisit?.camera ?? saved.walking?.camera ?? "third";
@@ -1367,7 +1372,11 @@ export class SolarScene {
     }
     return restored;
   }
-  get inStation() { return this.stationInterior?.active ?? false; }
+  get aboardStarship() { return this.stationInterior?.active ?? false; }
+  get pilotingStarship() { return this.aboardStarship && !!this.stationInterior?.piloting; }
+  get inStation() { return this.aboardStarship && !this.pilotingStarship; }
+  private get bridgeView() { return this.aboardStarship && (this.inStation || (this.dynamics?.camera === "cockpit" && !this.dynamics?.warping)); }
+  get helmAvailable() { return this.inStation && this.stationInterior!.grounded && this.stationInterior!.distanceToHelmM <= 3; }
   get walking() { return this.inStation || (this.walker?.active ?? false); }
   get walkingCamera() { return this.explorerCamera; }
   setWalkingCamera(view: "first" | "third") {
@@ -1378,16 +1387,19 @@ export class SolarScene {
   }
   walkFlight(): string | null {
     if (!this.dynamics || !this.walker) return "飞船尚未就绪";
-    if (this.inStation) {
-      if (this.flightPaused) return "请先继续探索，再返回飞船";
-      if (!this.stationInterior!.grounded) return "请先落地，再返回飞船";
-      if (this.stationInterior!.distanceToShipM > 12) return "请沿引导线返回停泊区，在返舱点 12 米内按 E 返回飞船";
-      this.stationInterior!.leave();
-      this.resumeSpaceWork();
-      this.flightControls?.setWalking(false);
+    if (this.aboardStarship) {
+      if (this.flightPaused) return "请先继续航行或探索";
+      if (this.dynamics.warping) return "请等待跃迁结束，再离开驾驶座";
+      if (this.pilotingStarship) {
+        this.stationInterior!.releaseHelm();
+        this.dynamics.angularVelocity.set(0, 0, 0);
+      } else {
+        if (!this.helmAvailable) return "请沿引导线走到驾驶室前窗的驾驶台，落地后在 3 米内按 E 接管星舰";
+        this.stationInterior!.takeHelm();
+        this.dynamics.camera = "cockpit";
+      }
+      this.flightControls?.setWalking(this.walking);
       this.flightControls?.clear();
-      this.camera.near = 1e-8;
-      this.camera.updateProjectionMatrix();
       this.flightFrameDirty = true;
       this.updateFlightCamera(1);
       return null;
@@ -1442,7 +1454,7 @@ export class SolarScene {
     if (this.inStation) return this.walkFlight();
     if (this.walking) return "请先返回飞船，再起飞";
     if (!this.dynamics) return "飞船尚未就绪";
-    if (this.dynamics.target === "earth-station" && this.dynamics.landingPhase === "manual") return this.dockStation();
+    if (!this.aboardStarship && this.dynamics.target === "earth-station" && this.dynamics.landingPhase === "manual") return this.dockStation();
     this.flightControls?.clear();
     if (this.dynamics.landingPhase !== "manual" && this.dynamics.landingPhase !== "landed") {
       this.flightFrameDirty = true;
@@ -1494,6 +1506,7 @@ export class SolarScene {
     ship.collision = null;
     ship.orientation.setFromRotationMatrix(new THREE.Matrix4().lookAt(center, ship.position, new THREE.Vector3(0, 1, 0)));
     this.getStationInterior().enter();
+    ship.orientation.copy(this.stationSpaceRotation);
     this.explorerCamera = "first";
     this.flightControls?.setWalking(true);
     this.flightControls?.clear();
@@ -1546,7 +1559,7 @@ export class SolarScene {
     const celestialBodies: string[] = [];
     for (const body of ship.activeBodies) {
       // The local deck replaces the surrounding megastructure while inside it.
-      if (this.inStation && body.id === "earth-station") continue;
+      if (this.aboardStarship && body.id === "earth-station") continue;
       if (surface && (body.id === environment.body.id || body.id === localStar.id)) continue;
       this.flightRelative.fromArray(body.position).sub(ship.position);
       const observerDistance = this.inStation
@@ -1603,8 +1616,10 @@ export class SolarScene {
 
   private updateFlightCamera(blend: number) {
     const ship = this.dynamics!;
-    if (this.inStation) {
+    if (this.bridgeView) {
       const interior = this.stationInterior!;
+      this.stationSpaceOrigin.copy(ship.position);
+      this.stationSpaceRotation.copy(ship.orientation);
       interior.updateCamera();
       const localOffset = interior.camera.position.clone().sub(this.stationLocalOrigin)
         .applyQuaternion(this.stationSpaceRotation).multiplyScalar(ship.scale.metresToUniverseDistance(1));
@@ -1622,24 +1637,27 @@ export class SolarScene {
       if (this.surfaceScene.sky.parent !== this.spaceScene || this.flightSun.parent !== this.spaceScene)
         this.spaceScene.add(this.surfaceScene.sky, this.flightLight.mesh, this.flightSun);
       this.updateSpaceWorld();
-      const sun = ship.config.bodies.find(body => body.id === "sun")!;
+      const sun = ship.activeBodies.filter(body => body.kind === "star" || body.kind === "black-hole")
+        .reduce((a, b) => ship.position.distanceToSquared(new THREE.Vector3(...a.position))
+          < ship.position.distanceToSquared(new THREE.Vector3(...b.position)) ? a : b);
       this.flightSun.position.fromArray(sun.position).sub(ship.position);
-      this.flightSun.color.set(getBody("sun").color);
-      this.flightSun.intensity = 2.5;
+      this.flightSun.color.set(getBody(sun.id).color);
+      this.flightSun.intensity = sun.kind === "black-hole" ? 0 : 2.5;
       this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
       this.flightLight.update(ship, this.camera, this.flightSun);
       this.useSystemBackground(ship.systemId);
       this.resumeSpaceWork();
       this.ship.group.visible = false;
+      if (this.starshipHull) this.starshipHull.visible = false;
       this.warpEffect.mesh.visible = false;
       this.renderer.domElement.dataset.renderMode = "station";
       this.renderer.domElement.dataset.spaceWorkActive = "true";
-      this.renderer.domElement.dataset.exploration = "station";
-      this.renderer.domElement.dataset.physicsEngine = "station-collision";
+      this.renderer.domElement.dataset.exploration = this.pilotingStarship ? "starship" : "station";
+      this.renderer.domElement.dataset.physicsEngine = this.pilotingStarship ? "flight" : "station-collision";
       this.renderer.domElement.dataset.stationZone = interior.zone;
       this.renderer.domElement.dataset.stationPositionM = JSON.stringify(interior.positionM.toArray());
       this.renderer.domElement.dataset.stationCamera = interior.cameraView;
-      this.renderer.domElement.setAttribute("aria-label", "空间站探索：WASD 行走，Shift 奔跑，空格跳跃，方向键或拖动看向，C 切换视角，返回停泊区按 E 返舱");
+      this.renderer.domElement.setAttribute("aria-label", this.pilotingStarship ? "星舰驾驶：WASD 推力与平移，R/F 升降，Q/E 翻滚，方向键转向，空格刹车，X 离开驾驶座" : "星舰舱内探索：WASD 行走，Shift 奔跑，空格跳跃，驾驶台附近按 E 接管");
       return;
     }
     delete this.renderer.domElement.dataset.stationZone;
@@ -1687,7 +1705,16 @@ export class SolarScene {
     this.ship.group.scale.setScalar(1);
     const attitude = ship.orientation.clone().multiply(this.bankRotation.setFromAxisAngle(this.flightAxis, ship.bank));
     this.ship.group.quaternion.copy(attitude);
-    this.ship.group.visible = ship.camera === "chase" && !ship.warping && !this.walking;
+    this.ship.group.visible = !this.aboardStarship && ship.camera === "chase" && !ship.warping && !this.walking;
+    if (this.aboardStarship) {
+      if (!this.starshipHull) {
+        this.starshipHull = createStationModel(getBody("earth-station")).group;
+        this.shipScene.add(this.starshipHull);
+      }
+      this.starshipHull.visible = ship.camera === "chase" && !ship.warping;
+      this.starshipHull.quaternion.copy(ship.orientation);
+      this.starshipHull.scale.setScalar(4);
+    } else if (this.starshipHull) this.starshipHull.visible = false;
     const cameraScale = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.shipScale, 0.000015, surfaceView), scale, surfaceHull);
     const chaseY = THREE.MathUtils.lerp(THREE.MathUtils.lerp(1.2, 0.19, surfaceView), this.ship.hullLength * 0.35, surfaceHull);
     const chaseZ = THREE.MathUtils.lerp(THREE.MathUtils.lerp(9 + this.flightBoost * 0.6, 0.72, surfaceView),
@@ -1767,7 +1794,7 @@ export class SolarScene {
     this.renderer.domElement.dataset.localOrigin = JSON.stringify(localFrame!.originUniverse);
     this.renderer.domElement.dataset.localPositionM = JSON.stringify((this.walking ? this.walker!.localPositionM : ship.localPositionM).toArray());
     this.renderer.domElement.dataset.physicsEngine = this.walking ? "rapier" : "flight";
-    this.renderer.domElement.dataset.exploration = this.walking ? "walking" : "ship";
+    this.renderer.domElement.dataset.exploration = this.pilotingStarship ? "starship" : this.walking ? "walking" : "ship";
     this.renderer.domElement.setAttribute("aria-label", this.walking
       ? "地表探索：WASD 行走，Shift 奔跑，空格跳跃，方向键或拖动看向，E 返回飞船"
       : "自由驾驶飞船：W/S 推力，方向键或触屏拖动转向，空格刹车");
@@ -1783,7 +1810,8 @@ export class SolarScene {
     if (!this.flightPaused) {
       if (this.inStation) {
         this.stationInterior!.step(delta, input);
-        ship.elapsed += delta;
+        ship.step(delta, { ...input, throttle: 0, strafe: 0, lift: 0, yaw: 0, pitch: 0,
+          roll: 0, boost: false, brake: false, mouseX: 0, mouseY: 0 });
       } else if (this.walking) {
         this.walker!.step(delta, input);
         // The parked ship advances its clock and cooldown with no pilot input.
@@ -1807,7 +1835,7 @@ export class SolarScene {
       }
     const target = ship.config.bodies.find((b) => b.id === ship.target)!;
     this.flightRelative.copy(ship.targetRelative);
-    const markerRelative = this.inStation ? new THREE.Vector3(0, 0.3, 24) : this.walking ? ship.environment.outward.clone()
+    const markerRelative = this.inStation ? new THREE.Vector3(0, 0.3, -36) : this.walking ? ship.environment.outward.clone()
       .multiplyScalar(ship.scale.metresToUniverseDistance(-6)) : this.flightRelative;
     const tracking = projectFlightTarget(markerRelative, this.inStation ? this.stationInterior!.camera : this.camera);
     const aim = this.flightControls!.aim;
@@ -1848,10 +1876,10 @@ export class SolarScene {
       boosting: input.boost,
       collision: ship.collision,
       landingPhase: ship.landingPhase,
-      landingBlockReason: ship.target === "earth-station" ? this.stationDockBlockReason : ship.landingBlockReason,
+      landingBlockReason: ship.target === "earth-station" ? this.aboardStarship ? "正在驾驶星舰，可选择其他目的地" : this.stationDockBlockReason : ship.landingBlockReason,
       station: this.inStation ? { zone: this.stationInterior!.zone } : null,
       walking: this.inStation ? { gravity: 9.81, speedMps: this.stationInterior!.speedMps,
-        grounded: this.stationInterior!.grounded, distanceToShipM: this.stationInterior!.distanceToShipM,
+        grounded: this.stationInterior!.grounded, distanceToShipM: this.stationInterior!.distanceToHelmM,
         bodyId: "earth-station", camera: this.explorerCamera } : this.walking ? { gravity: this.walker!.gravity, speedMps: this.walker!.speedMps,
         grounded: this.walker!.grounded, distanceToShipM: this.walker!.distanceToShipM,
         bodyId: this.walker!.bodyId!, camera: this.explorerCamera } : null,

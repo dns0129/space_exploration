@@ -10,6 +10,8 @@ export interface WalkingState {
   camera?: "first" | "third";
 }
 export interface StationVisitState {
+  vessel?: true;
+  piloting?: boolean;
   bodyId: "earth-station";
   /** Feet in metres along the station's interior room axes. */
   positionM: number[];

@@ -20,7 +20,7 @@ export async function verifyStationVisit(page) {
   await page.locator("#mode-flight").click();
   await expect(page.locator("#loading-overlay")).toBeHidden();
   await expect(page.locator("#flight-land")).toBeEnabled();
-  await expect(page.locator("#flight-land")).toHaveText("停泊并进入空间站（L）");
+  await expect(page.locator("#flight-land")).toHaveText("停泊并进入星舰（L）");
   await page.locator("#flight-land").click();
   await expect(canvas).toHaveAttribute("data-render-mode", "station");
   await expect(canvas).toHaveAttribute("data-exploration", "station");

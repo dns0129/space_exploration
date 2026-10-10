@@ -76,8 +76,8 @@ function migrateLayoutPosition(value, position) {
     || (!value.landedBody && oldDistance - anchor.radius > Math.max(1e6 / world.unitsKm, anchor.radius * 20))) return position;
   return position.map((n, i) => anchor.position[i] + (n - previousPosition(anchor)[i]));
 }
-// The ship remains parked safely outside the station while the character uses
-// a separate metre-scale room frame. Visit saves never become planet landings.
+// Legacy station visits require a parked shuttle near the original berth.
+// Starship visits carry the cabin pose independently of the vessel flight frame.
 export function validateStationVisitState(value, flight, config = world) {
   if (!value || typeof value !== "object" || !flight || value.bodyId !== "earth-station"
     || !vector(value.positionM, 3, 1e4) || value.positionM[1] < 0 || value.positionM[1] > 2.4
@@ -85,10 +85,15 @@ export function validateStationVisitState(value, flight, config = world) {
     || typeof value.yaw !== "number" || !Number.isFinite(value.yaw) || Math.abs(value.yaw) > 1e6
     || typeof value.pitch !== "number" || !Number.isFinite(value.pitch) || Math.abs(value.pitch) > 1.25
     || !["first", "third"].includes(value.camera)
-    || (flight.systemId ?? "solar") !== "solar" || flight.target !== "earth-station"
-    || flight.landedBody !== undefined || flight.walking !== undefined
+    || (value.vessel !== undefined && value.vessel !== true)
+    || (value.piloting !== undefined && typeof value.piloting !== "boolean")
+    || (value.piloting === true && value.vessel !== true)
+    || (!value.vessel && ((flight.systemId ?? "solar") !== "solar" || flight.target !== "earth-station"))
+    || (!value.vessel && flight.landedBody !== undefined) || flight.walking !== undefined
     || !vector(flight.position, 3, Infinity) || !vector(flight.velocity, 3, Infinity)
-    || Math.hypot(...flight.velocity) > 1e-9) return null;
+    || (!value.vessel && Math.hypot(...flight.velocity) > 1e-9)) return null;
+  if (value.vessel) return { bodyId: "earth-station", positionM: [...value.positionM],
+    yaw: value.yaw, pitch: value.pitch, camera: value.camera, vessel: true, piloting: value.piloting ?? false };
   const station = config.bodies.find(body => body.id === "earth-station");
   const earth = config.bodies.find(body => body.id === "earth");
   if (!station || station.kind !== "station" || !earth) return null;

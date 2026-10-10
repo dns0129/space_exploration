@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { StationVisitState } from "../shared/flight-state.mjs";
-import { STATION_ROOMS, STATION_SPAWN, STATION_WALLS, stationWalkable, stationZone } from "../shared/station-layout.mjs";
+import { STATION_HELM, STATION_ROOMS, STATION_SPAWN, STATION_WALLS, stationWalkable, stationZone } from "../shared/station-layout.mjs";
 import type { FlightInput } from "./ship-dynamics";
 import { createShip } from "./ship-model";
 
@@ -19,6 +19,7 @@ export class StationInterior {
   cameraView: "first" | "third" = "first";
   active = false;
   grounded = true;
+  piloting = false;
   private readonly velocity = new THREE.Vector3();
   private readonly astronaut = new THREE.Group();
   private readonly limbs: THREE.Group[] = [];
@@ -31,6 +32,7 @@ export class StationInterior {
 
   get speedMps() { return Math.hypot(this.velocity.x, this.velocity.z); }
   get distanceToShipM() { return this.positionM.distanceTo(new THREE.Vector3().fromArray(STATION_SPAWN)); }
+  get distanceToHelmM() { return this.positionM.distanceTo(new THREE.Vector3().fromArray(STATION_HELM)); }
   get zone() { return stationZone(this.positionM); }
 
   enter(state?: StationVisitState) {
@@ -46,18 +48,36 @@ export class StationInterior {
     this.grounded = this.positionM.y <= 0.001;
     this.jumpHeld = false;
     this.active = true;
+    this.piloting = state?.piloting ?? false;
     this.updateCamera();
   }
 
   leave() {
     this.active = false;
+    this.piloting = false;
     this.velocity.set(0, 0, 0);
     this.jumpHeld = false;
   }
 
   snapshot(): StationVisitState | undefined {
     return this.active ? { bodyId: "earth-station", positionM: this.positionM.toArray(),
-      yaw: this.yaw, pitch: this.pitch, camera: this.cameraView } : undefined;
+      yaw: this.yaw, pitch: this.pitch, camera: this.cameraView, vessel: true, piloting: this.piloting } : undefined;
+  }
+
+  takeHelm() {
+    this.piloting = true;
+    this.velocity.set(0, 0, 0);
+    this.updateCamera();
+  }
+  releaseHelm() {
+    this.piloting = false;
+    this.positionM.fromArray(STATION_HELM);
+    this.yaw = 0;
+    this.pitch = 0;
+    this.velocity.set(0, 0, 0);
+    this.grounded = true;
+    this.jumpHeld = false;
+    this.updateCamera();
   }
 
   setCamera(view: "first" | "third") {
@@ -71,7 +91,7 @@ export class StationInterior {
   }
 
   step(delta: number, input: FlightInput) {
-    if (!this.active || !Number.isFinite(delta)) return;
+    if (!this.active || this.piloting || !Number.isFinite(delta)) return;
     const duration = THREE.MathUtils.clamp(delta, 0, 0.25);
     if (!duration) return;
     if (input.brake && !this.jumpHeld && this.grounded) {
@@ -115,6 +135,13 @@ export class StationInterior {
   }
 
   updateCamera() {
+    if (this.piloting) {
+      this.camera.position.set(0, 1.8, -36.8);
+      this.camera.quaternion.identity();
+      this.astronaut.visible = false;
+      this.camera.updateMatrixWorld();
+      return;
+    }
     const head = this.positionM.clone().add(new THREE.Vector3(0, EYE_HEIGHT_M, 0));
     const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, "YXZ"));
     this.camera.quaternion.copy(rotation);
@@ -205,7 +232,7 @@ export class StationInterior {
       context.fillRect(165, 175, 800, 2);
       context.font = "19px monospace";
       context.fillStyle = "#7ca2b2";
-      context.fillText("A U R O R A   /   O R B I T A L   H A B I T A T", 48, 220);
+      context.fillText("A U R O R A   /   S T A R S H I P   /   B R I D G E", 48, 220);
     }
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -329,6 +356,7 @@ export class StationInterior {
       const size = (span: number, height: number, thickness: number): Point => wall.axis === "x"
         ? [thickness, height, span] : [span, height, thickness];
       const window = wall.roomId === "observation" && wall.axis === "x" && wall.fixed === 27
+        || wall.roomId === "control" && wall.axis === "z" && wall.fixed === -40
         || wall.roomId === "docking" && wall.axis === "z" && wall.fixed === 34;
       if (window) {
         box(size(length, 0.9, 0.38), position(center, 0.45), metal);
@@ -370,7 +398,7 @@ export class StationInterior {
       box([6, ceiling - 4.2, 0.32], [0, (ceiling + 4.2) / 2, z], dark);
     }
     box([0.32, 0.6, 24], [3, 4.5, -2], dark);
-    panel("02 / COMMAND · 主控室", "← OBSERVATORY  /  观测舱 →", [0, 3.45, -17.7], [4.5, 1.125]);
+    panel("02 / COMMAND · 驾驶室", "← OBSERVATORY  /  观测舱 →", [0, 3.45, -17.7], [4.5, 1.125]);
     panel("01 / DOCKING · 停泊舱", "RETURN TO SHIP  /  返回飞船", [0, 3.4, 12.3], [4.5, 1.125], [0, Math.PI, 0]);
     panel("03 / OBSERVATORY · 观测舱", "SUNLIT EARTH  /  向阳面地球", [3.3, 3.65, -2], [5.5, 1.375], [0, -Math.PI / 2, 0]);
     // Parked survey vessel and its recessed berth, with an accessible return pad.
@@ -389,7 +417,7 @@ export class StationInterior {
     ring(1.45, 0.035, [0, 0.06, 24], amber);
     ring(1.22, 0.012, [0, 0.064, 24], cyan);
     panel("DOCK 01 / VOYAGER", "SECURED · 飞船已停泊", [-6.2, 2.7, 33.78], [7, 1.75], [0, Math.PI, 0]);
-    panel("AURORA · 极光轨道站", "EARTH / SUNLIT ORBIT   |   2400 KM", [9.4, 2.65, 12.25], [7, 1.75]);
+    panel("TERRA · 远航星舰", "EARTH / SUNLIT ORBIT   |   2400 KM", [9.4, 2.65, 12.25], [7, 1.75]);
     for (const x of [6, 9.5, 12]) {
       box([1.3, 1.3, 1.5], [x, 0.65, 30.8], metal);
       box([1.1, 0.035, 1.3], [x, 1.31, 30.8], copper);
@@ -415,7 +443,7 @@ export class StationInterior {
       new THREE.MeshBasicMaterial({ color: 0x1cbbdd, transparent: true, opacity: 0.055,
         side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
     beam.position.set(0, 2.15, -30.5); this.scene.add(beam);
-    const consoleMaterial = new THREE.MeshBasicMaterial({ map: this.panelTexture("ORBITAL TELEMETRY", "航道监控 / 生命保障", true), toneMapped: false });
+    const consoleMaterial = new THREE.MeshBasicMaterial({ map: this.panelTexture("FLIGHT TELEMETRY", "航道监控 / 生命保障", true), toneMapped: false });
     for (const side of [-1, 1]) {
       for (const z of [-24, -29, -34.5]) {
         box([3.7, 0.9, 3.2], [side * 11.1, 0.45, z], dark);
@@ -424,8 +452,10 @@ export class StationInterior {
         box([0.08, 0.06, 3], [side * 9.4, 1.05, z], cyan);
       }
     }
-    box([21, 3.1, 0.16], [0, 2.6, -39.66], dark);
-    panel("AURORA / MISSION CONTROL · 主控室", "EARTH DAY SIDE · DOCK 01 ONLINE · OBSERVATORY READY", [0, 2.6, -39.53], [19.6, 2.65], [0, 0, 0], true);
+    // Helm below the forward pressure glazing, approached around the hologram table.
+    box([4.6, 0.85, 0.9], [0, 0.425, -38.7], metal);
+    panel("TERRA / HELM", "E 接管驾驶 · X 离开驾驶座", [0, 1.05, -38.15], [4.2, 0.8]);
+    ring(0.7, 0.025, [0, 0.04, -36], amber);
     panel("SECTOR 02 / COMMAND", "ACTIVE CREW DECK · 中央指挥", [-13.77, 3.3, -20.5], [3.5, 0.875], [0, Math.PI / 2, 0]);
     // Panoramic observation lounge: clear glazing, deep structural mullions and quiet seating.
     box([10, 0.38, 2], [16, 0.38, 7.5], dark);
@@ -452,27 +482,21 @@ export class StationInterior {
   }
 
   private buildExterior() {
-    // Only nearby station hardware belongs to the metre-scale scene.
-    // Earth, Sun and stars are drawn by the same space scene used outside.
-    // External solar trusses remain visible beyond the bay's pressure glazing.
+    // Nearby nacelles and radiator armor share the cabin's rigid metre frame.
     const hardware = new THREE.MeshStandardMaterial({ color: 0x586b7a, metalness: 0.85, roughness: 0.36 });
-    const cells = new THREE.MeshStandardMaterial({ color: 0x122c50, metalness: 0.5, roughness: 0.23 });
-    const parts: THREE.BufferGeometry[] = [];
-    const solarPanels: THREE.BufferGeometry[] = [];
+    const drive = new THREE.MeshBasicMaterial({ color: 0x71edff, toneMapped: false });
     for (const side of [-1, 1]) {
-      const truss = new THREE.BoxGeometry(45, 0.3, 0.3); truss.translate(side * 33, 2, 53); parts.push(truss);
-      for (let index = 0; index < 8; index++) {
-        const x = side * (17 + index * 5);
-        const panel = new THREE.BoxGeometry(4.6, 0.18, 15); panel.translate(x, 2.1, 53); solarPanels.push(panel);
-        for (const z of [45.4, 60.6]) {
-          const edge = new THREE.BoxGeometry(4.8, 0.23, 0.16); edge.translate(x, 2.1, z); parts.push(edge);
-        }
-      }
-    }
-    for (const [items, material] of [[parts, hardware], [solarPanels, cells]] as [THREE.BufferGeometry[], THREE.Material][]) {
-      const merged = mergeGeometries(items);
-      items.forEach(item => item.dispose());
-      if (merged) this.scene.add(new THREE.Mesh(merged, material));
+      const nacelle = new THREE.Mesh(new THREE.CylinderGeometry(3, 3.6, 30, 24), hardware);
+      nacelle.rotation.x = Math.PI / 2;
+      nacelle.position.set(side * 34, -1.5, 27);
+      this.scene.add(nacelle);
+      const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.2, 24), drive);
+      nozzle.rotation.x = Math.PI / 2;
+      nozzle.position.set(side * 34, -1.5, 42.2);
+      this.scene.add(nozzle);
+      const spar = new THREE.Mesh(new THREE.BoxGeometry(18, 1, 2), hardware);
+      spar.position.set(side * 26, -2, 27);
+      this.scene.add(spar);
     }
   }
 
@@ -526,5 +550,6 @@ export class StationInterior {
     this.astronaut.clear();
     this.built = false;
     this.active = false;
+    this.piloting = false;
   }
 }

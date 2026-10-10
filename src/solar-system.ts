@@ -323,13 +323,13 @@ export const EXPLORATION_BODIES: readonly CelestialBody[] = [
     caption: "MAIN BELT / 2.1–3.3 AU · STATISTICAL ORBITS", layers: ["stars"],
   },
   {
-    id: "earth-station", name: "近地轨道空间站", english: "TERRA ORBITAL STATION",
+    id: "earth-station", name: "远航星舰", english: "TERRA STARSHIP",
     kind: "station", color: "#8edcfa", radiusKm: 180, axialTiltDeg: 0,
     flattening: 1, distanceFromSunMillionKm: 149.6, orbitalPeriodDays: 0.095,
     rotationSpeed: 0, parentId: "earth", orbitRadiusKm: 8771,
-    tags: ["2400 km 向阳轨道", "360 km 科幻空间站", "停泊与舱内探索"],
-    description: "停驻在地球向阳面的巨型环状空间站。<br>双层居住环、主控室、玻璃观测舱与三座发光停泊港。<br>跨度 360 km，设有可步行的舱内区域；轨道与设施尺度为科幻游戏设定。",
-    caption: "TERRA ORBITAL / SUNLIT · ALTITUDE 2400 KM · FICTIONAL SCALE", layers: ["stars"],
+    tags: ["2400 km 向阳轨道", "360 km 科幻星舰", "停泊与舱内探索"],
+    description: "停驻在地球向阳面的远航星舰。<br>纵向装甲舰体、四台推进引擎、全景驾驶室、观测舱与穿梭机机库。<br>L 登舰后可在舰内走动，到驾驶台按 E 自由驾驶，按 X 离开驾驶座；跨度 360 km 为科幻游戏设定。",
+    caption: "TERRA STARSHIP / FREE FLIGHT · ALTITUDE 2400 KM · FICTIONAL SCALE", layers: ["stars"],
   },
 ];
 export const BLACK_HOLE_BODIES: readonly CelestialBody[] = [{

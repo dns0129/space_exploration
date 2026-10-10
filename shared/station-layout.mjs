@@ -1,14 +1,16 @@
 /** Interior coordinates are metres, with character positions measured at the feet. */
+export const STATION_HELM = Object.freeze([0, 0, -36]);
 export const STATION_SPAWN = Object.freeze([0, 0, 24]);
 export const STATION_ROOMS = Object.freeze([
   Object.freeze({ id: "docking", name: "停泊区", minX: -14, maxX: 14, minZ: 12, maxZ: 34, height: 6 }),
   Object.freeze({ id: "corridor", name: "连接廊道", minX: -3, maxX: 3, minZ: -18, maxZ: 12, height: 4.2 }),
-  Object.freeze({ id: "control", name: "主控室", minX: -14, maxX: 14, minZ: -40, maxZ: -18, height: 4.8 }),
+  Object.freeze({ id: "control", name: "驾驶室", minX: -14, maxX: 14, minZ: -40, maxZ: -18, height: 4.8 }),
   Object.freeze({ id: "observation", name: "观测舱", minX: 3, maxX: 27, minZ: -14, maxZ: 10, height: 4.8 }),
 ]);
 
 /** Solid furniture uses the same footprints in rendering, movement and save validation. */
 export const STATION_OBSTACLES = Object.freeze([
+  Object.freeze({ id: "helm-console", minX: -2.3, maxX: 2.3, minZ: -39.15, maxZ: -38.25 }),
   Object.freeze({ id: "parked-ship", minX: -11.2, maxX: -1.3, minZ: 20.3, maxZ: 29.8 }),
   Object.freeze({ id: "hologram-table", minX: -3.2, maxX: 3.2, minZ: -33.4, maxZ: -27.6 }),
   Object.freeze({ id: "port-consoles", minX: -13, maxX: -9.2, minZ: -38, maxZ: -22 }),
