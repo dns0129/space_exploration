@@ -36,8 +36,6 @@
 #flight-ui .flight-navigation > #flight-land { margin-top: 8px; width: 100%; }
 #flight-ui[data-mode="walking"] .flight-navigation-body,
 #flight-ui[data-landed="true"] .flight-navigation-body { display: none; }
-.flight-mode:has(#flight-navigation:not([open])) .planet-rail,
-.flight-mode:has(#flight-navigation:not([open])) .destination-selectors { visibility: hidden; }
 #flight-ui .flight-propulsion {
   --engine-thumb-size: 20px;
   position: absolute;

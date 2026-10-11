@@ -20,12 +20,12 @@ test("新版引擎：真实拖拽覆盖五档，导航折叠后独立滑块可�
   await page.locator("#flight-navigation-summary").click();
   await expect(page.locator("#flight-navigation")).not.toHaveAttribute("open", "");
   await expect(page.locator("#flight-jump")).toBeHidden();
-  await expect(page.locator(".planet-rail")).toBeHidden();
-  await expect(page.locator(".destination-selectors")).toBeHidden();
+  await expect(page.locator(".planet-rail")).toBeVisible();
+  await expect(page.locator(".destination-selectors")).toBeVisible();
   await expect(slider).toBeVisible();
   const collapsed = (await panel.boundingBox())!;
   expect(Math.abs(collapsed.x - expanded.x)).toBeLessThan(1);
-  expect(Math.abs(collapsed.y - expanded.y)).toBeLessThan(1);
+  expect(collapsed.y).toBeLessThanOrEqual(expanded.y + 1);
   const navigation = (await page.locator(".flight-navigation").boundingBox())!;
   expect(collapsed.y).toBeGreaterThanOrEqual(navigation.y + navigation.height - 1);
   for (const [index, band] of PROPULSION_BANDS.entries()) {

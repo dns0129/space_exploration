@@ -2,6 +2,7 @@ import type { RenderQuality } from "./earth-detail";
 import "./style.css";
 import { watchSiteVersion } from "./site-version";
 import { FlightInterface } from "./flight-ui";
+import { PanelLayout } from "./panel-layout";
 import { SolarScene } from "./planet-scene";
 import { surfaceMapLabel } from "./body-textures";
 import type { SurfacePlacement, View } from "./planet-scene";
@@ -128,6 +129,7 @@ const toast = (message: string) => {
   toastTimer = setTimeout(() => $("#toast").classList.remove("visible"), 2400);
 };
 
+let panelLayout: PanelLayout | undefined;
 const flight = new FlightInterface(toast, (active, target) => {
   cancelPlacement();
   state.mode = active ? "flight" : "observe";
@@ -136,6 +138,7 @@ const flight = new FlightInterface(toast, (active, target) => {
     updateBodyInfo(target);
   }
   $(".observatory").classList.toggle("flight-mode", active);
+  panelLayout?.setMode(active);
   $("#mode-flight").classList.toggle("nav-active", active);
   $("#mode-observe").classList.toggle("nav-active", !active);
   $("#mode-flight").setAttribute("aria-pressed", String(active));
@@ -147,6 +150,7 @@ const flight = new FlightInterface(toast, (active, target) => {
   }
   updatePlacementControls();
 });
+panelLayout = new PanelLayout();
 
 function updatePlacementControls() {
   const solid = surfaceProfile(state.body).solid;
@@ -349,6 +353,9 @@ function updateBodyInfo(id: BodyId) {
       else button.removeAttribute("aria-current");
     });
   $("#altitude").innerHTML = "— <small>km</small>";
+  const activeButton = document.querySelector<HTMLButtonElement>(".planet-rail .planet-item.active");
+  const bodyStrip = activeButton?.parentElement;
+  if (activeButton && bodyStrip) bodyStrip.scrollLeft = activeButton.offsetLeft - bodyStrip.clientWidth / 2 + activeButton.offsetWidth / 2;
   document.title = `远航 VOYAGER · ${body.name}观测站`;
   updatePlacementControls();
   try {
@@ -534,10 +541,7 @@ $("#fullscreen").addEventListener("click", async () => {
   }
 });
 $("#mobile-settings").addEventListener("click", () => {
-  const expanded =
-    $("#mobile-settings").getAttribute("aria-expanded") !== "true";
-  $("#mobile-settings").setAttribute("aria-expanded", String(expanded));
-  $("#control-panel").classList.toggle("mobile-open", expanded);
+  panelLayout?.toggleSettings();
 });
 $("#photo-mode").addEventListener("click", () => setPhotoMode(!state.photoMode));
 for (const kind of ["ship", "person"] as const) {
@@ -547,8 +551,7 @@ for (const kind of ["ship", "person"] as const) {
     state.placement = kind;
     $("#canvas-host").dataset.placement = kind;
     $("#placement-message").textContent = `点击星球地表，${kind === "ship" ? "停放飞船" : "开始人物探索"}`;
-    $("#mobile-settings").setAttribute("aria-expanded", "false");
-    $("#control-panel").classList.remove("mobile-open");
+    panelLayout?.closeSettings();
     updatePlacementControls();
   });
 }

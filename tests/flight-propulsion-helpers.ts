@@ -39,6 +39,8 @@ export async function seedFlight(page: Page, state: FlightState) {
 export async function launchPaused(page: Page) {
   await page.goto("/");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
+  await page.locator("#quality").selectOption("standard", { force: true });
+  await page.locator("#flight-quality").selectOption("standard", { force: true });
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
   await expect(page.locator("#loading-overlay")).toBeHidden();
   await page.getByRole("combobox", { name: "航行画质" }).selectOption("standard");
@@ -65,6 +67,7 @@ export async function saveFlight(page: Page): Promise<FlightState> {
 export async function dragEngineSlider(page: Page, value: number, mobile: boolean) {
   const slider = page.locator("#flight-engine-slider");
   await expect(slider).toBeVisible();
+  await slider.scrollIntoViewIfNeeded();
   const geometry = await slider.evaluate(element => {
     const input = element as HTMLInputElement, box = input.getBoundingClientRect();
     const thumbWidth = parseFloat(getComputedStyle(input).getPropertyValue("--engine-thumb-size")) || 20;

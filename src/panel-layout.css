@@ -1,0 +1,239 @@
+/* Panels participate in one grid, so changing their height never covers a neighbour. */
+.observatory { min-height: 0; height: 100dvh; --ui-header: 72px; }
+.observatory .header { height: var(--ui-header); padding: 0 24px; }
+.observatory .main { inset: var(--ui-header) 0 32px; }
+.observatory .space-stage { inset: 0; }
+.observatory .footer { height: 32px; }
+.observatory.flight-mode .main { inset: 0; }
+.observatory.flight-mode .header { top: 0; left: 0; right: 0; border-radius: 0; }
+.ui-workspace {
+  position: absolute;
+  inset: 12px 16px;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: clamp(210px, 20vw, 264px) minmax(0, 1fr) clamp(210px, 21vw, 280px);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px 20px;
+  pointer-events: none;
+}
+.ui-workspace-flight { top: calc(var(--ui-header) + 12px); }
+.flight-mode .ui-workspace-observe { display: none; }
+.ui-dock { min-width: 0; min-height: 0; pointer-events: none; }
+.ui-dock-left, .ui-dock-right {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #507382 #09131d;
+  overscroll-behavior: contain;
+  padding: 2px;
+}
+.ui-dock-left { grid-column: 1; grid-row: 1; }
+.ui-dock-right { grid-column: 3; grid-row: 1; }
+.ui-dock-bottom { grid-column: 1 / -1; display: grid; gap: 8px; max-height: 44dvh; overflow: auto; }
+/* Specificity replaces the former per-window screen coordinates, including short-screen rules. */
+.observatory .ui-workspace .ui-panel {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  height: auto !important;
+  min-width: 0;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0;
+  padding: 0 !important;
+  flex: 0 0 auto;
+  border: 1px solid #a2c8dc26;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #172533ed, #0b141fe8);
+  box-shadow: 0 8px 24px #0003, inset 0 1px #d1eeff0a;
+  backdrop-filter: blur(14px);
+  overflow: clip;
+  color: #bfd6e3;
+  pointer-events: auto !important;
+  visibility: visible;
+  transform: none;
+}
+.observatory .ui-workspace .ui-panel:not([hidden]) { display: block; }
+.observatory .ui-workspace .ui-panel-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid #a2c8dc15;
+  padding: 8px 12px;
+  background: #91c6ed06;
+  color: #c2ddeb;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-align: left;
+  cursor: pointer;
+  transition: background .2s, color .2s;
+}
+.observatory .ui-panel-toggle:hover { background: #8cc9ea14; color: #fff; }
+.observatory .ui-panel-toggle:focus-visible { outline-offset: -3px; }
+.ui-panel-chevron { font-size: 17px; line-height: 16px; color: #80b4cb; transition: transform .26s ease; }
+.ui-panel[data-collapsed="true"] .ui-panel-chevron { transform: rotate(180deg); }
+.ui-panel-body { display: grid; grid-template-rows: 1fr; opacity: 1; visibility: visible; transition: grid-template-rows .28s ease, opacity .2s ease, visibility 0s; }
+.observatory .ui-panel > .ui-panel-body { display: grid; }
+.observatory #flight-ui .ui-panel > .ui-panel-body { display: grid; padding: 0; gap: 0; border: 0; }
+.ui-panel[data-collapsed="true"] > .ui-panel-body { grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows .28s ease, opacity .2s ease, visibility 0s .28s; }
+.ui-panel-inner { min-height: 0; overflow: hidden; }
+.ui-panel-inner > :first-child { margin-top: 0; }
+.ui-panel-inner > :last-child { margin-bottom: 0; }
+.ui-dock-left .ui-panel-inner, .ui-dock-right .ui-panel-inner { padding: 12px; }
+/* Keep padding inside the animated track so a closed panel occupies just its header. */
+.ui-dock-left .ui-panel-body, .ui-dock-right .ui-panel-body { overflow: hidden; }
+.ui-panel[data-collapsed="true"] .ui-panel-inner { padding-top: 0 !important; padding-bottom: 0 !important; overflow: hidden; transition: padding .28s ease; }
+.ui-panel-inner { transition: padding .28s ease; }
+.planet-rail .ui-panel-inner {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 8px !important;
+}
+.planet-rail .rail-label, .planet-rail .rail-progress, .planet-rail .planet-order { display: none; }
+.observatory .planet-rail .planet-item { flex: 0 0 46px; width: 46px; height: 48px; padding: 4px 0; gap: 5px; }
+.observatory .planet-rail .planet-name { display: block; font-size: 8px; line-height: 12px; }
+.observatory .planet-rail .planet-dot { width: 16px; height: 16px; }
+.destination-selectors .ui-panel-inner { display: grid; gap: 10px; }
+.destination-selectors label { position: static; display: grid; gap: 6px; min-width: 0; font-size: 10px; }
+.observatory .destination-selectors select { width: 100%; max-width: none; min-width: 0; padding: 7px 8px; font-size: 11px; }
+.observatory .planet-info h1 { margin: 12px 0; font-size: 34px; letter-spacing: 3px; }
+.observatory .planet-info h1 span { margin-top: 8px; font-size: 10px; letter-spacing: 3px; }
+.planet-info .planet-tags { margin-top: 12px; flex-wrap: wrap; }
+.planet-info .description { margin: 14px 0; font-size: 11px; line-height: 1.8; }
+.planet-info .facts { margin: 14px 0; }
+.planet-info .facts > div { padding: 9px 0; gap: 8px; }
+.planet-info .facts dt { font-size: 10px; }
+.planet-info .facts dd { font-size: 16px; }
+.planet-info .primary-button { width: 100%; padding: 12px 8px; font-size: 11px; }
+.planet-info .milestone { margin-top: 14px; font-size: 8px; }
+.viewport-tools .ui-panel-inner { display: flex; justify-content: space-between; align-items: center; }
+.altitude .ui-panel-inner { display: grid; gap: 8px; }
+.altitude .altitude-line { display: none; }
+.surface-placement-tools { flex-wrap: wrap; gap: 8px; }
+.surface-placement .control-label { display: none; }
+.surface-placement-tools button { flex: 1; white-space: nowrap; padding: 10px 6px; font-size: 10px; }
+.observatory .control-panel .ui-panel-inner { display: grid; grid-template-columns: 1.2fr 1.2fr 1fr .65fr; gap: 20px; padding: 14px; }
+.control-panel .control-group { border: 0; padding: 0; }
+.control-panel .control-label { margin-bottom: 10px; }
+.control-panel .segmented { width: 100%; }
+.control-panel .segmented button { flex: 1; padding: 8px 4px; font-size: 11px; }
+.control-panel .layer-switches { gap: 12px; }
+.control-panel .speed-label { display: none; }
+.observatory .mobile-settings { display: none; }
+.observatory .interaction-hint { left: 50%; bottom: auto; top: 14px; transform: translateX(-50%); font-size: 9px; white-space: nowrap; }
+.observatory .top-coordinate, .observatory .earth-caption, .observatory .sun-label, .observatory .reticle { display: none; }
+.flight-toolbar .ui-panel-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.flight-toolbar button, .flight-toolbar select { min-width: 0; width: 100%; }
+.flight-toolbar #starship-helm { grid-column: 1 / -1; }
+.flight-title h2 { margin: 8px 0; font-size: 22px; letter-spacing: 3px; }
+.flight-title .eyebrow { font-size: 8px; letter-spacing: 1px; }
+.flight-title #flight-status, .flight-title #flight-system { display: block; margin-top: 6px; font-size: 10px; }
+.observatory #flight-navigation { max-height: none; overflow: visible; }
+.observatory #flight-navigation-summary { position: static; padding: 0; background: transparent; }
+.observatory .flight-navigation #flight-land { margin-top: 10px; width: 100%; }
+.observatory .flight-navigation .flight-navigation-body { padding-top: 8px; }
+.observatory .walking-panel .ui-panel-inner, .observatory .flight-surface .ui-panel-inner, .station-map .ui-panel-inner { display: grid; gap: 8px; }
+.observatory .walking-telemetry { grid-template-columns: 1fr 1fr; gap: 8px; }
+.observatory .walking-telemetry > div:last-child { grid-column: 1 / -1; }
+.walking-panel .ui-panel-inner > strong { font-size: 14px; }
+.observatory .walking-panel .eyebrow { font-size: 8px; }
+.station-map svg { max-height: 150px; }
+.flight-instruments .ui-panel-inner { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; padding: 12px 16px; }
+.observatory .flight-instruments > div { display: grid; border: 0; padding: 0; gap: 0; }
+.flight-instruments .ui-panel-inner > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.observatory .flight-instruments strong { font-size: 22px; }
+.observatory .flight-instruments .flight-save-info strong { font-size: 13px; line-height: 25px; }
+.flight-key-guide .ui-panel-inner { padding: 10px; text-align: center; }
+.observatory .ui-workspace .flight-touch { display: none !important; }
+.observatory .ui-workspace .flight-touch .ui-panel-inner { display: flex; justify-content: space-between; align-items: end; padding: 8px 12px; }
+.observatory .flight-touch button { width: 40px; height: 36px; padding: 2px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.observatory .flight-thrust-pad, .observatory .flight-steer-pad { display: grid; grid-template-columns: repeat(3, 40px); gap: 4px; }
+.observatory .ui-workspace-flight .ui-dock-bottom .flight-touch { order: -1; }
+.observatory .ui-workspace .flight-key-guide { display: none !important; }
+.flight-mode .ui-workspace .planet-rail, .flight-mode .ui-workspace .destination-selectors { visibility: visible; }
+.observatory #flight-ui[data-exploration="station"] .flight-propulsion,
+.observatory #flight-ui[data-exploration="station"] .destination-selectors { display: none; }
+.observatory #flight-ui[data-exploration="station"] .station-map:not([hidden]) { display: block; }
+.observatory.photo-mode .ui-workspace { display: none !important; }
+@media (pointer: coarse) {
+  .observatory .ui-workspace .flight-touch { display: block !important; }
+}
+@media (min-width: 1100px) and (min-height: 800px) and (pointer: fine) {
+  .observatory .ui-workspace .flight-key-guide { display: block !important; }
+}
+@media (max-width: 1000px) {
+  .header-tools .connection { display: none; }
+  .main-nav { margin-left: 0; gap: 24px; }
+  .ui-workspace { grid-template-columns: 210px minmax(0, 1fr) 220px; gap: 10px 12px; }
+  .control-panel .control-label small { display: none; }
+  .observatory .control-panel .ui-panel-inner { gap: 12px; }
+}
+@media (max-width: 800px) {
+  .observatory { --ui-header: 64px; }
+  .observatory .header { padding: 0 12px; }
+  .header-tools { gap: 4px; }
+  .header .brand { gap: 4px; letter-spacing: 1px; }
+  .header .brand > svg { width: 24px; height: 24px; }
+  .header .brand span { font-size: 12px; }
+  .main-nav { position: static; transform: none; height: 100%; gap: 12px; }
+  .main-nav button { font-size: 10px; }
+  .header .icon-button { width: 30px; height: 32px; }
+  .ui-workspace { inset: 8px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; row-gap: 8px; }
+  .ui-workspace-flight { top: calc(var(--ui-header) + 8px); }
+  .ui-dock-right { grid-column: 2; }
+  .ui-dock-left, .ui-dock-right { gap: 8px; max-height: 38dvh; }
+  .ui-dock-bottom { max-height: 46dvh; gap: 6px; }
+  .observatory .ui-workspace .ui-panel-toggle { min-height: 32px; padding: 7px 9px; font-size: 10px; letter-spacing: .5px; }
+  .ui-dock-left .ui-panel-inner, .ui-dock-right .ui-panel-inner { padding: 9px; }
+  .observatory .flight-title h2 { font-size: 16px; letter-spacing: 1px; }
+  .flight-title .eyebrow { display: none; }
+  .observatory .flight-ui button, .observatory .flight-ui select { padding: 8px 5px; font-size: 9px; }
+  .observatory .destination-selectors select { padding: 7px 4px; font-size: 10px; }
+  .observatory #flight-target { font-size: 12px; }
+  .observatory #flight-distance-summary { font-size: 8px; }
+  .observatory .flight-navigation strong { font-size: 15px; }
+  .observatory .flight-propulsion-reading { flex-wrap: wrap; gap: 3px; font-size: 10px; }
+  .observatory .flight-engine-bands { gap: 2px; }
+  .observatory #flight-ui .flight-engine-bands button { padding: 5px 1px; font-size: 8px; }
+  .observatory .flight-instruments .ui-panel-inner { grid-template-columns: 1.1fr 1.1fr 1fr; gap: 8px; padding: 8px 10px; }
+  .observatory .flight-instruments strong { font-size: 16px; letter-spacing: 0; }
+  .observatory .flight-instruments small { display: block; font-size: 8px; }
+  .observatory .flight-instruments #flight-engine, .observatory .flight-instruments #flight-engine-range { display: none; }
+  .observatory .flight-instruments .flight-save-info { display: none; }
+  .observatory .ui-workspace .flight-touch { display: block !important; }
+  .observatory .ui-workspace .flight-key-guide { display: none !important; }
+  .observatory .control-panel .ui-panel-inner { grid-template-columns: 1fr 1fr; padding: 12px; gap: 14px; }
+  .observatory .control-panel .views, .observatory .control-panel .layers { grid-column: 1 / -1; }
+  .observatory .control-panel .quality select { width: 100%; }
+  .observatory .planet-info h1 { font-size: 25px; letter-spacing: 1px; }
+  .observatory .planet-info .facts dd { font-size: 13px; }
+  .observatory .planet-info .description { display: block; font-size: 10px; }
+  .observatory .planet-info .eyebrow { font-size: 8px; letter-spacing: .5px; }
+  .observatory .walking-telemetry { grid-template-columns: 1fr; }
+  .observatory .walking-telemetry > div:last-child { grid-column: auto; }
+  .observatory .walking-telemetry b { font-size: 13px; }
+  .observatory .interaction-hint { display: none; }
+  .observatory .flight-touch .ui-panel-inner { padding: 6px 10px; }
+  .observatory .footer { padding: 0 12px; }
+}
+@media (max-height: 500px) and (pointer: coarse) {
+  .ui-workspace-flight { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 292px; grid-template-rows: minmax(0, 1fr); }
+  .ui-workspace-flight .ui-dock-right { grid-column: 2; }
+  .ui-workspace-flight .ui-dock-left, .ui-workspace-flight .ui-dock-right { max-height: none; }
+  .ui-workspace-flight .ui-dock-bottom { grid-column: 3; grid-row: 1; max-height: none; align-content: start; }
+  .observatory .ui-workspace-flight .flight-touch .ui-panel-inner { padding: 6px; }
+  .observatory .ui-workspace-flight .flight-instruments .ui-panel-inner { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-panel-body, .ui-panel-inner, .ui-panel-chevron { transition: none !important; }
+}
