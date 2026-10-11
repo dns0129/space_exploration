@@ -78,6 +78,7 @@ test("参考星舰的实体几何、实时仪表与斜顶存档兼容", async ({
   await page.screenshot({ path: info.outputPath("reference-live-bridge.png") });
   await page.locator("#flight-camera").click();
   await expect(canvas).toHaveAttribute("data-render-mode", "space");
+  await expect(page.locator("#flight-heading")).toHaveText("270°");
   await page.screenshot({ path: info.outputPath("reference-exterior-chase.png") });
   await page.locator("#flight-camera").click();
   // A formerly legal high jump save below the new swept canopy keeps its X/Z

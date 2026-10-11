@@ -1882,9 +1882,11 @@ export class SolarScene {
     if (time - this.flightMetrics < 150) return;
     this.flightMetrics = time;
     const environment = ship.environment;
-    const forward = this.flightForward.set(0, 0, -1).applyQuaternion(
-      this.inStation ? this.stationInterior!.camera.quaternion : this.camera.quaternion,
-    );
+    // The offset chase camera has a different azimuth; the vessel's heading
+    // must agree with its physical bridge instruments in either camera view.
+    const headingRotation = this.pilotingStarship ? ship.orientation
+      : this.inStation ? this.stationInterior!.camera.quaternion : this.camera.quaternion;
+    const forward = this.flightForward.set(0, 0, -1).applyQuaternion(headingRotation);
     this.flightHandler?.({
       systemId: ship.systemId,
       renderMode: this.inStation ? "station" : this.renderPolicy.mode,
