@@ -19,3 +19,5 @@ export const STATION_WALLS: readonly { readonly roomId: string; readonly axis: "
 /** Floor and furniture capsule test; vertical jump bounds are handled by the caller. */
 export function stationWalkable(positionM: StationPosition, margin?: number): boolean;
 export function stationZone(positionM: StationPosition): string;
+/** Height of the faceted pressure roof above the unchanged floor. */
+export function stationHeadroom(positionM: StationPosition): number;

@@ -7,13 +7,14 @@ import { createPlanetModel, atmosphereFragment, mapSampling, noise, setSurfaceMa
 import { SURFACE_MAPS } from "./body-textures";
 import type { PlanetModel } from "./planet-models";
 import { bodySystem, systemConfig } from "../shared/world-navigation.mjs";
-import { ShipDynamics } from "./ship-dynamics";
+import { ShipDynamics, emptyInput } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
 import { WalkingDynamics } from "./walking-dynamics";
 import { initializeWalkingPhysics } from "./walking-physics";
 import { SpatialScale } from "../shared/spatial-frame.mjs";
 import { ExplorerView } from "./explorer-view";
 import { createStationModel } from "./orbital-structures";
+import { createStarshipReflection } from "./starship-hull";
 import { StationInterior } from "./station-interior";
 import { STATION_SPAWN } from "../shared/station-layout.mjs";
 import { validateFlightState } from "../shared/flight-state.mjs";
@@ -317,6 +318,7 @@ export class SolarScene {
   private walker?: WalkingDynamics;
   private stationInterior?: StationInterior;
   private starshipHull?: THREE.Group;
+  private starshipReflection?: THREE.WebGLRenderTarget;
   private readonly stationSpaceRotation = new THREE.Quaternion();
   private readonly stationSpaceOrigin = new THREE.Vector3();
   private readonly stationLocalOrigin = new THREE.Vector3().fromArray(STATION_SPAWN);
@@ -462,6 +464,17 @@ export class SolarScene {
     this.resize();
   }
 
+  private finishStarshipHull(group: THREE.Group) {
+    this.starshipReflection ??= createStarshipReflection(this.renderer);
+    group.traverse(object => {
+      if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) {
+        object.material.envMap = this.starshipReflection!.texture;
+        object.material.envMapIntensity = 0.8;
+        object.material.needsUpdate = true;
+      }
+    });
+  }
+
   async selectBody(
     id: BodyId,
     onProgress: (percent: number) => void,
@@ -480,6 +493,7 @@ export class SolarScene {
         id === "earth"
           ? this.createEarthModel(maps!)
           : createPlanetModel(getBody(id), this.sunDirection, undefined, this.planetMaps.get(id) ?? lazyMap ?? undefined);
+      if (model.body.kind === "station") this.finishStarshipHull(model.group);
       this.models.set(id, model);
     } else if (lazyMap && model.mapUniforms?.detailMap.value !== lazyMap) setSurfaceMap(model, lazyMap, 1);
     this.mapFades.delete(model);
@@ -1114,6 +1128,17 @@ export class SolarScene {
         camera.quaternion.copy(this.camera.quaternion);
         this.shipSun.position.copy(this.flightSun.position).normalize().multiplyScalar(10);
         this.shipSun.intensity = 2.8 * this.flightLight.illumination;
+        const shadowCamera = this.shipSun.shadow.camera;
+        const shadowSpan = this.aboardStarship ? 4.2 : 1.6;
+        if (shadowCamera.right !== shadowSpan) {
+          Object.assign(shadowCamera, { left: -shadowSpan, right: shadowSpan, top: shadowSpan, bottom: -shadowSpan,
+            near: this.aboardStarship ? 4 : 7, far: this.aboardStarship ? 16 : 13 });
+          shadowCamera.updateProjectionMatrix();
+        }
+        this.starshipHull?.traverse(object => {
+          if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial)
+            object.material.envMapIntensity = 0.8 * this.flightLight.illumination;
+        });
         // Sky bounce only grows near an atmosphere; vacuum keeps directional contrast.
         const atmosphereBounce = this.surfaceScene.usesAtmosphere(this.dynamics!) ? 1 : 0;
         this.shipRim.position.copy(this.shipSun.position).multiplyScalar(-1);
@@ -1271,6 +1296,7 @@ export class SolarScene {
             center,
             radius: body.radius,
           }, this.planetMaps.get(body.id) ?? this.lazyMaps.get(SURFACE_MAPS[body.id]?.file ?? "")?.texture);
+    if (body.kind === "station") this.finishStarshipHull(model.group);
     const solarAngularRadius = Math.asin(Math.min(1, host.radius / center.distanceTo(new THREE.Vector3().fromArray(host.position))));
     const spheres: THREE.Mesh[] = [];
     model.group.traverse((object) => {
@@ -1648,7 +1674,7 @@ export class SolarScene {
       this.flightSun.color.set(getBody(sun.id).color);
       this.flightSun.intensity = sun.kind === "black-hole" ? 0 : 2.5;
       this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
-      this.flightLight.update(ship, this.camera, this.flightSun);
+      this.flightLight.update(ship, this.camera, this.flightSun, this.aboardStarship ? "earth-station" : undefined);
       this.useSystemBackground(ship.systemId);
       this.resumeSpaceWork();
       this.ship.group.visible = false;
@@ -1713,6 +1739,10 @@ export class SolarScene {
     if (this.aboardStarship) {
       if (!this.starshipHull) {
         this.starshipHull = createStationModel(getBody("earth-station")).group;
+        this.finishStarshipHull(this.starshipHull);
+        this.starshipHull.traverse(object => {
+          if (object instanceof THREE.Mesh) { object.castShadow = true; object.receiveShadow = true; }
+        });
         this.shipScene.add(this.starshipHull);
       }
       this.starshipHull.visible = ship.camera === "chase" && !ship.warping;
@@ -1720,11 +1750,12 @@ export class SolarScene {
       this.starshipHull.scale.setScalar(4);
     } else if (this.starshipHull) this.starshipHull.visible = false;
     const cameraScale = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.shipScale, 0.000015, surfaceView), scale, surfaceHull);
-    const chaseY = THREE.MathUtils.lerp(THREE.MathUtils.lerp(1.2, 0.19, surfaceView), this.ship.hullLength * 0.35, surfaceHull);
+    const chaseY = THREE.MathUtils.lerp(THREE.MathUtils.lerp(this.aboardStarship ? 3.1 : 1.2, 0.19, surfaceView), this.ship.hullLength * 0.35, surfaceHull);
     const chaseZ = THREE.MathUtils.lerp(THREE.MathUtils.lerp(9 + this.flightBoost * 0.6, 0.72, surfaceView),
       this.ship.hullLength * 1.4 * Math.max(1, 1 / this.camera.aspect), surfaceHull);
     if (!this.walking) {
-      const offset = new THREE.Vector3(0,ship.camera === "chase" ? chaseY : 0,ship.camera === "chase" ? chaseZ : 0).multiplyScalar(cameraScale).applyQuaternion(ship.orientation);
+      const offset = new THREE.Vector3(this.aboardStarship && ship.camera === "chase" ? 2.6 : 0,
+        ship.camera === "chase" ? chaseY : 0,ship.camera === "chase" ? chaseZ : 0).multiplyScalar(cameraScale).applyQuaternion(ship.orientation);
       if (ship.camera === "chase") {
         this.camera.position.lerp(offset, blend);
         // Keep the chase camera in the pilot's altitude band, including a steep descent.
@@ -1754,7 +1785,7 @@ export class SolarScene {
         const nearAtmosphere = environment.body.atmosphereKm
           ? 1 - THREE.MathUtils.smoothstep(environment.altitudeKm, environment.body.atmosphereKm, environment.body.atmosphereKm * 4) : 0;
         this.camera.up.lerp(environment.outward, nearAtmosphere * Math.pow(forward.dot(environment.outward), 2)).normalize();
-        const lookAhead = 5 * cameraScale * (1 - nearAtmosphere * Math.abs(forward.dot(environment.outward)) * 0.92);
+        const lookAhead = (this.aboardStarship ? 0.8 : 5) * cameraScale * (1 - nearAtmosphere * Math.abs(forward.dot(environment.outward)) * 0.92);
         const lookTarget = forward.multiplyScalar(lookAhead);
         const hullTarget = this.ship.group.position.clone().multiplyScalar(scale)
           .addScaledVector(environment.outward, this.ship.hullLength * 0.1 * scale);
@@ -1804,7 +1835,7 @@ export class SolarScene {
       : "自由驾驶飞船：W/S 推力，方向键或触屏拖动转向，空格刹车");
     if (mode === "surface") this.surfaceScene.update(ship, this.localRenderCamera, this.flightSun, this.walking ? this.walker : undefined);
     else this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
-    this.flightLight.update(ship, this.camera, this.flightSun);
+    this.flightLight.update(ship, this.camera, this.flightSun, this.aboardStarship ? "earth-station" : undefined);
     this.useSystemBackground(ship.systemId);
     this.ship.gear.visible = ship.landingPhase !== "manual" || (environment.profile.solid && environment.groundAltitudeKm < 1);
   }
@@ -1825,6 +1856,8 @@ export class SolarScene {
     }
     if (!this.flightPaused) this.flightBoost = THREE.MathUtils.lerp(this.flightBoost,
       !this.walking && input.boost && ship.velocity.length() > 0 && !ship.warping ? 1 : 0, 1 - Math.exp(-delta * 4));
+    if (this.bridgeView && this.stationInterior!.updateInstruments(ship,
+      this.pilotingStarship && !this.flightPaused ? input : emptyInput(), time)) this.flightFrameDirty = true;
     const exhaust = this.flightPaused || ship.warping ? 0.1 : input.boost && input.throttle > 0 ? 2.4 : input.throttle > 0 ? 1 : 0.22;
     this.ship.exhaust.scale.z = THREE.MathUtils.lerp(this.ship.exhaust.scale.z, exhaust, 1 - Math.exp(-delta * 10));
     this.updateFlightCamera(1 - Math.exp(-delta * 9));
@@ -1892,8 +1925,8 @@ export class SolarScene {
 
   private viewPosition(view: View): THREE.Vector3 {
     if (this.currentModel?.body.kind === "station") return {
-      overview: new THREE.Vector3(0, 2.4, 4.8).multiplyScalar(Math.max(1, 1 / this.camera.aspect)),
-      close: new THREE.Vector3(0.6, 1.05, 2.4).multiplyScalar(Math.max(1, 0.8 / this.camera.aspect)),
+      overview: new THREE.Vector3(2.8, 1.35, 2.3).multiplyScalar(Math.max(1, 1 / this.camera.aspect)),
+      close: new THREE.Vector3(1.7, 0.64, 1.35).multiplyScalar(Math.max(1, 0.8 / this.camera.aspect)),
       night: new THREE.Vector3(3.6, 1.5, -3.6).multiplyScalar(Math.max(1, 1 / this.camera.aspect)),
     }[view];
     if (this.currentModel?.body.kind === "black-hole")
@@ -2015,6 +2048,7 @@ export class SolarScene {
     this.destroyed = true;
     this.walker?.reset();
     this.stationInterior?.dispose();
+    this.starshipReflection?.dispose();
     this.photoCapture?.reject(new Error("场景已关闭，照片未能生成"));
     this.photoCapture = undefined;
     this.resumeSpaceWork();

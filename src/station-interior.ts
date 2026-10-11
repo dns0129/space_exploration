@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import type { StationVisitState } from "../shared/flight-state.mjs";
-import { STATION_HELM, STATION_ROOMS, STATION_SPAWN, stationWalkable, stationZone } from "../shared/station-layout.mjs";
-import type { FlightInput } from "./ship-dynamics";
+import { STATION_HELM, STATION_SPAWN, stationWalkable, stationZone, stationHeadroom } from "../shared/station-layout.mjs";
+import type { FlightInput, ShipDynamics } from "./ship-dynamics";
 import { buildStarshipDeck } from "./starship-deck";
+import type { StarshipInstruments } from "./starship-instruments";
 
 const EYE_HEIGHT_M = 1.65;
 const MAX_FOOT_HEIGHT_M = 2.4;
@@ -29,6 +30,7 @@ export class StationInterior {
   private jumpHeld = false;
   private built = false;
   private environment?: THREE.WebGLRenderTarget;
+  private instruments?: StarshipInstruments;
 
   constructor(private readonly renderer: THREE.WebGLRenderer) {}
 
@@ -43,6 +45,7 @@ export class StationInterior {
     if (position && stationWalkable(position) && position[1] >= 0 && position[1] <= MAX_FOOT_HEIGHT_M)
       this.positionM.fromArray(position);
     else this.positionM.fromArray(STATION_SPAWN);
+    this.positionM.y = Math.min(this.positionM.y, this.maximumFootHeight);
     this.yaw = Number.isFinite(state?.yaw) ? state!.yaw : 0;
     this.pitch = THREE.MathUtils.clamp(Number.isFinite(state?.pitch) ? state!.pitch : 0, -1.25, 1.25);
     this.cameraView = state?.camera === "third" ? "third" : "first";
@@ -92,6 +95,14 @@ export class StationInterior {
     this.camera.updateProjectionMatrix();
   }
 
+  updateInstruments(ship: ShipDynamics, input: FlightInput, time: number) {
+    return this.instruments?.update(ship, input, time) ?? false;
+  }
+
+  private get maximumFootHeight() {
+    return Math.min(MAX_FOOT_HEIGHT_M, stationHeadroom(this.positionM) - EYE_HEIGHT_M - 0.16);
+  }
+
   step(delta: number, input: FlightInput) {
     if (!this.active || this.piloting || !Number.isFinite(delta)) return;
     const duration = THREE.MathUtils.clamp(delta, 0, 0.25);
@@ -123,8 +134,9 @@ export class StationInterior {
       if (stationWalkable(next)) this.positionM.z = next.z;
       else this.velocity.z = 0;
       this.velocity.y -= 9.81 * dt;
-      this.positionM.y = Math.min(MAX_FOOT_HEIGHT_M, this.positionM.y + this.velocity.y * dt);
-      if (this.positionM.y >= MAX_FOOT_HEIGHT_M && this.velocity.y > 0) this.velocity.y = 0;
+      const ceiling = this.maximumFootHeight;
+      this.positionM.y = Math.min(ceiling, this.positionM.y + this.velocity.y * dt);
+      if (this.positionM.y >= ceiling && this.velocity.y > 0) this.velocity.y = 0;
       this.grounded = this.positionM.y <= 0;
       if (this.grounded) {
         this.positionM.y = 0;
@@ -159,9 +171,7 @@ export class StationInterior {
       const samples = Math.ceil(backward.length() / 0.12);
       for (let sample = 1; sample <= samples; sample++) {
         const test = head.clone().lerp(desired, sample / samples);
-        const room = STATION_ROOMS.find(candidate => test.x >= candidate.minX && test.x <= candidate.maxX
-          && test.z >= candidate.minZ && test.z <= candidate.maxZ);
-        if (!stationWalkable(test, 0.2) || test.y < 0.25 || test.y > (room?.height ?? 4.2) - 0.22) {
+        if (!stationWalkable(test, 0.2) || test.y < 0.25 || test.y > stationHeadroom(test) - 0.22) {
           fraction = Math.max(0, (sample - 1) / samples);
           break;
         }
@@ -229,26 +239,32 @@ export class StationInterior {
     this.scene.background = null;
     const deck = buildStarshipDeck(this.scene, this.renderer, this.textures, this.hologramMaterial());
     this.environment = deck.environment;
+    this.instruments = deck.instruments;
     this.holograms.push(deck.projection);
     this.buildExterior();
     this.buildAstronaut();
   }
 
   private buildExterior() {
-    // Nearby nacelles and radiator armor share the cabin's rigid metre frame.
-    const hardware = new THREE.MeshStandardMaterial({ color: 0x586b7a, metalness: 0.85, roughness: 0.36 });
-    const drive = new THREE.MeshBasicMaterial({ color: 0x71edff, toneMapped: false });
+    // The ring and aft tanks are visible through the real space-scene windows.
+    const hardware = new THREE.MeshStandardMaterial({ color: 0x616d75, metalness: 0.65, roughness: 0.4 });
+    const frame = new THREE.MeshStandardMaterial({ color: 0x263139, metalness: 0.45, roughness: 0.5 });
+    const ring = new THREE.Shape(); ring.absarc(0, 0, 42, 0, Math.PI * 2, false);
+    const hole = new THREE.Path(); hole.absarc(0, 0, 34, 0, Math.PI * 2, true); ring.holes.push(hole);
+    const ringMesh = new THREE.Mesh(new THREE.ExtrudeGeometry(ring, { depth: 5.8,
+      bevelEnabled: true, bevelSize: 0.15, bevelThickness: 0.15, bevelSegments: 2, curveSegments: 96 }), frame);
+    ringMesh.position.z = -11.9; this.scene.add(ringMesh);
+    for (const z of [-12.2, -5.8]) {
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(41.8, 0.17, 6, 128), hardware);
+      rim.position.z = z; this.scene.add(rim);
+    }
     for (const side of [-1, 1]) {
-      const nacelle = new THREE.Mesh(new THREE.CylinderGeometry(3, 3.6, 30, 24), hardware);
-      nacelle.rotation.x = Math.PI / 2;
-      nacelle.position.set(side * 34, -1.5, 27);
-      this.scene.add(nacelle);
-      const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.2, 24), drive);
-      nozzle.rotation.x = Math.PI / 2;
-      nozzle.position.set(side * 34, -1.5, 42.2);
-      this.scene.add(nozzle);
-      const spar = new THREE.Mesh(new THREE.BoxGeometry(18, 1, 2), hardware);
-      spar.position.set(side * 26, -2, 27);
+      const tank = new THREE.Mesh(new THREE.SphereGeometry(8, 48, 32), hardware);
+      tank.position.set(side * 10, 19, 55); this.scene.add(tank);
+      const radiator = new THREE.Mesh(new THREE.BoxGeometry(15, 0.35, 25), frame);
+      radiator.position.set(side * 37, -5, 21); this.scene.add(radiator);
+      const spar = new THREE.Mesh(new THREE.BoxGeometry(20, 0.7, 1), hardware);
+      spar.position.set(side * 26, -5, 21);
       this.scene.add(spar);
     }
   }
@@ -300,6 +316,7 @@ export class StationInterior {
     this.scene.environment = null;
     this.environment?.dispose();
     this.environment = undefined;
+    this.instruments = undefined;
     this.scene.clear();
     this.limbs.length = 0;
     this.holograms.length = 0;

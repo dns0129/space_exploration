@@ -51,7 +51,7 @@ export class FlightLight {
     this.mesh.visible = false;
   }
 
-  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sun: THREE.PointLight) {
+  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sun: THREE.PointLight, ownedVesselId?: string) {
     camera.updateMatrixWorld();
     if (!ship.activeBodies.some(body => body.kind === "star")) {
       this.illumination = 0;
@@ -60,8 +60,8 @@ export class FlightLight {
       this.material.uniforms.entry.value = 0;
       return;
     }
-    this.illumination = this.stellarVisibility(ship, this.origin, sun.position);
-    const visibility = this.stellarVisibility(ship, camera.position, sun.position);
+    this.illumination = this.stellarVisibility(ship, this.origin, sun.position, ownedVesselId);
+    const visibility = this.stellarVisibility(ship, camera.position, sun.position, ownedVesselId);
     this.projected.copy(this.ray).applyQuaternion(this.cameraInverse.copy(camera.quaternion).invert());
     const visible = visibility > 0 && this.projected.z < 0 && !ship.warping;
     this.projected.copy(sun.position).project(camera);
@@ -85,7 +85,7 @@ export class FlightLight {
     this.mesh.visible = uniforms.glow.value > 0.001 || entry > 0.001;
   }
 
-  private stellarVisibility(ship: ShipDynamics, origin: THREE.Vector3, star: THREE.Vector3) {
+  private stellarVisibility(ship: ShipDynamics, origin: THREE.Vector3, star: THREE.Vector3, ownedVesselId?: string) {
     this.ray.copy(star).sub(origin);
     const distance = this.ray.length();
     this.ray.normalize();
@@ -95,7 +95,9 @@ export class FlightLight {
     const angularRadius = Math.asin(Math.min(1, (source?.radius ?? distance * 0.00465) / distance));
     let visibility = 1;
     for (const body of ship.activeBodies) {
-      if (body.kind === "star") continue;
+      // A piloted vessel replaces its old orbital marker. Its own geometry casts
+      // near-field shadows; that marker must not eclipse its sunlight after boarding.
+      if (body.kind === "star" || body.id === ownedVesselId) continue;
       this.center.fromArray(body.position).sub(ship.position).sub(origin);
       const along = this.center.dot(this.ray);
       if (along <= 0 || along >= distance) continue;

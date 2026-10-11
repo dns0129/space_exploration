@@ -75,3 +75,13 @@ export function stationZone(positionM) {
   const [x, , z] = coordinates(positionM);
   return STATION_ROOMS.find(room => contains(room, x, z))?.name ?? "空间站";
 }
+
+/** The bridge pressure roof slopes above 3.25 m; the walking floor is unchanged. */
+export function stationHeadroom(positionM) {
+  const [x, , z] = coordinates(positionM);
+  const room = STATION_ROOMS.find(candidate => contains(candidate, x, z));
+  if (!room) return 0;
+  if (room.id !== "control") return room.height;
+  return Math.min(4.8, 3.25 + Math.max(0, 14 - Math.abs(x)) / 2.5 * 1.55,
+    3.25 + Math.max(0, z + 40) / 2.2 * 1.55);
+}

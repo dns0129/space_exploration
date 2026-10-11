@@ -5,6 +5,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RectAreaLightUniformsLib } from "three/addons/lights/RectAreaLightUniformsLib.js";
 import { STATION_OBSTACLES, STATION_ROOMS, STATION_WALLS } from "../shared/station-layout.mjs";
 import { createShip } from "./ship-model";
+import { StarshipInstruments } from "./starship-instruments";
 
 type Point = [number, number, number];
 
@@ -105,6 +106,16 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
     geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize()));
     part(geometry, material, start.add(end).multiplyScalar(0.5).toArray());
   };
+  const facet = (points: Point[], material: THREE.Material) => {
+    const positions: number[] = [];
+    for (let i = 1; i < points.length - 1; i++) positions.push(...points[0], ...points[i], ...points[i + 1]);
+    // Both sides of the pressure shell are visible from different parts of the bridge.
+    if (material !== glass) for (let i = 1; i < points.length - 1; i++) positions.push(...points[0], ...points[i + 1], ...points[i]);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(new Float32Array(positions.length / 3 * 2), 2));
+    geometry.computeVertexNormals(); part(geometry, material, [0, 0, 0]);
+  };
   // Small, crisp identification plates only; instrumentation below is actual geometry.
   const label = (title: string, subtitle: string, position: Point, width: number,
     rotation: Point = [0, 0, 0]) => {
@@ -150,11 +161,18 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
       for (const r of [0.15, 0.25]) ring(height * r, edge * 0.065, center, cyanDim, rotation);
       ring(height * 0.2, edge * 0.075, center, cyan, rotation);
       line(-width * 0.2, -height * 0.02, height * 0.04, height * 0.04, white);
+      for (let tick = 0; tick < 48; tick++) {
+        const angle = tick * Math.PI / 24;
+        box([edge * 0.09, edge * (tick % 4 === 0 ? 0.5 : 0.25), 0.002],
+          at(-width * 0.2 + Math.sin(angle) * height * 0.27, -height * 0.02 + Math.cos(angle) * height * 0.27, 0.046),
+          tick % 4 === 0 ? white : cyanDim, [rotation[0], rotation[1], rotation[2] - angle]);
+      }
       for (let i = 0; i < 6; i++) {
         line(width * 0.24, height * (0.14 - i * 0.065), width * (0.12 + (i % 3) * 0.045), edge * 0.15,
           i === 3 ? amber : cyan);
       }
     } else {
+      for (let i = 0; i < 4; i++) line(0, height * (0.16 - i * 0.08), width * 0.82, edge * 0.07, cyanDim);
       for (let i = 0; i < 9; i++) {
         const barHeight = height * (0.12 + Math.sin(i * 1.8 + variant) * 0.045 + i * 0.015);
         line(-width * 0.36 + i * width * 0.09, -height * 0.13 + barHeight / 2,
@@ -184,6 +202,7 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
           [px + s * (w / 2 - 0.14), 0.003, pz + l / 2 - 0.25], titanium);
       }
     }
+    if (room.id === "control") continue; // The bridge has its own faceted pressure roof below.
     box([width, 0.2, length], [x, room.height + 0.1, z], recess);
     for (let rib = room.minZ + 1.2; rib < room.maxZ; rib += 4.4) {
       bevel([width - 0.25, 0.2, 0.38], [x, room.height - 0.1, rib], titanium, 0.045);
@@ -208,8 +227,8 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
       ? [wall.fixed + wall.inward * offset, y, along] : [along, y, wall.fixed + wall.inward * offset];
     const size = (span: number, height: number, thickness: number): Point => wall.axis === "x"
       ? [thickness, height, span] : [span, height, thickness];
+    if (wall.roomId === "control" && wall.axis === "z" && wall.fixed === -40) continue;
     const window = wall.roomId === "observation" && wall.axis === "x" && wall.fixed === 27
-      || wall.roomId === "control" && wall.axis === "z" && wall.fixed === -40
       || wall.roomId === "docking" && wall.axis === "z" && wall.fixed === 34;
     if (window) {
       bevel(size(length, 0.68, 0.58), at(center, 0.34, -0.04), graphite, 0.07);
@@ -253,6 +272,43 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
       bevel(size(length, 0.18, 0.3), at(center, wall.height - 0.18, 0.13), graphite, 0.035);
     }
     bevel(size(length, 0.12, 0.23), at(center, 0.08, 0.17), graphite, 0.025);
+  }
+  // Swept, five-pane bridge windshield and chamfered pressure roof. The lower
+  // walls retain the shared walking footprint; the roof follows stationHeadroom.
+  bevel([28, 0.68, 0.6], [0, 0.34, -40.05], graphite, 0.07);
+  bevel([27.7, 0.12, 0.48], [0, 0.71, -39.95], titanium, 0.04);
+  const lower = [-14, -8.4, -2.8, 2.8, 8.4, 14];
+  const upper = [-11.5, -7, -2.5, 2.5, 7, 11.5];
+  for (let i = 0; i < lower.length - 1; i++) {
+    const a = lower[i] + 0.09, b = lower[i + 1] - 0.09;
+    facet([[a, 0.79, -40], [b, 0.79, -40], [b, 3.25, -40], [a, 3.25, -40]], glass);
+    facet([[a, 3.25, -40], [b, 3.25, -40], [upper[i + 1] - 0.09, 4.8, -37.8], [upper[i] + 0.09, 4.8, -37.8]], glass);
+    box([b - a - 0.2, 0.016, 0.022], [(a + b) / 2, 0.64, -39.72], cyan);
+    bevel([b - a - 0.1, 0.32, 0.025], [(a + b) / 2, 0.36, -39.72], inset, 0.01);
+  }
+  for (let i = 0; i < lower.length; i++) {
+    bevel([0.18, 3.22, 0.48], [lower[i], 1.61, -40], titanium, 0.04);
+    strut([lower[i], 3.2, -40], [upper[i], 4.8, -37.8], 0.18, 0.3, titanium);
+    box([0.045, 0.1, 0.028], [lower[i], 0.94, -39.735], amber);
+  }
+  bevel([23, 0.22, 19.8], [0, 4.91, -27.9], recess, 0.04);
+  for (const side of [-1, 1]) {
+    facet([[side * 14, 3.25, -40], [side * 14, 3.25, -18],
+      [side * 11.5, 4.8, -18], [side * 11.5, 4.8, -37.8]], graphite);
+    strut([side * 13.87, 3.25, -39.7], [side * 13.87, 3.25, -18.2], 0.09, 0.14, titanium);
+  }
+  for (const z of [-37.8, -33.5, -28.8, -24.1, -19.2]) {
+    bevel([23, 0.18, 0.3], [0, 4.7, z], titanium, 0.04);
+    for (const side of [-1, 1]) {
+      strut([side * 13.83, 3.25, z], [side * 11.5, 4.7, z], 0.2, 0.3, titanium);
+      bevel([0.8, 0.12, 2.1], [side * 5.1, 4.7, z + 1.1], graphite, 0.03);
+      box([0.48, 0.02, 1.85], [side * 5.1, 4.625, z + 1.1], white);
+    }
+    for (const x of [-6, 0, 6]) bevel([4.8, 0.04, 3.6], [x, 4.78, z + 2], graphite, 0.015);
+  }
+  for (const side of [-1, 1]) {
+    strut([side * 11.4, 4.62, -37.7], [side * 11.4, 4.62, -18.4], 0.025, 0.05, warm);
+    strut([side * 13.67, 3.3, -37.5], [side * 13.67, 3.3, -19], 0.018, 0.03, warm);
   }
   // Low-output guide strips, inset into a continuous central service spine.
   for (const side of [-1, 1]) {
@@ -353,17 +409,38 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
       tube(0.09, 0.55, [side * 11.1, 0.32, z + 1.17], titanium);
     }
   }
-  // The helm is low and tilted, leaving the forward view free of a billboard.
+  // Three live MFDs, protected switches, rotary encoders and asymmetric flight controls.
   bevel([4.45, 0.64, 0.82], [0, 0.32, -38.7], graphite, 0.11);
   bevel([4.6, 0.12, 0.86], [0, 0.75, -38.7], titanium, 0.045);
-  for (const [i, x] of [-1.32, 0, 1.32].entries()) display(1.14, 0.47,
-    [x, 1.02, -38.64], [-0.65, 0, 0], i);
-  for (const side of [-1, 1]) {
-    for (let i = 0; i < 4; i++) bevel([0.18, 0.045, 0.11], [side * (0.7 + i * 0.27), 0.85, -38.32],
-      i === 0 ? brass : graphite, 0.018);
-    tube(0.07, 0.18, [side * 2.08, 0.94, -38.64], graphite, [0.2, 0, side * -0.2]);
-    bevel([0.14, 0.085, 0.18], [side * 2.1, 1.05, -38.63], titanium, 0.032);
+  for (const [i, x] of [-1.32, 0, 1.32].entries()) {
+    display(1.18, 0.6, [x, 1.14, -38.63], [-0.5, 0, 0], i);
+    bevel([1.22, 0.08, 0.37], [x, 0.83, -38.7], graphite, 0.03);
+    for (let key = 0; key < 8; key++) {
+      const kx = x - 0.51 + key * 0.145;
+      bevel([0.082, 0.025, 0.08], [kx, 0.857, -38.33], graphite, 0.012);
+      box([0.044, 0.005, 0.008], [kx, 0.874, -38.35], key === i * 2 ? amber : white);
+    }
+    for (const side of [-1, 1]) {
+      tube(0.035, 0.055, [x + side * 0.48, 0.865, -38.51], titanium);
+      ring(0.026, 0.003, [x + side * 0.48, 0.896, -38.51], graphite);
+      box([0.006, 0.005, 0.02], [x + side * 0.48, 0.896, -38.51], white);
+    }
+    for (let slot = 0; slot < 6; slot++) box([0.74, 0.017, 0.025], [x, 0.22 + slot * 0.044, -38.275], recess);
   }
+  const instruments = new StarshipInstruments(renderer, textures);
+  scene.add(instruments.group);
+  for (const side of [-1, 1]) {
+    bevel([0.23, 0.06, 0.3], [side * 2.11, 0.85, -38.63], graphite, 0.02);
+    for (let i = 0; i < 3; i++) {
+      bevel([0.085, 0.065, 0.085], [side * 2.13, 0.87, -38.42 - i * 0.16], titanium, 0.016);
+      tube(0.009, 0.075, [side * 2.13, 0.938, -38.42 - i * 0.16], brass, [0.24, 0, 0]);
+    }
+  }
+  tube(0.057, 0.18, [-2.09, 0.98, -38.65], graphite, [0.2, 0, 0.2]);
+  bevel([0.14, 0.095, 0.17], [-2.11, 1.09, -38.65], titanium, 0.03);
+  bevel([0.075, 0.024, 0.048], [-2.11, 1.15, -38.65], amber, 0.01);
+  bevel([0.19, 0.16, 0.25], [2.09, 0.96, -38.65], graphite, 0.035);
+  bevel([0.25, 0.055, 0.085], [2.09, 1.07, -38.64], titanium, 0.024, [-0.15, 0, 0]);
   ring(0.68, 0.012, [0, 0.012, -36], brass);
   label("TERRA  /  FLIGHT CONTROL", "NAVIGATION   ·   PROPULSION   ·   ATTITUDE", [0, 0.57, -38.275], 2.1);
   label("COMMAND  /  02", "驾驶室    ·    SYSTEMS ONLINE", [-13.73, 2.9, -20.5], 2.8, [0, Math.PI / 2, 0]);
@@ -390,5 +467,5 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
       scene.add(mesh);
     }
   }
-  return { environment, projection };
+  return { environment, projection, instruments };
 }

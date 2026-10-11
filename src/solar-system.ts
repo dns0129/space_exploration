@@ -328,7 +328,7 @@ export const EXPLORATION_BODIES: readonly CelestialBody[] = [
     flattening: 1, distanceFromSunMillionKm: 149.6, orbitalPeriodDays: 0.095,
     rotationSpeed: 0, parentId: "earth", orbitRadiusKm: 8771,
     tags: ["2400 km 向阳轨道", "360 km 科幻星舰", "停泊与舱内探索"],
-    description: "停驻在地球向阳面的远航星舰。<br>纵向装甲舰体、四台推进引擎、全景驾驶室、观测舱与穿梭机机库。<br>L 登舰后可在舰内走动，到驾驶台按 E 自由驾驶，按 X 离开驾驶座；跨度 360 km 为科幻游戏设定。",
+    description: "停驻在地球向阳面的远航星舰。<br>大型环形骨架、轴向分段舰体、反应堆推进器与双储罐；尖楔形驾驶室配备实时导航、姿态与推进仪表。<br>L 登舰后可在舰内走动，到驾驶台按 E 自由驾驶，按 X 离开驾驶座；跨度 360 km 为科幻游戏设定。",
     caption: "TERRA STARSHIP / FREE FLIGHT · ALTITUDE 2400 KM · FICTIONAL SCALE", layers: ["stars"],
   },
 ];
