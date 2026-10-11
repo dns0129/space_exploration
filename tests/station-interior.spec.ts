@@ -41,7 +41,7 @@ async function launchStation(page: Page, checkpoint?: StationCheckpoint) {
   if (checkpoint) await seedState(page, checkpoint);
   // Configure the real standard preset before launch; loading high-quality
   // global maps first can stall a software GPU across four document reloads.
-  await page.locator("#quality").selectOption("standard");
+  await page.locator("#quality").selectOption("standard", { force: true });
   await page.locator("#flight-quality").selectOption("standard", { force: true });
   await page.locator("#mode-flight").click();
   await expect(page.locator("#loading-overlay")).toBeHidden();
@@ -92,6 +92,7 @@ async function moveUntil(page: Page, input: string[], mobile: boolean, check: ()
 test("星舰停泊、舱内移动、驾驶室与观测舱、碰撞、暂停和存档恢复", async ({ page }, info) => {
   test.setTimeout(480_000);
   const mobile = info.project.name === "mobile";
+  await page.setViewportSize(mobile ? { width: 393, height: 700 } : { width: 960, height: 640 });
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => {

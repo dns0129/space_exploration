@@ -14,6 +14,8 @@
 
 最新离线 ZIP 包含精细飞船、独立程序星球、8K 银河、立体穿云/地表过渡，以及可自由驾驶和步行探索的科幻星舰。也可进入 [在线游戏](https://dns0129.github.io/space_exploration/game.html) 驾驶。
 
+星舰内部使用实体倒角结构、钛合金与陶瓷舱壁、密封全景窗、嵌入式灯具和倾斜驾驶台。墙面及地板采用程序化材质细节，仪表由几何线条绘制，驾驶与舰内步行沿用原有操作。
+
 下载 [自由航行游戏包](https://dns0129.github.io/space_exploration/downloads/voyager-warp.zip)，解压后将 **`voyager-warp.html`** 拖入 Chrome 或 Edge。点击顶部“自由航行”，再按 **W** 出发。
 
 独立 HTML 内嵌全部程序、样式、原生 16K 地球分块细节、8K/4K 地球图层、原生 8K/4K 火星和月球、8K/4K 银河背景，以及原有天体基础贴图，无需安装 Node.js 或联网即可驾驶；保存与恢复使用本机存档。浏览器需要 WebGL 2 与图形加速。

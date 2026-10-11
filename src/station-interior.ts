@@ -1,9 +1,8 @@
 import * as THREE from "three";
-import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { StationVisitState } from "../shared/flight-state.mjs";
-import { STATION_HELM, STATION_ROOMS, STATION_SPAWN, STATION_WALLS, stationWalkable, stationZone } from "../shared/station-layout.mjs";
+import { STATION_HELM, STATION_ROOMS, STATION_SPAWN, stationWalkable, stationZone } from "../shared/station-layout.mjs";
 import type { FlightInput } from "./ship-dynamics";
-import { createShip } from "./ship-model";
+import { buildStarshipDeck } from "./starship-deck";
 
 const EYE_HEIGHT_M = 1.65;
 const MAX_FOOT_HEIGHT_M = 2.4;
@@ -29,6 +28,9 @@ export class StationInterior {
   private gait = 0;
   private jumpHeld = false;
   private built = false;
+  private environment?: THREE.WebGLRenderTarget;
+
+  constructor(private readonly renderer: THREE.WebGLRenderer) {}
 
   get speedMps() { return Math.hypot(this.velocity.x, this.velocity.z); }
   get distanceToShipM() { return this.positionM.distanceTo(new THREE.Vector3().fromArray(STATION_SPAWN)); }
@@ -179,68 +181,6 @@ export class StationInterior {
     this.camera.updateMatrixWorld();
   }
 
-  private panelTexture(title: string, subtitle: string, diagram = false) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1024;
-    canvas.height = diagram ? 512 : 256;
-    const context = canvas.getContext("2d")!;
-    context.fillStyle = "#051825";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
-    gradient.addColorStop(0, "#123a4b");
-    gradient.addColorStop(1, "#07111e");
-    context.fillStyle = gradient;
-    context.fillRect(5, 5, canvas.width - 10, canvas.height - 10);
-    context.strokeStyle = "#4bc9dd";
-    context.lineWidth = 3;
-    context.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
-    context.fillStyle = "#80e6ee";
-    context.font = "600 50px sans-serif";
-    context.fillText(title, 48, 86);
-    context.font = "26px sans-serif";
-    context.fillStyle = "#b8ccd7";
-    context.fillText(subtitle, 50, 130);
-    if (diagram) {
-      context.strokeStyle = "#245d72";
-      context.lineWidth = 1;
-      for (let x = 48; x < 1000; x += 38) {
-        context.beginPath(); context.moveTo(x, 165); context.lineTo(x, 440); context.stroke();
-      }
-      for (let y = 165; y < 450; y += 34) {
-        context.beginPath(); context.moveTo(48, y); context.lineTo(970, y); context.stroke();
-      }
-      context.strokeStyle = "#60e7ee";
-      for (const radius of [55, 86, 124]) {
-        context.beginPath(); context.ellipse(245, 304, radius * 1.3, radius * 0.75, -0.3, 0, Math.PI * 2); context.stroke();
-      }
-      context.fillStyle = "#6ddff3";
-      context.beginPath(); context.arc(245, 304, 28, 0, Math.PI * 2); context.fill();
-      context.beginPath();
-      for (let x = 475; x < 958; x += 4) {
-        const y = 297 + Math.sin(x * 0.02) * 35 + Math.sin(x * 0.078) * 13;
-        if (x === 475) context.moveTo(x, y); else context.lineTo(x, y);
-      }
-      context.stroke();
-      context.fillStyle = "#dcaf69";
-      context.font = "22px monospace";
-      context.fillText("SOLAR ARRAY  100%   /   LIFE SUPPORT  ONLINE", 478, 394);
-      context.fillText("EARTH ORBIT   2400 KM   /   DOCK 01  SECURED", 478, 429);
-    } else {
-      context.fillStyle = "#dbb06c";
-      context.fillRect(48, 175, 100, 6);
-      context.fillStyle = "#3e8197";
-      context.fillRect(165, 175, 800, 2);
-      context.font = "19px monospace";
-      context.fillStyle = "#7ca2b2";
-      context.fillText("A U R O R A   /   S T A R S H I P   /   B R I D G E", 48, 220);
-    }
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = 4;
-    this.textures.add(texture);
-    return texture;
-  }
-
   /** The control-room projection is decorative; window views use the orbital scene. */
   private hologramMaterial() {
     const material = new THREE.ShaderMaterial({
@@ -285,198 +225,11 @@ export class StationInterior {
 
   private build() {
     this.built = true;
-    // Preserve the actual astronomical background rendered before this local deck.
+    // Keep the actual astronomical background behind the local pressure glazing.
     this.scene.background = null;
-    this.scene.add(new THREE.HemisphereLight(0xcce6ff, 0x172c45, 1.65));
-    const sunlight = new THREE.DirectionalLight(0xffdfb0, 2.1);
-    sunlight.position.set(30, 20, -12);
-    this.scene.add(sunlight);
-    const fill = new THREE.DirectionalLight(0x5daaff, 0.7);
-    fill.position.set(-10, 10, 24);
-    this.scene.add(fill);
-    for (const [point, color, intensity] of [
-      [[0, 4.8, 22], 0xc4e6ff, 115], [[0, 3.4, -30], 0x68d9ff, 95], [[18, 3.6, -3], 0xaccfff, 65],
-    ] as [Point, number, number][]) {
-      const light = new THREE.PointLight(color, intensity, 35, 2);
-      light.position.fromArray(point);
-      this.scene.add(light);
-    }
-    const metal = new THREE.MeshStandardMaterial({ color: 0x4e6476, metalness: 0.72, roughness: 0.44 });
-    const pale = new THREE.MeshStandardMaterial({ color: 0x8796a6, metalness: 0.4, roughness: 0.5 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x121f2c, metalness: 0.67, roughness: 0.56 });
-    const floor = new THREE.MeshStandardMaterial({ color: 0x293b4b, metalness: 0.5, roughness: 0.62 });
-    const copper = new THREE.MeshStandardMaterial({ color: 0xb18b55, metalness: 0.62, roughness: 0.4 });
-    const cyan = new THREE.MeshBasicMaterial({ color: 0x71edff, toneMapped: false });
-    const amber = new THREE.MeshBasicMaterial({ color: 0xffc36b, toneMapped: false });
-    const white = new THREE.MeshBasicMaterial({ color: 0xc5e8ff, toneMapped: false });
-    const glazing = new THREE.MeshPhysicalMaterial({ color: 0x8fb9d1, roughness: 0.09, metalness: 0.15,
-      transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide });
-    const batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
-    const part = (geometry: THREE.BufferGeometry, material: THREE.Material, position: Point = [0, 0, 0], rotation: Point = [0, 0, 0]) => {
-      const flat = geometry.index ? geometry.toNonIndexed() : geometry;
-      flat.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3().fromArray(position),
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(...rotation)), new THREE.Vector3(1, 1, 1)));
-      if (flat !== geometry) geometry.dispose();
-      const bucket = batches.get(material) ?? [];
-      bucket.push(flat); batches.set(material, bucket);
-    };
-    const box = (size: Point, position: Point, material: THREE.Material, rotation: Point = [0, 0, 0]) =>
-      part(new THREE.BoxGeometry(...size), material, position, rotation);
-    const ring = (radius: number, thickness: number, position: Point, material: THREE.Material, rotation: Point = [Math.PI / 2, 0, 0]) =>
-      part(new THREE.TorusGeometry(radius, thickness, 6, 64), material, position, rotation);
-    const panel = (title: string, subtitle: string, position: Point, size: [number, number], rotation: Point = [0, 0, 0], diagram = false) => {
-      const material = new THREE.MeshBasicMaterial({ map: this.panelTexture(title, subtitle, diagram), toneMapped: false });
-      part(new THREE.PlaneGeometry(...size), material, position, rotation);
-    };
-    for (const room of STATION_ROOMS) {
-      const width = room.maxX - room.minX, length = room.maxZ - room.minZ;
-      const x = (room.minX + room.maxX) / 2, z = (room.minZ + room.maxZ) / 2;
-      box([width, 0.26, length], [x, -0.15, z], dark);
-      for (let tileX = room.minX; tileX < room.maxX; tileX += 2) {
-        for (let tileZ = room.minZ; tileZ < room.maxZ; tileZ += 2) {
-          const tileWidth = Math.min(2, room.maxX - tileX), tileLength = Math.min(2, room.maxZ - tileZ);
-          box([tileWidth - 0.035, 0.035, tileLength - 0.035], [tileX + tileWidth / 2, -0.0175, tileZ + tileLength / 2], floor);
-        }
-      }
-      box([width, 0.22, length], [x, room.height + 0.11, z], dark);
-      for (let ribZ = room.minZ + 1; ribZ <= room.maxZ; ribZ += 4) {
-        box([width, 0.12, 0.3], [x, room.height - 0.06, ribZ], metal);
-        for (const side of [-1, 1]) {
-          const lightX = x + side * Math.min(width * 0.32, 4.5);
-          box([0.32, 0.08, 2.8], [lightX, room.height - 0.1, ribZ + 0.75], white);
-          box([0.65, 0.1, 3.1], [lightX, room.height - 0.04, ribZ + 0.75], dark);
-        }
-      }
-    }
-    for (const wall of STATION_WALLS) {
-      const length = wall.to - wall.from;
-      const center = (wall.from + wall.to) / 2;
-      const position = (along: number, y: number, offset = 0): Point => wall.axis === "x"
-        ? [wall.fixed + wall.inward * offset, y, along] : [along, y, wall.fixed + wall.inward * offset];
-      const size = (span: number, height: number, thickness: number): Point => wall.axis === "x"
-        ? [thickness, height, span] : [span, height, thickness];
-      const window = wall.roomId === "observation" && wall.axis === "x" && wall.fixed === 27
-        || wall.roomId === "control" && wall.axis === "z" && wall.fixed === -40
-        || wall.roomId === "docking" && wall.axis === "z" && wall.fixed === 34;
-      if (window) {
-        box(size(length, 0.9, 0.38), position(center, 0.45), metal);
-        box(size(length, 0.5, 0.38), position(center, wall.height - 0.25), metal);
-        box(size(length - 0.3, wall.height - 1.4, 0.06), position(center, (wall.height + 0.4) / 2), glazing);
-        for (let along = wall.from; along <= wall.to; along += 4) {
-          box(size(0.2, wall.height, 0.4), position(along, wall.height / 2), metal);
-          box(size(0.035, wall.height - 0.5, 0.04), position(along, wall.height / 2, 0.24), cyan);
-        }
-        box(size(length, 0.025, 0.05), position(center, 1, 0.22), cyan);
-      } else {
-        box(size(length, wall.height, 0.32), position(center, wall.height / 2, -0.08), dark);
-        for (let along = wall.from; along < wall.to; along += 2.8) {
-          const span = Math.min(2.8, wall.to - along);
-          box(size(span - 0.07, wall.height - 0.75, 0.06), position(along + span / 2, wall.height / 2, 0.13), pale);
-          box(size(span - 0.3, 0.1, 0.1), position(along + span / 2, 0.68, 0.19), dark);
-          box(size(span - 0.6, 0.02, 0.03), position(along + span / 2, wall.height - 0.64, 0.2), cyan);
-        }
-      }
-      box(size(length, 0.09, 0.15), position(center, 0.13, 0.2), wall.roomId === "docking" ? amber : cyan);
-      box(size(length, 0.18, 0.3), position(center, wall.height - 0.15, 0.15), metal);
-    }
-    // A straight, unobstructed luminous spine connects all three occupied decks.
-    for (const side of [-1, 1]) {
-      box([0.07, 0.012, 51], [side * 1.1, 0.012, -1.5], cyan);
-      box([0.18, 0.008, 51], [side * 1.1, 0.006, -1.5], dark);
-    }
-    for (let z = -15; z < 23; z += 4) {
-      box([0.11, 0.016, 0.7], [-0.23, 0.018, z], cyan, [0, -0.62, 0]);
-      box([0.11, 0.016, 0.7], [0.23, 0.018, z], cyan, [0, 0.62, 0]);
-    }
-    for (const z of [-18, 12]) {
-      for (const side of [-1, 1]) {
-        box([0.25, 4.1, 0.4], [side * 2.88, 2.05, z], metal);
-        box([0.055, 3.8, 0.06], [side * 2.72, 2.05, z + 0.25], cyan);
-      }
-      box([5.85, 0.35, 0.5], [0, 4, z], metal);
-      const ceiling = z === 12 ? 6 : 4.8;
-      box([6, ceiling - 4.2, 0.32], [0, (ceiling + 4.2) / 2, z], dark);
-    }
-    box([0.32, 0.6, 24], [3, 4.5, -2], dark);
-    panel("02 / COMMAND · 驾驶室", "← OBSERVATORY  /  观测舱 →", [0, 3.45, -17.7], [4.5, 1.125]);
-    panel("01 / DOCKING · 停泊舱", "RETURN TO SHIP  /  返回飞船", [0, 3.4, 12.3], [4.5, 1.125], [0, Math.PI, 0]);
-    panel("03 / OBSERVATORY · 观测舱", "SUNLIT EARTH  /  向阳面地球", [3.3, 3.65, -2], [5.5, 1.375], [0, -Math.PI / 2, 0]);
-    // Parked survey vessel and its recessed berth, with an accessible return pad.
-    box([10.3, 0.03, 10.2], [-6.2, 0.02, 25], dark);
-    for (const side of [-1, 1]) {
-      box([0.07, 0.025, 10.2], [-6.2 + side * 5.25, 0.048, 25], amber);
-      box([10.5, 0.025, 0.07], [-6.2, 0.048, 25 + side * 5.1], amber);
-      for (let stripe = 0; stripe < 8; stripe++) box([0.24, 0.02, 0.5], [-6.2 + side * 4.5, 0.052, 21.3 + stripe], amber, [0, 0.55, 0]);
-    }
-    const ship = createShip();
-    ship.group.scale.setScalar(4.8);
-    ship.group.position.set(-6.2, ship.landingFootOffset * 4.8, 25);
-    ship.gear.visible = true;
-    ship.exhaust.visible = false;
-    this.scene.add(ship.group);
-    ring(1.45, 0.035, [0, 0.06, 24], amber);
-    ring(1.22, 0.012, [0, 0.064, 24], cyan);
-    panel("DOCK 01 / VOYAGER", "SECURED · 飞船已停泊", [-6.2, 2.7, 33.78], [7, 1.75], [0, Math.PI, 0]);
-    panel("TERRA · 远航星舰", "EARTH / SUNLIT ORBIT   |   2400 KM", [9.4, 2.65, 12.25], [7, 1.75]);
-    for (const x of [6, 9.5, 12]) {
-      box([1.3, 1.3, 1.5], [x, 0.65, 30.8], metal);
-      box([1.1, 0.035, 1.3], [x, 1.31, 30.8], copper);
-      box([0.95, 0.1, 0.03], [x, 0.9, 30.04], cyan);
-    }
-    // The command deck: central holographic globe plus two banks of tilted consoles.
-    box([6.4, 0.36, 5.8], [0, 0.18, -30.5], dark);
-    box([5.4, 0.8, 4.8], [0, 0.78, -30.5], metal);
-    box([6, 0.16, 5.4], [0, 1.24, -30.5], dark);
-    for (const side of [-1, 1]) {
-      box([0.035, 0.04, 5.4], [side * 2.95, 1.35, -30.5], cyan);
-      box([6, 0.04, 0.035], [0, 1.35, -30.5 + side * 2.65], cyan);
-    }
-    ring(2.05, 0.035, [0, 1.35, -30.5], cyan);
-    const holo = new THREE.Group();
-    holo.position.set(0, 2.9, -30.5);
-    holo.add(new THREE.Mesh(new THREE.SphereGeometry(1.35, 64, 40), this.hologramMaterial()));
-    const orbital = new THREE.Mesh(new THREE.TorusGeometry(1.65, 0.012, 6, 96), cyan);
-    orbital.rotation.x = Math.PI / 2.3;
-    holo.add(orbital);
-    this.scene.add(holo); this.holograms.push(holo);
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2, 1.6, 48, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0x1cbbdd, transparent: true, opacity: 0.055,
-        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
-    beam.position.set(0, 2.15, -30.5); this.scene.add(beam);
-    const consoleMaterial = new THREE.MeshBasicMaterial({ map: this.panelTexture("FLIGHT TELEMETRY", "航道监控 / 生命保障", true), toneMapped: false });
-    for (const side of [-1, 1]) {
-      for (const z of [-24, -29, -34.5]) {
-        box([3.7, 0.9, 3.2], [side * 11.1, 0.45, z], dark);
-        box([3.5, 0.2, 2.9], [side * 11.1, 1.15, z], metal, [0, 0, side * 0.25]);
-        part(new THREE.PlaneGeometry(2.7, 2.2), consoleMaterial, [side * 11.1, 1.3, z], [-Math.PI / 2, 0, side * 0.15]);
-        box([0.08, 0.06, 3], [side * 9.4, 1.05, z], cyan);
-      }
-    }
-    // Helm below the forward pressure glazing, approached around the hologram table.
-    box([4.6, 0.85, 0.9], [0, 0.425, -38.7], metal);
-    panel("TERRA / HELM", "E 接管驾驶 · X 离开驾驶座", [0, 1.05, -38.15], [4.2, 0.8]);
-    ring(0.7, 0.025, [0, 0.04, -36], amber);
-    panel("SECTOR 02 / COMMAND", "ACTIVE CREW DECK · 中央指挥", [-13.77, 3.3, -20.5], [3.5, 0.875], [0, Math.PI / 2, 0]);
-    // Panoramic observation lounge: clear glazing, deep structural mullions and quiet seating.
-    box([10, 0.38, 2], [16, 0.38, 7.5], dark);
-    box([10, 0.22, 1.6], [16, 0.69, 7.3], pale);
-    box([10, 0.75, 0.3], [16, 1, 8.3], metal);
-    box([9.5, 0.03, 0.03], [16, 1.35, 8.1], cyan);
-    panel("EARTH / 地球观测", "2400 KM · SUNLIT ORBIT · PANORAMIC DECK", [14, 3.7, -13.75], [12, 1.1]);
-    for (let z = -10; z <= 6; z += 4) {
-      box([0.1, 0.012, 2.2], [25.5, 0.025, z], cyan);
-      box([0.8, 0.012, 0.035], [24.9, 0.025, z], cyan);
-    }
-    // The entire rigid architecture is drawn once per material.
-    for (const [material, geometries] of batches) {
-      const geometry = mergeGeometries(geometries);
-      geometries.forEach(item => item.dispose());
-      if (geometry) {
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.name = "Aurora interior material batch";
-        this.scene.add(mesh);
-      }
-    }
+    const deck = buildStarshipDeck(this.scene, this.renderer, this.textures, this.hologramMaterial());
+    this.environment = deck.environment;
+    this.holograms.push(deck.projection);
     this.buildExterior();
     this.buildAstronaut();
   }
@@ -544,6 +297,9 @@ export class StationInterior {
     materials.forEach(material => material.dispose());
     this.textures.forEach(texture => texture.dispose());
     this.textures.clear();
+    this.scene.environment = null;
+    this.environment?.dispose();
+    this.environment = undefined;
     this.scene.clear();
     this.limbs.length = 0;
     this.holograms.length = 0;

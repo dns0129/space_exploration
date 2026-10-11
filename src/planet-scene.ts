@@ -1465,7 +1465,7 @@ export class SolarScene {
     return error;
   }
   private getStationInterior() {
-    if (!this.stationInterior) this.stationInterior = new StationInterior();
+    if (!this.stationInterior) this.stationInterior = new StationInterior(this.renderer);
     // Restoring a station checkpoint can follow a planetary surface visit.
     this.renderPolicy.reset();
     const config = this.dynamics!.config;
