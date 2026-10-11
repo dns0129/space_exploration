@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
-import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RectAreaLightUniformsLib } from "three/addons/lights/RectAreaLightUniformsLib.js";
 import { STATION_OBSTACLES, STATION_ROOMS, STATION_WALLS } from "../shared/station-layout.mjs";
@@ -78,18 +78,27 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
     clearcoat: 0.28, clearcoatRoughness: 0.22, envMapIntensity: 0.08 });
   const glass = new THREE.MeshPhysicalMaterial({ color: 0xb6d0d6, roughness: 0.065, metalness: 0,
     transparent: true, opacity: 0.025, depthWrite: false, side: THREE.DoubleSide });
+  glass.name = "Starship pressure glazing";
   const luminous = (color: number) => new THREE.MeshBasicMaterial({ color, toneMapped: false });
   const warm = luminous(0xe3d5b8), white = luminous(0xc7d8dd), cyan = luminous(0x70b4c2);
   const cyanDim = luminous(0x1b4858), amber = luminous(0xc89857);
-  const batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  // Batch within rooms: whole-vessel batches defeat culling, while many tiny
+  // batches spend more CPU time submitting draws than they save on geometry.
+  const batches = new Map<string, Map<THREE.Material, THREE.BufferGeometry[]>>();
+  const center = new THREE.Vector3();
   const part = (geometry: THREE.BufferGeometry, material: THREE.Material, position: Point,
     rotation: Point = [0, 0, 0]) => {
     const flat = geometry.index ? geometry.toNonIndexed() : geometry;
     flat.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(...position),
       new THREE.Quaternion().setFromEuler(new THREE.Euler(...rotation)), new THREE.Vector3(1, 1, 1)));
     if (flat !== geometry) geometry.dispose();
-    const bucket = batches.get(material) ?? [];
-    bucket.push(flat); batches.set(material, bucket);
+    flat.computeBoundingBox();
+    flat.boundingBox!.getCenter(center);
+    const cell = STATION_ROOMS.find(room => center.x >= room.minX && center.x <= room.maxX
+      && center.z >= room.minZ && center.z <= room.maxZ)?.id ?? "connections";
+    const cellBatches = batches.get(cell) ?? new Map<THREE.Material, THREE.BufferGeometry[]>();
+    const bucket = cellBatches.get(material) ?? [];
+    bucket.push(flat); cellBatches.set(material, bucket); batches.set(cell, cellBatches);
   };
   const box = (size: Point, position: Point, material: THREE.Material, rotation: Point = [0, 0, 0]) =>
     part(new THREE.BoxGeometry(...size), material, position, rotation);
@@ -457,15 +466,24 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
   for (const x of [11.13, 20.87]) bevel([0.22, 0.22, 1.8], [x, 0.75, 7.5], titanium, 0.06);
   label("OBSERVATORY  /  03", "观测舱    ·    PANORAMIC DECK", [14, 3.4, -13.72], 4.2);
 
-  // One draw per material for the rigid deck; no per-frame reconstruction.
-  for (const [material, geometries] of batches) {
-    const geometry = mergeGeometries(geometries);
-    geometries.forEach(item => item.dispose());
-    if (geometry) {
+  const surfaces: THREE.Mesh[] = [];
+  // Index identical vertices again after combining mixed primitive geometries.
+  // Normals and UVs remain part of the weld key, preserving sharp edges and seams.
+  for (const cellBatches of batches.values()) {
+    for (const [material, geometries] of cellBatches) {
+      const flat = mergeGeometries(geometries);
+      geometries.forEach(item => item.dispose());
+      if (!flat) continue;
+      const geometry = mergeVertices(flat, 1e-6);
+      flat.dispose();
+      geometry.computeBoundingSphere();
+      geometry.computeBoundingBox();
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = "Starship deck / manufactured surfaces";
+      mesh.matrixAutoUpdate = false;
       scene.add(mesh);
+      surfaces.push(mesh);
     }
   }
-  return { environment, projection, instruments };
+  return { environment, projection, instruments, surfaces };
 }

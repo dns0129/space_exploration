@@ -15,6 +15,9 @@ export class StarshipInstruments {
   private readonly panels: { context: CanvasRenderingContext2D; texture: THREE.CanvasTexture }[] = [];
   private nextUpdate = 0;
   private previous = "";
+  private readonly bounds = new THREE.Box3();
+  private readonly frustum = new THREE.Frustum();
+  private readonly viewProjection = new THREE.Matrix4();
 
   constructor(renderer: THREE.WebGLRenderer, textures: Set<THREE.Texture>) {
     this.group.name = "TERRA / live flight instruments";
@@ -31,6 +34,15 @@ export class StarshipInstruments {
       mesh.position.set(x, 1.14, -38.63).add(new THREE.Vector3(0, 0, 0.052).applyEuler(mesh.rotation));
       this.group.add(mesh);
     }
+    this.bounds.setFromObject(this.group);
+  }
+
+  inView(camera: THREE.PerspectiveCamera) {
+    // Beyond 15 m the tiny display glyphs cannot be read. Refresh immediately
+    // on approach instead of repainting three 2K canvases behind distant walls.
+    if (camera.position.distanceToSquared(this.bounds.getCenter(new THREE.Vector3())) > 225) return false;
+    this.viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    return this.frustum.setFromProjectionMatrix(this.viewProjection).intersectsBox(this.bounds);
   }
 
   update(ship: ShipDynamics, input: FlightInput, time: number) {

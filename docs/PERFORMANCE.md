@@ -26,3 +26,11 @@ npm run test:performance -- --baseline /path/to/baseline/dist
 ```
 
 `--hardware` 使用系统图形后端，报告中的 `graphicsRenderer` 记录实际驱动；用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 可指定 Chrome/Chromium 路径，或先执行 `npx playwright install chromium`。结果与截图写入 `test-results/performance/`。回归门槛为平均至少 55 FPS、P95 不超过 22 ms；渲染目标仍为 60 Hz。浏览器交互结果另写入 `test-results/browser/`。
+
+## 舰内行走
+
+舰内静态结构按舱室和材质合并，使用包围盒剔除视野外的结构。合并后的网格保留索引，避免重复处理相同顶点；近处的不透明结构先绘制，米制舱内场景使用普通深度，让舱壁后方的片元提前退出。窗外天体和银河仍来自实际轨道场景，但只在可见舷窗的保守屏幕矩形内绘制；靠近窗面时恢复完整绘制范围。
+
+三块原生 2K 仪表仅在镜头朝向显示器、且距离不超过 15 m 时刷新；接近或接管驾驶座后读取当前航行数据。暂停后的静态画面继续复用，玻璃保持由远到近的透明排序，行走碰撞和存档坐标沿用共享布局。
+
+`npx playwright test tests/station-performance.spec.ts` 在桌面和手机对六种实际舰内视角逐像素比较完整窗景与裁剪窗景，覆盖停泊区、廊道、驾驶室、近窗、第三人称和接管驾驶座，并检查远处仪表不重绘、接近后刷新。画面对照固定使用 0.5 渲染比例，以排除自适应分辨率差异；帧率仍需在玩家的实际显卡上测量。

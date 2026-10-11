@@ -31,6 +31,11 @@ export class StationInterior {
   private built = false;
   private environment?: THREE.WebGLRenderTarget;
   private instruments?: StarshipInstruments;
+  private surfaces: THREE.Mesh[] = [];
+  private readonly frustum = new THREE.Frustum();
+  private readonly viewProjection = new THREE.Matrix4();
+  private readonly corner = new THREE.Vector3();
+  private readonly viewCorner = new THREE.Vector3();
 
   constructor(private readonly renderer: THREE.WebGLRenderer) {}
 
@@ -96,6 +101,7 @@ export class StationInterior {
   }
 
   updateInstruments(ship: ShipDynamics, input: FlightInput, time: number) {
+    if (!this.instruments?.inView(this.camera)) return false;
     return this.instruments?.update(ship, input, time) ?? false;
   }
 
@@ -154,6 +160,7 @@ export class StationInterior {
       this.camera.quaternion.identity();
       this.astronaut.visible = false;
       this.camera.updateMatrixWorld();
+      this.orderSurfaces();
       return;
     }
     const head = this.positionM.clone().add(new THREE.Vector3(0, EYE_HEIGHT_M, 0));
@@ -189,6 +196,46 @@ export class StationInterior {
     for (let index = 0; index < this.holograms.length; index++)
       this.holograms[index].rotation.y = this.clock * (index % 2 ? -0.12 : 0.08);
     this.camera.updateMatrixWorld();
+    this.orderSurfaces();
+  }
+
+  private orderSurfaces() {
+    // Draw nearby opaque architecture first so hidden fragments fail the depth
+    // test before running the metal finish and area-light shaders. Transparent
+    // glazing keeps the renderer's normal back-to-front ordering.
+    this.viewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.viewProjection);
+    for (const mesh of this.surfaces) {
+      mesh.visible = this.frustum.intersectsBox(mesh.geometry.boundingBox!);
+      if (!(mesh.material as THREE.Material).transparent)
+        mesh.renderOrder = mesh.geometry.boundingSphere!.center.distanceToSquared(this.camera.position);
+    }
+  }
+
+  /** Conservative screen rectangle enclosing every visible pressure window. */
+  windowScissor(width: number, height: number) {
+    let minX = 1, minY = 1, maxX = -1, maxY = -1;
+    for (const mesh of this.surfaces) {
+      if (!mesh.visible || (mesh.material as THREE.Material).name !== "Starship pressure glazing") continue;
+      const bounds = mesh.geometry.boundingBox!;
+      for (let i = 0; i < 8; i++) {
+        this.corner.set(i & 1 ? bounds.max.x : bounds.min.x,
+          i & 2 ? bounds.max.y : bounds.min.y, i & 4 ? bounds.max.z : bounds.min.z);
+        this.viewCorner.copy(this.corner).applyMatrix4(this.camera.matrixWorldInverse);
+        // A window crossing the near plane can cover the whole view. Keep the
+        // complete orbital pass rather than clipping a close or third-person view.
+        if (this.viewCorner.z >= -this.camera.near) return { x: 0, y: 0, width, height };
+        this.corner.applyMatrix4(this.viewProjection);
+        minX = Math.min(minX, this.corner.x); minY = Math.min(minY, this.corner.y);
+        maxX = Math.max(maxX, this.corner.x); maxY = Math.max(maxY, this.corner.y);
+      }
+    }
+    if (maxX < minX || maxY < minY) return null;
+    const x = Math.max(0, Math.floor((minX + 1) * width / 2) - 2);
+    const y = Math.max(0, Math.floor((minY + 1) * height / 2) - 2);
+    const right = Math.min(width, Math.ceil((maxX + 1) * width / 2) + 2);
+    const top = Math.min(height, Math.ceil((maxY + 1) * height / 2) + 2);
+    return { x, y, width: right - x, height: top - y };
   }
 
   /** The control-room projection is decorative; window views use the orbital scene. */
@@ -240,9 +287,32 @@ export class StationInterior {
     const deck = buildStarshipDeck(this.scene, this.renderer, this.textures, this.hologramMaterial());
     this.environment = deck.environment;
     this.instruments = deck.instruments;
+    this.surfaces = deck.surfaces;
     this.holograms.push(deck.projection);
     this.buildExterior();
     this.buildAstronaut();
+    // This pass clears the astronomical depth buffer and draws only metre-scale
+    // geometry. Fragment-written logarithmic depth disables early depth rejection
+    // on some GPUs, shading entire rooms hidden behind the pressure walls.
+    // Use ordinary depth consistently for every local surface, including glass,
+    // instruments and the shuttle; keep logarithmic depth in the orbital pass.
+    const materials = new Set<THREE.Material>();
+    this.scene.traverse(object => {
+      if (object instanceof THREE.Mesh)
+        for (const material of Array.isArray(object.material) ? object.material : [object.material])
+          materials.add(material);
+    });
+    for (const material of materials) {
+      const compile = material.onBeforeCompile;
+      const key = material.customProgramCacheKey();
+      material.onBeforeCompile = (shader, renderer) => {
+        compile.call(material, shader, renderer);
+        const chunks = /#include <logdepthbuf_(?:pars_)?(?:vertex|fragment)>/g;
+        shader.vertexShader = shader.vertexShader.replace(chunks, "");
+        shader.fragmentShader = shader.fragmentShader.replace(chunks, "");
+      };
+      material.customProgramCacheKey = () => `${key}/station-linear-depth`;
+    }
   }
 
   private buildExterior() {
@@ -317,6 +387,7 @@ export class StationInterior {
     this.environment?.dispose();
     this.environment = undefined;
     this.instruments = undefined;
+    this.surfaces = [];
     this.scene.clear();
     this.limbs.length = 0;
     this.holograms.length = 0;

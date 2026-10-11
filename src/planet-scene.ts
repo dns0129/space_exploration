@@ -1031,12 +1031,26 @@ export class SolarScene {
       // Draw the actual orbital world, then let the local hull and glazing
       // occlude it. Celestial resources stay owned by the outer space scene.
       const autoClear = this.renderer.autoClear;
+      const scissorTest = this.renderer.getScissorTest();
+      const scissor = this.renderer.getScissor(new THREE.Vector4());
       try {
-        this.renderer.render(this.spaceScene, this.camera);
         this.renderer.autoClear = false;
+        this.renderer.setScissorTest(false);
+        this.renderer.clear();
+        // The orbital shaders need only the pixels visible through glazing.
+        // The opaque deck still draws across the full canvas with its own depth.
+        const windows = this.stationInterior!.windowScissor(this.flightWidth, this.flightHeight);
+        if (windows) {
+          this.renderer.setScissor(windows.x, windows.y, windows.width, windows.height);
+          this.renderer.setScissorTest(true);
+          this.renderer.render(this.spaceScene, this.camera);
+        }
+        this.renderer.setScissorTest(false);
         this.renderer.clearDepth();
         this.renderer.render(this.stationInterior!.scene, this.stationInterior!.camera);
       } finally {
+        this.renderer.setScissor(scissor);
+        this.renderer.setScissorTest(scissorTest);
         this.renderer.autoClear = autoClear;
       }
       return;
