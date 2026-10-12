@@ -6,6 +6,7 @@ import { buildStarshipDeck } from "./starship-deck";
 import type { StarshipInstruments } from "./starship-instruments";
 import type { LightingQuality } from "./lighting-quality";
 import type { StellarSample } from "./stellar-light";
+import type { PlanetBounce } from "./bridge-lighting";
 
 const EYE_HEIGHT_M = 1.65;
 const MAX_FOOT_HEIGHT_M = 2.4;
@@ -35,6 +36,10 @@ export class StationInterior {
   private readonly sunlight = new THREE.DirectionalLight(0xffffff, 0);
   private readonly secondarySunlight = new THREE.DirectionalLight(0xffffff, 0);
   private readonly lampShadow = new THREE.SpotLight(0xe4edf2, 20, 70, 1.25, 0.85, 2);
+  private readonly windowBounce = new THREE.RectAreaLight(0xb6cde3, 0, 23, 2.1);
+  private readonly consoleFill = new THREE.RectAreaLight(0x8fc3cf, 18, 4.2, 0.55);
+  private finishDetail = { value: 1 };
+  private effectLevel = 1;
   private roomLights: { id: string; light: THREE.RectAreaLight }[] = [];
   private lightingRoom = "";
   private instruments?: StarshipInstruments;
@@ -112,13 +117,15 @@ export class StationInterior {
     return this.instruments?.update(ship, input, time) ?? false;
   }
   configureLighting(quality: LightingQuality) {
+    this.effectLevel = quality.level;
+    this.finishDetail.value = Number(quality.level > 0);
     for (const light of [this.sunlight, this.lampShadow]) {
       if (light.shadow.mapSize.x === quality.shadowSize) continue;
       light.shadow.map?.dispose(); light.shadow.map = null;
       light.shadow.mapSize.set(quality.shadowSize, quality.shadowSize);
     }
   }
-  updateLighting(samples: StellarSample[], rotation: THREE.Quaternion) {
+  updateLighting(samples: StellarSample[], rotation: THREE.Quaternion, bounce?: PlanetBounce) {
     if (!this.built) return;
     const inverse = rotation.clone().invert();
     for (const [index, light] of [this.sunlight, this.secondarySunlight].entries()) {
@@ -131,6 +138,18 @@ export class StationInterior {
     }
     const room = STATION_ROOMS.find(room => this.positionM.x >= room.minX && this.positionM.x <= room.maxX
       && this.positionM.z >= room.minZ && this.positionM.z <= room.maxZ) ?? STATION_ROOMS[0];
+    const bridge = room.id === "control";
+    const incoming = bounce?.direction.clone().applyQuaternion(inverse);
+    // A broad window source is a bounded diffuse-bounce approximation. Only
+    // Earth's illuminated disc in front of the bridge can supply this light.
+    const windowFacing = incoming ? THREE.MathUtils.smoothstep(-incoming.z, 0.12, 0.65) : 0;
+    this.windowBounce.intensity = bounce ? Math.min(1.8, Math.sqrt(Math.max(0, bounce.irradiance)) * 6) * windowFacing : 0;
+    this.windowBounce.visible = bridge && this.windowBounce.intensity > 0.001;
+    if (bounce) this.windowBounce.color.copy(bounce.color);
+    this.consoleFill.visible = bridge && this.effectLevel > 0;
+    this.lampShadow.color.set(bridge ? 0xffe0bb : 0xe4edf2);
+    this.lampShadow.intensity = 20;
+    this.renderer.domElement.dataset.earthshine = this.windowBounce.visible ? this.windowBounce.intensity.toFixed(3) : "0";
     this.lampShadow.position.set((room.minX + room.maxX) / 2, room.height - 0.25, (room.minZ + room.maxZ) / 2);
     this.lampShadow.target.position.set(this.lampShadow.position.x, 0, this.lampShadow.position.z);
     this.lampShadow.shadow.needsUpdate = this.lampShadow.shadow.map === null
@@ -143,12 +162,17 @@ export class StationInterior {
         const generator = new THREE.PMREMGenerator(this.renderer);
         const enabled = this.renderer.shadowMap.enabled, env = this.scene.environment;
         const visible = this.surfaces.map(mesh => mesh.visible);
-        const celestial = [this.sunlight.visible, this.secondarySunlight.visible, this.lampShadow.visible];
+        const celestial = [this.sunlight.visible, this.secondarySunlight.visible, this.lampShadow.visible, this.windowBounce.visible];
+        const consoleVisible = this.consoleFill.visible;
+        const detail = this.finishDetail.value;
         const lamps = this.roomLights.map(({ light }) => light.visible);
         try {
           this.renderer.shadowMap.enabled = false; this.scene.environment = null;
           this.surfaces.forEach(mesh => { mesh.visible = true; });
           this.sunlight.visible = this.secondarySunlight.visible = this.lampShadow.visible = false;
+          this.windowBounce.visible = false;
+          this.consoleFill.visible = room.id === "control";
+          this.finishDetail.value = 0;
           this.roomLights.forEach(({ light }) => { light.visible = true; });
           probe = generator.fromScene(this.scene, 0.04, 0.05, 150, { size: 64,
             position: new THREE.Vector3(this.lampShadow.position.x, 1.8, this.lampShadow.position.z) });
@@ -156,7 +180,9 @@ export class StationInterior {
         } finally {
           generator.dispose(); this.renderer.shadowMap.enabled = enabled; this.scene.environment = env;
           this.surfaces.forEach((mesh, index) => { mesh.visible = visible[index]; });
-          [this.sunlight.visible, this.secondarySunlight.visible, this.lampShadow.visible] = celestial;
+          [this.sunlight.visible, this.secondarySunlight.visible, this.lampShadow.visible, this.windowBounce.visible] = celestial;
+          this.consoleFill.visible = consoleVisible;
+          this.finishDetail.value = detail;
           this.roomLights.forEach(({ light }, index) => { light.visible = lamps[index]; });
         }
       }
@@ -351,6 +377,7 @@ export class StationInterior {
     this.scene.background = null;
     const deck = buildStarshipDeck(this.scene, this.renderer, this.textures, this.hologramMaterial());
     this.roomLights = deck.roomLights;
+    this.finishDetail = deck.finishDetail;
     this.instruments = deck.instruments;
     this.surfaces = deck.surfaces;
     this.holograms.push(deck.projection);
@@ -361,8 +388,12 @@ export class StationInterior {
     this.sunlight.shadow.bias = -0.00015; this.sunlight.shadow.normalBias = 0.03;
     Object.assign(this.sunlight.shadow.camera, { left: -42, right: 42, top: 42, bottom: -42, near: 0.1, far: 260 });
     this.lampShadow.shadow.bias = -0.00015; this.lampShadow.shadow.normalBias = 0.02;
+    this.windowBounce.position.set(0, 2.05, -39.88);
+    this.windowBounce.lookAt(0, 1.05, -30);
+    this.consoleFill.position.set(0, 1.19, -38.48);
+    this.consoleFill.lookAt(0, 1.7, -35.2);
     this.scene.add(this.sunlight, this.sunlight.target, this.secondarySunlight, this.secondarySunlight.target,
-      this.lampShadow, this.lampShadow.target);
+      this.lampShadow, this.lampShadow.target, this.windowBounce, this.consoleFill);
     // This pass clears the astronomical depth buffer and draws only metre-scale
     // geometry. Fragment-written logarithmic depth disables early depth rejection
     // on some GPUs, shading entire rooms hidden behind the pressure walls.

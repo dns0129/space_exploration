@@ -12,6 +12,7 @@ import { verifyEchoRiftFlight } from "./verify-echo-rift.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
 import { verifyStationVisit } from "./verify-station.mjs";
+import { verifyBridgeEarthShot } from "./verify-bridge-earth.mjs";
 
 const root = fileURLToPath(new URL("../dist-site/", import.meta.url));
 const output = fileURLToPath(new URL("../test-results/site/", import.meta.url));
@@ -250,6 +251,7 @@ try {
     await page.screenshot({ path: resolve(output, `landed-${name}.png`) });
     await verifyStationVisit(page);
     await page.screenshot({ path: resolve(output, `station-interior-${name}.png`) });
+    await verifyBridgeEarthShot(page);
     // A changed deployment offers refresh and leaves the current flight intact.
     await page.route("**/version.json?*", (route) =>
       route.fulfill({

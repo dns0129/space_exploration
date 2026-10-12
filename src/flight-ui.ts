@@ -35,6 +35,8 @@ export class FlightInterface {
   private deceleration!: HTMLElement;
   private trackedTarget?: BodyId;
   private trackedWalking = false;
+  private shotReturn?: { state: FlightState; paused: boolean };
+  private shotPreview = false;
   private navigationTitles = new Map<HTMLElement, string>();
   private notify: (message: string) => void;
   private changed: (active: boolean, target?: BodyId) => void;
@@ -79,6 +81,8 @@ export class FlightInterface {
     $("#flight-save").onclick = () => void this.save(false);
     $("#flight-resume").onclick = () => {
       if (this.saved && this.scene?.restoreFlight(this.saved)) {
+        this.shotPreview = false;
+        this.shotReturn = undefined;
         this.lastAutoElapsed = this.saved.elapsed;
         this.changed(true, this.saved.target);
         this.sync();
@@ -246,10 +250,12 @@ export class FlightInterface {
   stop() {
     const wasActive = this.active;
     const target = this.scene?.flightState()?.target;
-    if (this.active) {
+    if (this.active && !this.shotPreview) {
       const state = this.scene?.flightState();
       if (state) void this.store.save(state).catch(() => {});
     }
+    this.shotPreview = false;
+    this.shotReturn = undefined;
     ++this.generation;
     clearInterval(this.timer);
     this.scene?.leaveFlight();
@@ -407,6 +413,29 @@ export class FlightInterface {
     this.scene?.setFlightPaused(paused);
     $("#flight-pause").textContent = this.scene?.walking ? paused ? "继续探索" : "暂停探索" : paused ? "继续航行" : "暂停航行";
     $("#flight-pause").setAttribute("aria-pressed", String(paused));
+  }
+  showBridgeEarthShot(returnToFlight = true): string | null {
+    if (this.warpPhase !== "ready") return "请等待跃迁结束，再打开地球舷窗镜头";
+    if (this.landingPhase !== "manual" && this.landingPhase !== "landed") return "请等待着陆完成，再打开地球舷窗镜头";
+    const previous = this.scene?.flightState();
+    const error = this.scene?.showBridgeEarthShot() ?? (this.scene ? null : "请等待航行准备完成");
+    if (error) return error;
+    this.shotPreview = true;
+    this.shotReturn = returnToFlight && previous ? { state: previous, paused: this.paused } : undefined;
+    this.pause(true);
+    this.changed(true, "earth");
+    this.sync();
+    return null;
+  }
+  returnFromBridgeEarthShot() {
+    this.shotPreview = false;
+    const previous = this.shotReturn;
+    this.shotReturn = undefined;
+    if (previous && this.scene?.restoreFlight(previous.state)) {
+      this.pause(previous.paused);
+      this.changed(true, previous.state.target);
+      this.sync();
+    }
   }
   private async save(automatic: boolean) {
     const state = this.scene?.flightState();

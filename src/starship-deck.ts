@@ -9,18 +9,36 @@ import { StarshipInstruments } from "./starship-instruments";
 type Point = [number, number, number];
 
 /** Filtered, metre-scale surface finish. No tiled wall/floor images or baked lighting. */
-function finish(color: number, metalness: number, roughness: number, grain = 0.025, contact = false) {
-  const material = new THREE.MeshStandardMaterial({ color, metalness, roughness, envMapIntensity: 0.65 });
+function finish(color: number, metalness: number, roughness: number, grain: number, contact: boolean,
+  detail: { value: number }) {
+  const material = new THREE.MeshStandardMaterial({ color, metalness, roughness, envMapIntensity: 1.05 });
   material.onBeforeCompile = shader => {
     shader.vertexShader = `varying vec3 vFinishPosition;\n${shader.vertexShader}`
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvFinishPosition = position;");
-    shader.fragmentShader = `varying vec3 vFinishPosition;\n${shader.fragmentShader}`
+    shader.uniforms.finishDetail = detail;
+    shader.fragmentShader = `uniform float finishDetail; varying vec3 vFinishPosition;\n${shader.fragmentShader}`
       .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>
         // Fade sub-millimetre machining marks when smaller than a screen pixel.
         vec3 p = vFinishPosition * 850.0;
         float visibility = 1.0 - smoothstep(0.3, 1.2, max(length(dFdx(p)), length(dFdy(p))));
         float brushing = sin(p.x * 1.7 + sin(p.z * 0.07)) * 0.55 + sin(p.z * 2.3) * 0.25;
-        roughnessFactor = clamp(roughnessFactor + brushing * ${grain.toFixed(4)} * visibility, 0.12, 1.0);
+        float handling = sin(vFinishPosition.x * 0.63 + sin(vFinishPosition.z * 0.41))
+          * sin(vFinishPosition.z * 0.77 + vFinishPosition.y * 0.29);
+        roughnessFactor = clamp(roughnessFactor + handling * 0.045
+          + brushing * ${grain.toFixed(4)} * visibility * finishDetail, 0.16, 1.0);
+      `)
+      .replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>
+        // Filtered machining relief is sub-millimetre; broad surface variation
+        // remains visible without sparkling at a distance or changing geometry.
+        if (finishDetail > 0.5) {
+          float relief = brushing * ${Math.min(grain * 0.003, 0.00015).toFixed(7)} * visibility;
+          vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition);
+          vec3 rx = cross(sy, normal), ry = cross(normal, sx);
+          float determinant = dot(sx, rx);
+          vec3 gradient = dFdx(relief) * rx + dFdy(relief) * ry;
+          if (abs(determinant) > 0.0000001)
+            normal = normalize(abs(determinant) * normal - sign(determinant) * gradient);
+        }
       `);
     if (contact) {
       // Analytic contact shading follows the actual furniture footprints, not a baked image.
@@ -46,33 +64,47 @@ function finish(color: number, metalness: number, roughness: number, grain = 0.0
 export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
   textures: Set<THREE.Texture>, projectionMaterial: THREE.Material) {
   RectAreaLightUniformsLib.init();
-  scene.environmentIntensity = 0.25;
+  scene.environmentIntensity = 0.45;
+  const finishDetail = { value: 1 };
   scene.add(new THREE.HemisphereLight(0xdce7ed, 0x26333b, 0.35));
   const roomLights: { id: string; light: THREE.RectAreaLight }[] = [];
   for (const room of STATION_ROOMS) {
     const width = room.maxX - room.minX, length = room.maxZ - room.minZ;
-    const light = new THREE.RectAreaLight(0xe4edf2, room.id === "docking" ? 2 : 2.7,
+    const light = new THREE.RectAreaLight(room.id === "control" ? 0xffe0bb : 0xe4edf2,
+      room.id === "docking" ? 2 : 2.7,
       width * 0.5, length * 0.62);
     light.position.set((room.minX + room.maxX) / 2, room.height - 0.3, (room.minZ + room.maxZ) / 2);
     light.rotation.x = -Math.PI / 2;
     scene.add(light);
     roomLights.push({ id: room.id, light });
   }
-  const titanium = finish(0x64717a, 0.82, 0.31, 0.045);
-  const ceramic = finish(0x8e979b, 0.22, 0.48);
-  const graphite = finish(0x172027, 0.52, 0.4);
-  const recess = finish(0x070e13, 0.3, 0.66);
-  const deck = finish(0x27323a, 0.38, 0.61, 0.035, true);
-  const inset = finish(0x172128, 0.28, 0.69, 0.035, true);
-  const brass = finish(0x968064, 0.78, 0.32);
-  const fabric = finish(0x354c51, 0.03, 0.92, 0.018);
+  const coat = (color: number, metalness: number, roughness: number, grain = 0.025, contact = false) =>
+    finish(color, metalness, roughness, grain, contact, finishDetail);
+  const titanium = coat(0x64717a, 0.82, 0.27, 0.045);
+  const ceramic = coat(0x8e979b, 0.22, 0.48);
+  const graphite = coat(0x172027, 0.52, 0.36);
+  const recess = coat(0x070e13, 0.3, 0.66);
+  const deck = coat(0x27323a, 0.38, 0.56, 0.035, true);
+  const inset = coat(0x172128, 0.28, 0.64, 0.035, true);
+  const brass = coat(0x968064, 0.78, 0.28);
+  const fabric = coat(0x354c51, 0.03, 0.92, 0.018);
   const gasket = new THREE.MeshStandardMaterial({ color: 0x05090c, roughness: 0.95 });
   const screen = new THREE.MeshPhysicalMaterial({ color: 0x01070a, metalness: 0, roughness: 0.32,
     clearcoat: 0.28, clearcoatRoughness: 0.22, envMapIntensity: 0.08 });
   const glass = new THREE.MeshPhysicalMaterial({ color: 0xb6d0d6, roughness: 0.065, metalness: 0,
     transparent: true, opacity: 0.025, depthWrite: false, side: THREE.DoubleSide });
   glass.name = "Starship pressure glazing";
-  const luminous = (color: number) => new THREE.MeshBasicMaterial({ color, toneMapped: false });
+  glass.envMapIntensity = 1.15;
+  glass.onBeforeCompile = shader => {
+    shader.fragmentShader = shader.fragmentShader.replace("#include <opaque_fragment>", `
+      float glassFresnel = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 5.0);
+      diffuseColor.a = mix(0.018, 0.12, glassFresnel);
+      #include <opaque_fragment>
+    `);
+  };
+  glass.customProgramCacheKey = () => "starship-glazing-fresnel";
+  // Linear HDR emitters give the existing bloom an actual bright source.
+  const luminous = (color: number) => new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(3.2) });
   const warm = luminous(0xe3d5b8), white = luminous(0xc7d8dd), cyan = luminous(0x70b4c2);
   const cyanDim = luminous(0x1b4858), amber = luminous(0xc89857);
   // Batch within rooms: whole-vessel batches defeat culling, while many tiny
@@ -480,5 +512,5 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
       surfaces.push(mesh);
     }
   }
-  return { projection, instruments, surfaces, roomLights };
+  return { projection, instruments, surfaces, roomLights, finishDetail };
 }

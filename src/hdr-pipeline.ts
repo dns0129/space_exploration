@@ -23,12 +23,20 @@ export class HdrPipeline {
         c += (radiance(vUv + stepUv * 2.0) + radiance(vUv - stepUv * 2.0)) * 0.06;
         gl_FragColor = vec4(c, 1.0); }` });
   private readonly output = new THREE.ShaderMaterial({ vertexShader: vertex, depthTest: false, depthWrite: false,
-    uniforms: { source: { value: null as THREE.Texture | null }, bloom: { value: null as THREE.Texture | null }, bloomStrength: { value: 0 } },
-    fragmentShader: `varying vec2 vUv; uniform sampler2D source, bloom; uniform float bloomStrength;
+    uniforms: { source: { value: null as THREE.Texture | null }, bloom: { value: null as THREE.Texture | null },
+      bloomStrength: { value: 0 }, bridgeLook: { value: 0 }, vignette: { value: 0 } },
+    fragmentShader: `varying vec2 vUv; uniform sampler2D source, bloom; uniform float bloomStrength, bridgeLook, vignette;
       void main() { vec3 c = texture2D(source, vUv).rgb;
         if (bloomStrength > 0.0) c += texture2D(bloom, vUv).rgb * bloomStrength;
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
+        if (bridgeLook > 0.0) {
+          float luma = dot(gl_FragColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+          vec3 balance = mix(vec3(0.985, 1.0, 1.035), vec3(1.018, 1.0, 0.988), smoothstep(0.025, 0.6, luma));
+          gl_FragColor.rgb *= balance;
+        }
+        vec2 lens = (vUv - 0.5) * 1.4142;
+        gl_FragColor.rgb *= 1.0 - vignette * smoothstep(0.25, 1.0, dot(lens, lens));
         #include <colorspace_fragment>
       }` });
   private quality?: LightingQuality;
@@ -53,6 +61,10 @@ export class HdrPipeline {
     this.target.samples = software ? 0 : 4;
     this.resize();
   }
+  setBridgeLook(active: boolean, photograph = false) {
+    this.output.uniforms.bridgeLook.value = Number(active);
+    this.output.uniforms.vignette.value = active && photograph ? 0.09 : 0;
+  }
   private resize() {
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     const width = Math.max(1, size.x), height = Math.max(1, size.y);
@@ -66,7 +78,7 @@ export class HdrPipeline {
     this.renderer.setRenderTarget(this.target);
   }
   finish() {
-    const renderer = this.renderer, autoClear = renderer.autoClear;
+    const renderer = this.renderer, autoClear = renderer.autoClear, exposure = renderer.toneMappingExposure;
     const scissor = renderer.getScissor(new THREE.Vector4()), scissorTest = renderer.getScissorTest();
     const strength = this.supported ? this.quality?.bloomStrength ?? 0 : 0;
     try {
@@ -87,6 +99,7 @@ export class HdrPipeline {
       }
       this.quad.material = this.output;
       this.output.uniforms.bloomStrength.value = strength;
+      if (this.output.uniforms.bridgeLook.value) renderer.toneMappingExposure = 1.02;
       renderer.setRenderTarget(null);
       renderer.render(this.scene, this.camera);
     } finally {
@@ -94,6 +107,7 @@ export class HdrPipeline {
       renderer.setScissor(scissor);
       renderer.setScissorTest(scissorTest);
       renderer.autoClear = autoClear;
+      renderer.toneMappingExposure = exposure;
     }
   }
   dispose() {

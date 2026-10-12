@@ -29,6 +29,7 @@ import type { StellarSample } from "./stellar-light";
 import { HdrPipeline } from "./hdr-pipeline";
 import { RenderMetrics } from "./render-metrics";
 import { lightingQuality } from "./lighting-quality";
+import { bridgeEarthState, Earthshine } from "./bridge-lighting";
 import { atmosphereStrength } from "./atmosphere";
 import { surfaceProfile, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { projectFlightTarget } from "./flight-target";
@@ -273,6 +274,9 @@ export class SolarScene {
   private readonly controls: OrbitControls;
   private readonly surfacePicker = new THREE.Raycaster();
   private photoCapture?: { resolve: (blob: Blob) => void; reject: (error: Error) => void };
+  private photoMode = false;
+  private bridgeEarthShot = false;
+  private readonly earthshine = new Earthshine();
   private readonly planet = new THREE.Group();
   private readonly galaxySky: GalaxySky;
   private readonly surfaceGalaxySky: GalaxySky;
@@ -1151,6 +1155,7 @@ export class SolarScene {
   }
 
   private renderObservation() {
+    this.hdr.setBridgeLook(false);
     if (this.currentModel) {
       this.configureModelLighting(this.currentModel);
       this.updateModelLighting(this.currentModel);
@@ -1164,6 +1169,7 @@ export class SolarScene {
   }
 
   private renderFlightWorld() {
+    this.hdr.setBridgeLook(this.bridgeView && this.stationInterior?.zone === "驾驶室", this.photoMode && this.bridgeEarthShot);
     this.orderCelestialLayers();
     this.renderMetrics.begin();
     this.hdr.begin();
@@ -1252,6 +1258,11 @@ export class SolarScene {
   }
 
   setPhotoMode(active: boolean) {
+    this.photoMode = active;
+    if (this.bridgeEarthShot && this.stationInterior) {
+      this.stationInterior.camera.fov = active ? 58 : 68;
+      this.stationInterior.camera.updateProjectionMatrix();
+    }
     this.explorerView.setPhotoMode(active);
     this.resize();
     this.flightFrameDirty = true;
@@ -1549,6 +1560,11 @@ export class SolarScene {
   restoreFlight(state: unknown) {
     const restored = this.dynamics?.restore(state) ?? false;
     if (restored) {
+      this.bridgeEarthShot = false;
+      if (this.stationInterior) {
+        this.stationInterior.camera.fov = 68;
+        this.stationInterior.camera.updateProjectionMatrix();
+      }
       const saved = validateFlightState(state)!;
       this.stationInterior?.leave();
       if (saved.stationVisit) {
@@ -1566,6 +1582,14 @@ export class SolarScene {
       this.updateFlightCamera(1);
     }
     return restored;
+  }
+  showBridgeEarthShot(): string | null {
+    if (!this.dynamics) return "请等待航行准备完成";
+    if (!this.restoreFlight(bridgeEarthState(this.dynamics.config))) return "驾驶室镜头未能准备完成";
+    this.bridgeEarthShot = true;
+    this.setFlightPaused(true);
+    this.flightFrameDirty = true;
+    return null;
   }
   get aboardStarship() { return this.stationInterior?.active ?? false; }
   get pilotingStarship() { return this.aboardStarship && !!this.stationInterior?.piloting; }
@@ -1842,7 +1866,8 @@ export class SolarScene {
       this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
       this.flightLight.update(ship, this.camera, this.flightSun, this.aboardStarship ? "earth-station" : undefined);
       interior.configureLighting(lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel));
-      interior.updateLighting(this.stellarSamples, this.stationSpaceRotation);
+      interior.updateLighting(this.stellarSamples, this.stationSpaceRotation,
+        ship.systemId === "solar" ? this.earthshine.sample(ship.config, ship.position) : undefined);
       this.useSystemBackground(ship.systemId);
       this.resumeSpaceWork();
       this.ship.group.visible = false;

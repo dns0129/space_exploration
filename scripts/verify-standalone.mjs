@@ -10,6 +10,7 @@ import { verifyEchoRiftFlight } from "./verify-echo-rift.mjs";
 import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
 import { verifyStationVisit } from "./verify-station.mjs";
+import { verifyBridgeEarthShot } from "./verify-bridge-earth.mjs";
 import { createServer } from "node:http";
 
 const html = await readFile(
@@ -189,6 +190,7 @@ try {
   await verifySurfaceFlight(page);
   await verifyWalkingFlight(page);
   await verifyStationVisit(page);
+  await verifyBridgeEarthShot(page);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(

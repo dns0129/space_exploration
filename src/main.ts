@@ -32,6 +32,7 @@ const icons: Record<string, string> = {
   camera: '<path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="13" r="4"/>',
   ship: '<path d="m12 3 4 8 5 6-7-2-2 6-2-6-7 2 5-6z"/>',
   person: '<circle cx="12" cy="5" r="3"/><path d="M8 21v-7H5v-3l4-2h6l4 2v3h-3v7m-4-6v6"/>',
+  window: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 16h18M9 4v12M15 4v12"/><path d="M10 10a5 5 0 0 1 8 3"/>',
 };
 const icon = (name: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
@@ -42,7 +43,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <header class="header">
       <a class="brand" href="${publicSite ? `${import.meta.env.BASE_URL}index.html` : "#planet=earth"}" aria-label="${publicSite ? "星际探索首页" : "远航首页"}">${icon("orbit")}<span>${publicSite ? "星际探索" : "远航"} <b>VOYAGER</b></span></a>
       <nav class="main-nav" aria-label="主导航"><button id="mode-observe" class="nav-active" aria-pressed="true">行星观测</button><button id="mode-flight" class="scene-control" aria-pressed="false" disabled>自由航行</button></nav>
-      <div class="header-tools"><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button scene-control" id="photo-mode" aria-label="摄影模式" aria-pressed="false" title="摄影模式（P）· Enter 保存照片 · Esc 或双击画面退出" disabled>${icon("camera")}</button><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
+      <div class="header-tools"><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button scene-control" id="bridge-earth-shot" aria-label="地球舷窗镜头" title="地球舷窗镜头 · Enter 保存照片 · P/Esc 或双击退出" disabled>${icon("window")}</button><button class="icon-button scene-control" id="photo-mode" aria-label="摄影模式" aria-pressed="false" title="摄影模式（P）· Enter 保存照片 · Esc 或双击画面退出" disabled>${icon("camera")}</button><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
     </header>
 
     <nav class="planet-rail" aria-label="太阳系天体">
@@ -188,6 +189,7 @@ function setPhotoMode(active: boolean) {
   document.body.classList.toggle("photo-mode", active);
   $("#photo-mode").setAttribute("aria-pressed", String(active));
   scene?.setPhotoMode(active);
+  if (!active) flight.returnFromBridgeEarthShot();
   const canvas = document.querySelector<HTMLCanvasElement>("#canvas-host canvas");
   if (active && canvas) {
     canvas.tabIndex = 0;
@@ -544,6 +546,17 @@ $("#mobile-settings").addEventListener("click", () => {
   panelLayout?.toggleSettings();
 });
 $("#photo-mode").addEventListener("click", () => setPhotoMode(!state.photoMode));
+$("#bridge-earth-shot").addEventListener("click", () => {
+  if (!state.ready || !scene) return;
+  if (!flight.active) {
+    bridgeShotPending = true;
+    $<HTMLButtonElement>("#mode-flight").click();
+    return;
+  }
+  const error = flight.showBridgeEarthShot();
+  if (error) toast(error);
+  else setPhotoMode(true);
+});
 for (const kind of ["ship", "person"] as const) {
   $(`#place-${kind}`).addEventListener("click", () => {
     if (!state.ready || state.mode !== "observe" || !surfaceProfile(state.body).solid) return;
@@ -704,6 +717,7 @@ window.addEventListener("pagehide", () => {
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) void start();
 });
+let bridgeShotPending = new URLSearchParams(location.search).get("scene") === "bridge-earth";
 $("#mode-flight").addEventListener("click", async () => {
   if (!state.ready || !scene || flight.active) return;
   cancelPlacement();
@@ -712,7 +726,7 @@ $("#mode-flight").addEventListener("click", async () => {
   $("#loading-overlay").hidden = false;
   $("#loading-overlay small").textContent = "准备飞船与恒星航区";
   try {
-    const ready = await flight.launch(scene, state.body, (p) => {
+    const ready = await flight.launch(scene, bridgeShotPending ? "earth-station" : state.body, (p) => {
       $("#loading-text").textContent = `正在准备航行 · ${p}%`;
       $("#loading-progress").style.width = `${p}%`;
     });
@@ -720,7 +734,12 @@ $("#mode-flight").addEventListener("click", async () => {
     setControlsReady(true);
     $("#loading-overlay").hidden = true;
     $("#canvas-host").dataset.ready = "true";
-    toast("驾驶已就绪：按 W 出发，方向键转向（触屏可拖动）");
+    if (bridgeShotPending) {
+      bridgeShotPending = false;
+      const error = flight.showBridgeEarthShot(false);
+      if (error) toast(error);
+      else setPhotoMode(true);
+    } else toast("驾驶已就绪：按 W 出发，方向键转向（触屏可拖动）");
   } catch (error) {
     if (version === requestVersion)
       showError(
@@ -734,6 +753,6 @@ $("#mode-observe").addEventListener("click", () => {
 updatePause();
 watchSiteVersion();
 void start().then(() => {
-  if (state.ready && new URLSearchParams(location.search).get("mode") === "flight")
+  if (state.ready && (bridgeShotPending || new URLSearchParams(location.search).get("mode") === "flight"))
     $<HTMLButtonElement>("#mode-flight").click();
 });
