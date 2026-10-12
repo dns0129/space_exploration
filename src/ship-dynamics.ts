@@ -270,13 +270,13 @@ export class ShipDynamics {
   }
   get environment() {
     this.syncLocalFrame();
-    let body = this.activeBodies[0], altitudeKm = Infinity;
-    for (const candidate of this.activeBodies) {
+    const bodies = this.activeBodies;
+    let body = bodies[0], altitudeKm = Infinity;
+    for (const candidate of bodies) {
       if (candidate.kind === "station") continue;
       const altitude = (this.radialForBody(candidate).length() - this.scale.universeDistanceToMeters(candidate.radius)) / METRES_PER_KILOMETRE;
       if (altitude < altitudeKm) { body = candidate; altitudeKm = altitude; }
     }
-    const nearHeightKm = this.config.flightSafety.nearSurfaceMinKm;
     const atmospheric = !!body.atmosphereKm && altitudeKm <= body.atmosphereKm;
     const surface = sampleSurface(this.config, body, this.radialForBody(body).toArray());
     const outward = new THREE.Vector3().fromArray(surface.normal);
@@ -284,12 +284,9 @@ export class ShipDynamics {
     const groundHeightKm = surface.heightM / METRES_PER_KILOMETRE;
     const groundAltitudeKm = Math.max(0, altitudeKm - groundHeightKm - LANDING_CLEARANCE_KM);
     const density = atmospheric ? profile.density * Math.exp(-Math.max(0, altitudeKm) / profile.scaleKm) : 0;
-    const headingOut = new THREE.Vector3(0, 0, -1).applyQuaternion(this.orientation).dot(outward) > 0.25;
-    const movingOut = this.velocity.dot(outward) >= -1e-9;
     const lowFlight = profile.solid && groundAltitudeKm <= 10 + SURFACE_EPSILON_KM;
-    const escaping = false, orbitalRequired = false, restricted = false;
-    return { body, altitudeKm: Math.max(0, altitudeKm), atmospheric, restricted, nearHeightKm, escaping,
-      profile, density, groundHeightKm, groundAltitudeKm, outward, headingOut, movingOut, lowFlight, orbitalRequired };
+    return { body, altitudeKm: Math.max(0, altitudeKm), atmospheric,
+      profile, density, groundHeightKm, groundAltitudeKm, outward, lowFlight };
   }
   get speedLimit() {
     return this.environment.lowFlight ? this.scale.metresToUniverseDistance(this.lowFlightSpeedMps)
@@ -311,11 +308,6 @@ export class ShipDynamics {
   setEngineMode(mode: EngineMode): string | null {
     const band = PROPULSION_BANDS.find(band => band.id === mode);
     return band ? this.setCruiseSpeed(band.minKm) : "未知引擎档位";
-  }
-  get orbitalEngineActive() { return false; }
-  get orbitalBlockReason(): string | null { return null; }
-  startOrbitalEngine(): string | null {
-    return null;
   }
   private clampCruiseSpeed() {
     const speed = Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z);

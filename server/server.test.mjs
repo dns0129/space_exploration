@@ -880,20 +880,6 @@ test("target projection uses the current camera turn and places off-screen and b
 });
 
 
-test("the legacy orbital shortcut does not alter speed presets or create a launch permission", () => {
-  for (const [id, altitude] of [["earth", 1], ["earth", 50], ["moon", 1], ["jupiter", 1500]]) {
-    const ship = new ShipDynamics();
-    placeAboveGround(ship, id, altitude);
-    ship.setCruiseSpeed(5000);
-    ship.setLowFlightSpeed(133);
-    const before = ship.snapshot();
-    assert.equal(ship.orbitalBlockReason, null);
-    assert.equal(ship.startOrbitalEngine(), null);
-    assert.deepEqual(ship.snapshot(), before);
-    assert.equal(ship.orbitalEngineActive, false);
-  }
-});
-
 test("propulsion target changes preserve the mutual exclusion between automatic landing and warp", () => {
   const descending = new ShipDynamics();
   placeAboveGround(descending, "earth", 1);

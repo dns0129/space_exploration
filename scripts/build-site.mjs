@@ -1,5 +1,5 @@
 import { build } from "vite";
-import { readFile, writeFile, rename, copyFile, mkdir, stat } from "node:fs/promises";
+import { readFile, writeFile, rename, copyFile, mkdir, stat, rm } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,10 @@ await build({
     },
   },
 });
+// Retain source artwork and provenance in Git without shipping retired imagery.
+// The 8K Earth DEM is still used by the online renderer and must remain here.
+for (const file of ["surface-material-atlas.jpg", "centauri-milky-way-4k.jpg"])
+  await rm(join(output, "textures", file), { force: true });
 await rename(join(output, "index.html"), join(output, "game.html"));
 await rename(join(output, "site.html"), join(output, "index.html"));
 await writeFile(join(output, ".nojekyll"), "");

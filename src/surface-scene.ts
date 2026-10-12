@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { surfaceProfile, terrainHeightKm } from "../shared/surface.mjs";
+import { terrainHeightKm } from "../shared/surface.mjs";
 import type { ShipDynamics } from "./ship-dynamics";
 import type { WalkingDynamics } from "./walking-dynamics";
 import { atmosphereCloudProfile, atmosphereScattering, atmosphereStrength } from "./atmosphere";
@@ -36,10 +36,7 @@ export class SurfaceScene {
     groundSun: { value: new THREE.Vector3() },
     groundLightTint: { value: new THREE.Color(0xffffff) },
     groundNightFloor: { value: 0.015 },
-    groundVisibility: { value: 1 },
     groundAtmosphere: { value: 0 },
-    groundExtent: { value: 10000 },
-    groundHorizonOffset: { value: new THREE.Vector3() },
     groundHorizonMap: { value: null as THREE.Texture | null },
     groundHorizonCloudMap: { value: null as THREE.Texture | null },
     groundMapRotation: { value: new THREE.Matrix3() },
@@ -223,7 +220,6 @@ export class SurfaceScene {
     if (barnard) this.terrainUniforms.groundLightTint.value.copy(sunlight.color);
     this.terrainUniforms.groundNightFloor.value = barnard ? 0.0035 : 0.015;
     this.terrainUniforms.groundFog.value.set(env.profile.sky).multiplyScalar(0.035 + day * 0.7);
-    this.terrainUniforms.groundVisibility.value = 1 - THREE.MathUtils.smoothstep(env.groundAltitudeKm, 38, 70);
     this.terrainUniforms.groundAtmosphere.value = env.body.atmosphereKm ? day : 0;
     this.terrainUniforms.groundMapReady.value = Number(this.horizonMapBodyId === env.body.id && !!this.terrainUniforms.groundHorizonMap.value);
     this.terrainUniforms.groundCloudMapReady.value = Number(this.horizonMapBodyId === env.body.id && !!this.terrainUniforms.groundHorizonCloudMap.value);
@@ -271,25 +267,31 @@ export class SurfaceScene {
       vertices.setXYZ(i, radial.x, radial.y, radial.z);
     }
     const position = geometry.getAttribute("position");
-    const colors: number[] = [];
-    const radialDirections: number[] = [];
+    const colors = new Float32Array(position.count * 3);
+    const radialDirections = new Float32Array(position.count * 3);
     const ground = new THREE.Color(env.profile.solid ? env.profile.ground : env.profile.sky);
+    const earthTint = new THREE.Color("#70834f");
+    const color = new THREE.Color();
     const normal = new THREE.Vector3();
+    const point = new THREE.Vector3();
+    const radialM: [number, number, number] = [0, 0, 0];
+    const radiusM = new SpatialScale(ship.config.unitsKm).universeDistanceToMeters(env.body.radius);
     for (let i = 0; i < position.count; i++) {
       normal.fromBufferAttribute(position, i).normalize();
-      const height = terrainHeightKm(env.body.id, normal.toArray());
-      const sample = sampleSurface(ship.config, env.body, normal.toArray().map(value => value * new SpatialScale(ship.config.unitsKm).universeDistanceToMeters(env.body.radius)));
-      const point = new THREE.Vector3().fromArray(sample.surfaceRadialM).sub(this.anchor);
-      radialDirections.push(normal.x, normal.y, normal.z);
+      normal.toArray(radialDirections, i * 3);
+      point.copy(normal).multiplyScalar(radiusM).toArray(radialM);
+      const sample = sampleSurface(ship.config, env.body, radialM);
+      const height = sample.heightM / METRES_PER_KILOMETRE;
+      point.fromArray(sample.surfaceRadialM).sub(this.anchor);
       position.setXYZ(i, point.x, point.y, point.z);
       const gasBand = Math.sin(normal.y * 55 + Math.sin(normal.x * 10 + normal.z * 8) * 1.3);
       const shade = env.profile.solid ? 0.72 + height * 3 : 0.78 + gasBand * 0.12;
-      const color = ground.clone().multiplyScalar(shade);
-      if (env.body.id === "earth") color.lerp(new THREE.Color("#70834f"), 0.16);
-      colors.push(color.r, color.g, color.b);
+      color.copy(ground).multiplyScalar(shade);
+      if (env.body.id === "earth") color.lerp(earthTint, 0.16);
+      color.toArray(colors, i * 3);
     }
-    geometry.setAttribute("surfaceRadial", new THREE.Float32BufferAttribute(radialDirections, 3));
-    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setAttribute("surfaceRadial", new THREE.BufferAttribute(radialDirections, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     geometry.computeVertexNormals();
     const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, transparent: true });
     const echoMoon = env.body.id === "echo-thalassa" || env.body.id === "cinder";
@@ -403,16 +405,19 @@ export class SurfaceScene {
       const colors = new Float32Array(patch.vertices.length);
       const environment = ship.environment;
       const ground = new THREE.Color(environment.profile.ground);
+      const earthTint = new THREE.Color("#70834f");
+      const color = new THREE.Color();
       const radial = new THREE.Vector3();
+      const normal: [number, number, number] = [0, 0, 0];
       for (let i = 0; i < positions.length; i += 3) {
         radial.fromArray(patch.vertices, i).sub(patch.centerLocalM);
-        positions.set(radial.toArray(), i);
+        radial.toArray(positions, i);
         radial.add(patch.centerRadialM).normalize();
-        radials.set(radial.toArray(), i);
-        const height = terrainHeightKm(environment.body.id, radial.toArray());
-        const color = ground.clone().multiplyScalar(0.72 + height * 3);
-        if (environment.body.id === "earth") color.lerp(new THREE.Color("#70834f"), 0.16);
-        colors.set(color.toArray(), i);
+        radial.toArray(radials, i);
+        const height = terrainHeightKm(environment.body.id, radial.toArray(normal));
+        color.copy(ground).multiplyScalar(0.72 + height * 3);
+        if (environment.body.id === "earth") color.lerp(earthTint, 0.16);
+        color.toArray(colors, i);
       }
       geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
       geometry.setAttribute("surfaceRadial", new THREE.BufferAttribute(radials, 3));

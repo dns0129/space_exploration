@@ -124,19 +124,6 @@ button:active:not(:disabled) {
   align-items: center;
   border-bottom: 2px solid var(--accent);
 }
-.nav-planned {
-  color: #677585;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.nav-planned small {
-  font-size: 9px;
-  border: 1px solid #28323e;
-  padding: 3px 6px;
-  border-radius: 3px;
-  letter-spacing: 0;
-}
 .header-tools {
   display: flex;
   align-items: center;
@@ -1379,9 +1366,6 @@ dialog h2 {
     box-shadow: 0 -15px 60px #0007;
     z-index: 5;
   }
-  .control-panel.mobile-open {
-    display: grid;
-  }
   .control-group {
     border: 0;
     padding: 0;
@@ -1657,11 +1641,6 @@ dialog h2 {
   display: flex;
   gap: 8px;
 }
-.flight-nav-note {
-  display: block;
-  margin-top: 15px;
-  line-height: 1.7;
-}
 .flight-crosshair {
   position: absolute;
   left: 50%;
@@ -1922,9 +1901,6 @@ dialog h2 {
   }
   .flight-navigation p {
     margin-bottom: 9px;
-  }
-  .flight-nav-note {
-    display: none;
   }
   .flight-instruments {
     left: 20px;

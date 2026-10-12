@@ -31,7 +31,6 @@ export class StationInterior {
   private gait = 0;
   private jumpHeld = false;
   private built = false;
-  private environment?: THREE.WebGLRenderTarget;
   private readonly probes = new Map<string, THREE.WebGLRenderTarget>();
   private readonly sunlight = new THREE.DirectionalLight(0xffffff, 0);
   private readonly secondarySunlight = new THREE.DirectionalLight(0xffffff, 0);
@@ -162,7 +161,6 @@ export class StationInterior {
         }
       }
       this.scene.environment = probe.texture;
-      this.environment = probe;
       this.lightingRoom = room.id;
       this.renderer.domElement.dataset.interiorProbe = room.id;
     }
@@ -465,7 +463,6 @@ export class StationInterior {
     this.probes.forEach(probe => probe.dispose()); this.probes.clear();
     this.sunlight.shadow.dispose(); this.lampShadow.shadow.dispose();
     this.lightingRoom = ""; this.roomLights = [];
-    this.environment = undefined;
     this.instruments = undefined;
     this.surfaces = [];
     this.scene.clear();

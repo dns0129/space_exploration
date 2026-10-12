@@ -20,6 +20,20 @@ export class ExplorerView {
   private readonly previousShipLocalM = new THREE.Vector3();
   private hasLocalCamera = false;
   private movementHeading = new THREE.Quaternion();
+  private readonly motion = new THREE.Vector3();
+  private readonly localShift = new THREE.Vector3();
+  private readonly ground = new THREE.Vector3();
+  private readonly forward = new THREE.Vector3();
+  private readonly eye = new THREE.Vector3();
+  private readonly destination = new THREE.Vector3();
+  private readonly ray = new THREE.Vector3();
+  private readonly lookTarget = new THREE.Vector3();
+  private readonly look = new THREE.Quaternion();
+  private readonly pitchRotation = new THREE.Quaternion();
+  private readonly headingMatrix = new THREE.Matrix4();
+  private readonly origin = new THREE.Vector3();
+  private readonly axisX = new THREE.Vector3(1, 0, 0);
+  private readonly axisZ = new THREE.Vector3(0, 0, 1);
 
   constructor() {
     this.group.name = "Surface explorer and boarding beacon";
@@ -84,20 +98,20 @@ export class ExplorerView {
     this.group.visible = walker.active;
     if (!walker.active) return;
     const up = walker.outward;
-    const feet = walker.localPositionM.clone();
+    const feet = walker.localPositionM;
     const shipLocal = walker.localShipPositionM;
     // Translate the follow camera in the same operation as every physics body.
     // Interpolating across a rebase would otherwise draw a one-frame camera jump.
     if (this.hasLocalCamera && !immediate)
-      camera.position.add(shipLocal.clone().sub(this.previousShipLocalM));
+      camera.position.add(this.localShift.copy(shipLocal).sub(this.previousShipLocalM));
     this.previousShipLocalM.copy(shipLocal);
     this.hasLocalCamera = true;
     this.astronaut.position.copy(feet);
     this.astronaut.scale.setScalar(1);
     this.astronaut.visible = view === "third";
-    const motion = walker.velocity.clone().projectOnPlane(up);
+    const motion = this.motion.copy(walker.velocity).projectOnPlane(up);
     if (motion.lengthSq() > 0.04) {
-      this.movementHeading.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), motion, up));
+      this.movementHeading.setFromRotationMatrix(this.headingMatrix.lookAt(this.origin, motion, up));
       this.astronaut.quaternion.slerp(this.movementHeading, immediate ? 1 : 1 - Math.exp(-dt * 12));
     } else this.astronaut.quaternion.copy(walker.orientation);
     if (!paused) this.stride += dt * walker.speedMps * (walker.gravity < 3 ? 1.5 : 2.3);
@@ -105,7 +119,7 @@ export class ExplorerView {
     this.legs.forEach((leg, i) => { leg.rotation.x = (i ? -1 : 1) * step; });
     this.arms.forEach((arm, i) => { arm.rotation.x = walker.grounded ? (i ? 1 : -1) * step * 0.7 : -0.45; });
     const shipUp = ship.environment.outward;
-    const ground = shipLocal.clone().addScaledVector(shipUp, -LANDING_CLEARANCE_KM * METRES_PER_KILOMETRE);
+    const ground = this.ground.copy(shipLocal).addScaledVector(shipUp, -LANDING_CLEARANCE_KM * METRES_PER_KILOMETRE);
     // Flight uses a deliberately enlarged hull. This deployable 24 m lander represents the surface airlock.
     const landerScale = 24 / this.lander.hullLength;
     this.lander.group.scale.setScalar(landerScale);
@@ -114,23 +128,24 @@ export class ExplorerView {
     this.beacon.scale.setScalar(1);
     this.beacon.visible = !this.photoMode;
     this.beacon.position.copy(ground).addScaledVector(shipUp, 0.08);
-    this.beacon.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), shipUp);
+    this.beacon.quaternion.setFromUnitVectors(this.axisZ, shipUp);
     this.shadow.position.copy(feet).addScaledVector(up, (0.035 - walker.groundClearanceM));
-    this.shadow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), up);
+    this.shadow.quaternion.setFromUnitVectors(this.axisZ, up);
     this.shadow.scale.setScalar(1);
     // Directional maps own the projected silhouette; keep only faint foot contact.
     (this.shadow.material as THREE.MeshBasicMaterial).opacity = 0.08;
     this.shadow.visible = walker.grounded && walker.groundClearanceM < 0.15;
 
-    const look = walker.orientation.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), walker.pitch));
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(look);
-    const eye = feet.clone().addScaledVector(up, 1.65);
-    const destination = view === "first" ? eye : eye.clone().addScaledVector(forward, -5).addScaledVector(up, 0.7);
+    const look = this.look.copy(walker.orientation).multiply(this.pitchRotation.setFromAxisAngle(this.axisX, walker.pitch));
+    const forward = this.forward.set(0, 0, -1).applyQuaternion(look);
+    const eye = this.eye.copy(feet).addScaledVector(up, 1.65);
+    const destination = this.destination.copy(eye);
+    if (view === "third") destination.addScaledVector(forward, -5).addScaledVector(up, 0.7);
     camera.position.lerp(destination, immediate || view === "first" ? 1 : 1 - Math.exp(-dt * 12));
     if (view === "third") {
       // Retract the follow camera before a landing strut or hull can cover the explorer.
       this.lander.group.updateWorldMatrix(true, true);
-      const ray = camera.position.clone().sub(eye);
+      const ray = this.ray.copy(camera.position).sub(eye);
       const distance = ray.length();
       this.cameraRay.set(eye, ray.normalize());
       this.cameraRay.far = distance;
@@ -149,7 +164,7 @@ export class ExplorerView {
     // analytical floor cannot detect an intervening ridge or its triangle edges.
     camera.position.copy(walker.constrainCamera(eye, camera.position));
     camera.up.copy(up);
-    camera.lookAt(eye.clone().addScaledVector(forward, 8));
+    camera.lookAt(this.lookTarget.copy(eye).addScaledVector(forward, 8));
     if (Math.abs(camera.fov - 65) > 0.01 || camera.near !== 0.03) {
       camera.fov = 65; camera.near = 0.03; camera.updateProjectionMatrix();
     }

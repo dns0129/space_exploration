@@ -55,8 +55,6 @@ export interface FlightStats {
   cruiseSpeedKm: number;
   lowFlightSpeedMps: number;
   engineMode: ShipDynamics["engineMode"];
-  orbitalEngineActive: boolean;
-  orbitalBlockReason: string | null;
   environment: ShipDynamics["environment"];
   warpBlockReason: string | null;
   warpPhase: ShipDynamics["warpPhase"];
@@ -334,6 +332,7 @@ export class SolarScene {
   private walker?: WalkingDynamics;
   private stationInterior?: StationInterior;
   private starshipHull?: THREE.Group;
+  private readonly starshipHullMaterials = new Set<THREE.MeshStandardMaterial>();
   private starshipReflection?: THREE.WebGLRenderTarget;
   private readonly stationSpaceRotation = new THREE.Quaternion();
   private readonly stationSpaceOrigin = new THREE.Vector3();
@@ -881,12 +880,12 @@ export class SolarScene {
       && (this.renderer.domElement.dataset.softwareRenderer !== "true" || this.quality === "ultra");
     for (const [earth, detail] of this.earthDetails) {
       const blend = detail.uniforms.detailBlend.value as THREE.Vector4;
-      const previousBlend = blend.clone();
+      const { x, y, z, w } = blend;
       const current = earth === model && active;
       detail.update(current ? earth.surface : undefined, this.camera,
         current && capable && this.earthUpgraded && this.quality === "ultra", delta, time);
       // A paused view still redraws resident detail as it arrives and fades in.
-      if (!blend.equals(previousBlend)) this.flightFrameDirty = true;
+      if (blend.x !== x || blend.y !== y || blend.z !== z || blend.w !== w) this.flightFrameDirty = true;
     }
     if (!active || !capable || this.quality === "standard" || this.earthUpgraded || this.earthUpgrade || time < this.earthUpgradeAt) return;
     const batch: THREE.Texture[] = [];
@@ -1196,10 +1195,8 @@ export class SolarScene {
           near: this.aboardStarship ? 4 : 7, far: this.aboardStarship ? 16 : 13 });
         shadowCamera.updateProjectionMatrix();
       }
-      this.starshipHull?.traverse(object => {
-        if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial)
-          object.material.envMapIntensity = 0.8 * this.flightLight.illumination;
-      });
+      if (this.starshipHull?.visible) for (const material of this.starshipHullMaterials)
+        material.envMapIntensity = 0.8 * this.flightLight.illumination;
       // Sky bounce only grows near an atmosphere; vacuum keeps directional contrast.
       const atmosphereBounce = this.surfaceScene.usesAtmosphere(this.dynamics!) ? 1 : 0;
       this.shipRim.position.copy(this.shipSun.position).multiplyScalar(-1);
@@ -1777,7 +1774,7 @@ export class SolarScene {
       if (!surface && pixelRadius > 4) this.touchSurfaceMap(model.body.id);
       const lod = pixelRadius < 8 ? this.tinySphere : pixelRadius < 100 ? this.distantSphere : pixelRadius < 280 ? this.mediumSphere : pixelRadius < 700 ? this.largeSphere : undefined;
       for (const sphere of this.flightSpheres.get(model)!) sphere.geometry = lod ?? this.flightGeometries.get(sphere)!;
-      // The local curved tile adds detail above the coarse globe; clouds stay overhead.
+      // The local globe and collision mesh own ground detail; clouds stay overhead.
       // Planetary atmospheres belong to surface views and station windows;
       // stellar coronae and magnetospheres remain visible during space flight.
       if (model.layers.atmosphere) model.layers.atmosphere.visible = pixelRadius > 12
@@ -1905,7 +1902,10 @@ export class SolarScene {
         this.starshipHull = createStationModel(getBody("earth-station")).group;
         this.finishStarshipHull(this.starshipHull);
         this.starshipHull.traverse(object => {
-          if (object instanceof THREE.Mesh) { object.castShadow = true; object.receiveShadow = true; }
+          if (object instanceof THREE.Mesh) {
+            object.castShadow = true; object.receiveShadow = true;
+            if (object.material instanceof THREE.MeshStandardMaterial) this.starshipHullMaterials.add(object.material);
+          }
         });
         this.shipScene.add(this.starshipHull);
       }
@@ -2060,8 +2060,6 @@ export class SolarScene {
       cruiseSpeedKm: ship.cruiseSpeedKm,
       lowFlightSpeedMps: ship.lowFlightSpeedMps,
       engineMode: ship.engineMode,
-      orbitalEngineActive: ship.orbitalEngineActive,
-      orbitalBlockReason: ship.orbitalBlockReason,
       environment,
       warpBlockReason: ship.warpBlockReason,
       warpPhase: ship.warpPhase,
@@ -2257,12 +2255,12 @@ export class SolarScene {
     this.surfaceCelestialScene.traverse(collect);
     this.surfaceWorldScene.traverse(collect);
     this.shipScene.traverse(collect);
-    this.surfaceWorldScene.traverse(collect);
     this.models.forEach((model) => model.group.traverse(collect));
     for (const model of [...this.models.values(), ...this.flightModels])
       model.ownedTextures?.forEach(texture => texture.dispose());
     geometries.forEach((geometry) => geometry.dispose());
     materials.forEach((material) => material.dispose());
+    this.starshipHullMaterials.clear();
     instances.forEach(mesh => mesh.dispose());
     this.textures.forEach((texture) => texture.dispose());
     this.renderMetrics.dispose();
