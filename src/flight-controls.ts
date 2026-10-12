@@ -14,9 +14,9 @@ export class FlightControls {
   private cleanups: (() => void)[] = [];
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    const on = (target: EventTarget, name: string, handler: EventListener) => {
-      target.addEventListener(name, handler);
-      this.cleanups.push(() => target.removeEventListener(name, handler));
+    const on = (target: EventTarget, name: string, handler: EventListener, capture = false) => {
+      target.addEventListener(name, handler, capture);
+      this.cleanups.push(() => target.removeEventListener(name, handler, capture));
     };
     on(window, "keydown", ((e: KeyboardEvent) => {
       if (
@@ -27,6 +27,14 @@ export class FlightControls {
         document.querySelector("dialog[open]") ||
         (e.target instanceof Element &&
           e.target.closest("input,select,textarea"))
+      )
+        return;
+      // Space/Enter belong to a focused native control. Other flight keys still
+      // work after clicking a toolbar button, without requiring a canvas click.
+      if (
+        (e.code === "Space" || e.code === "Enter") &&
+        e.target instanceof Element &&
+        e.target.closest("button,a[href],summary")
       )
         return;
       if (
@@ -52,8 +60,17 @@ export class FlightControls {
         this.keys.add(e.code);
       }
     }) as EventListener);
+    // A disclosure can stop bubbling after focus moves while a key is held.
+    // Release in capture phase so that key can never remain stuck in flight.
     on(window, "keyup", ((e: KeyboardEvent) => {
       this.keys.delete(e.code);
+    }) as EventListener, true);
+    // Pointer-operated toolbar actions return control to flight. Keyboard
+    // activation retains focus so Space/Enter can keep operating the button.
+    on(window, "click", ((e: MouseEvent) => {
+      if (e.detail === 0 || !(e.target instanceof Element)) return;
+      const button = e.target.closest<HTMLButtonElement>("#flight-ui button, #mode-flight");
+      if (button && button === document.activeElement) button.blur();
     }) as EventListener);
     on(window, "blur", (() => this.clear()) as EventListener);
     on(document, "visibilitychange", (() => this.clear()) as EventListener);
