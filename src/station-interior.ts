@@ -1,9 +1,11 @@
 import * as THREE from "three";
 import type { StationVisitState } from "../shared/flight-state.mjs";
-import { STATION_HELM, STATION_SPAWN, stationWalkable, stationZone, stationHeadroom } from "../shared/station-layout.mjs";
+import { STATION_HELM, STATION_SPAWN, STATION_ROOMS, stationWalkable, stationZone, stationHeadroom } from "../shared/station-layout.mjs";
 import type { FlightInput, ShipDynamics } from "./ship-dynamics";
 import { buildStarshipDeck } from "./starship-deck";
 import type { StarshipInstruments } from "./starship-instruments";
+import type { LightingQuality } from "./lighting-quality";
+import type { StellarSample } from "./stellar-light";
 
 const EYE_HEIGHT_M = 1.65;
 const MAX_FOOT_HEIGHT_M = 2.4;
@@ -30,6 +32,12 @@ export class StationInterior {
   private jumpHeld = false;
   private built = false;
   private environment?: THREE.WebGLRenderTarget;
+  private readonly probes = new Map<string, THREE.WebGLRenderTarget>();
+  private readonly sunlight = new THREE.DirectionalLight(0xffffff, 0);
+  private readonly secondarySunlight = new THREE.DirectionalLight(0xffffff, 0);
+  private readonly lampShadow = new THREE.SpotLight(0xe4edf2, 20, 70, 1.25, 0.85, 2);
+  private roomLights: { id: string; light: THREE.RectAreaLight }[] = [];
+  private lightingRoom = "";
   private instruments?: StarshipInstruments;
   private surfaces: THREE.Mesh[] = [];
   private readonly frustum = new THREE.Frustum();
@@ -103,6 +111,63 @@ export class StationInterior {
   updateInstruments(ship: ShipDynamics, input: FlightInput, time: number) {
     if (!this.instruments?.inView(this.camera)) return false;
     return this.instruments?.update(ship, input, time) ?? false;
+  }
+  configureLighting(quality: LightingQuality) {
+    for (const light of [this.sunlight, this.lampShadow]) {
+      if (light.shadow.mapSize.x === quality.shadowSize) continue;
+      light.shadow.map?.dispose(); light.shadow.map = null;
+      light.shadow.mapSize.set(quality.shadowSize, quality.shadowSize);
+    }
+  }
+  updateLighting(samples: StellarSample[], rotation: THREE.Quaternion) {
+    if (!this.built) return;
+    const inverse = rotation.clone().invert();
+    for (const [index, light] of [this.sunlight, this.secondarySunlight].entries()) {
+      const sample = samples[index];
+      light.target.position.copy(this.positionM).setY(1.5);
+      const direction = sample?.direction.clone().applyQuaternion(inverse) ?? new THREE.Vector3(0, 1, 0);
+      light.position.copy(light.target.position).addScaledVector(direction, 130);
+      light.color.copy(sample?.color ?? new THREE.Color(0xffffff));
+      light.intensity = 2.8 * (sample?.energy ?? 0) * (sample?.visibility ?? 0);
+    }
+    const room = STATION_ROOMS.find(room => this.positionM.x >= room.minX && this.positionM.x <= room.maxX
+      && this.positionM.z >= room.minZ && this.positionM.z <= room.maxZ) ?? STATION_ROOMS[0];
+    this.lampShadow.position.set((room.minX + room.maxX) / 2, room.height - 0.25, (room.minZ + room.maxZ) / 2);
+    this.lampShadow.target.position.set(this.lampShadow.position.x, 0, this.lampShadow.position.z);
+    this.lampShadow.shadow.needsUpdate = this.lampShadow.shadow.map === null
+      || room.id !== this.lightingRoom || this.cameraView === "third";
+    if (room.id !== this.lightingRoom) {
+      // Capture actual architecture and lamps once per visited room; never bake
+      // moving celestial sunlight or recursively reflect an existing probe.
+      let probe = this.probes.get(room.id);
+      if (!probe) {
+        const generator = new THREE.PMREMGenerator(this.renderer);
+        const enabled = this.renderer.shadowMap.enabled, env = this.scene.environment;
+        const visible = this.surfaces.map(mesh => mesh.visible);
+        const celestial = [this.sunlight.visible, this.secondarySunlight.visible, this.lampShadow.visible];
+        const lamps = this.roomLights.map(({ light }) => light.visible);
+        try {
+          this.renderer.shadowMap.enabled = false; this.scene.environment = null;
+          this.surfaces.forEach(mesh => { mesh.visible = true; });
+          this.sunlight.visible = this.secondarySunlight.visible = this.lampShadow.visible = false;
+          this.roomLights.forEach(({ light }) => { light.visible = true; });
+          probe = generator.fromScene(this.scene, 0.04, 0.05, 150, { size: 64,
+            position: new THREE.Vector3(this.lampShadow.position.x, 1.8, this.lampShadow.position.z) });
+          this.probes.set(room.id, probe);
+        } finally {
+          generator.dispose(); this.renderer.shadowMap.enabled = enabled; this.scene.environment = env;
+          this.surfaces.forEach((mesh, index) => { mesh.visible = visible[index]; });
+          [this.sunlight.visible, this.secondarySunlight.visible, this.lampShadow.visible] = celestial;
+          this.roomLights.forEach(({ light }, index) => { light.visible = lamps[index]; });
+        }
+      }
+      this.scene.environment = probe.texture;
+      this.environment = probe;
+      this.lightingRoom = room.id;
+      this.renderer.domElement.dataset.interiorProbe = room.id;
+    }
+    // Only the current room and its connecting corridor contribute local lamps.
+    for (const { id, light } of this.roomLights) light.visible = id === room.id || id === "corridor";
   }
 
   private get maximumFootHeight() {
@@ -206,7 +271,9 @@ export class StationInterior {
     this.viewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.viewProjection);
     for (const mesh of this.surfaces) {
-      mesh.visible = this.frustum.intersectsBox(mesh.geometry.boundingBox!);
+      // Off-camera walls still occlude lights. WebGL's own per-camera frustum
+      // culling applies independently to the colour and shadow passes.
+      mesh.visible = mesh.castShadow || this.frustum.intersectsBox(mesh.geometry.boundingBox!);
       if (!(mesh.material as THREE.Material).transparent)
         mesh.renderOrder = mesh.geometry.boundingSphere!.center.distanceToSquared(this.camera.position);
     }
@@ -285,12 +352,19 @@ export class StationInterior {
     // Keep the actual astronomical background behind the local pressure glazing.
     this.scene.background = null;
     const deck = buildStarshipDeck(this.scene, this.renderer, this.textures, this.hologramMaterial());
-    this.environment = deck.environment;
+    this.roomLights = deck.roomLights;
     this.instruments = deck.instruments;
     this.surfaces = deck.surfaces;
     this.holograms.push(deck.projection);
     this.buildExterior();
     this.buildAstronaut();
+    this.sunlight.castShadow = this.lampShadow.castShadow = true;
+    this.lampShadow.shadow.autoUpdate = false;
+    this.sunlight.shadow.bias = -0.00015; this.sunlight.shadow.normalBias = 0.03;
+    Object.assign(this.sunlight.shadow.camera, { left: -42, right: 42, top: 42, bottom: -42, near: 0.1, far: 260 });
+    this.lampShadow.shadow.bias = -0.00015; this.lampShadow.shadow.normalBias = 0.02;
+    this.scene.add(this.sunlight, this.sunlight.target, this.secondarySunlight, this.secondarySunlight.target,
+      this.lampShadow, this.lampShadow.target);
     // This pass clears the astronomical depth buffer and draws only metre-scale
     // geometry. Fragment-written logarithmic depth disables early depth rejection
     // on some GPUs, shading entire rooms hidden behind the pressure walls.
@@ -298,9 +372,13 @@ export class StationInterior {
     // instruments and the shuttle; keep logarithmic depth in the orbital pass.
     const materials = new Set<THREE.Material>();
     this.scene.traverse(object => {
-      if (object instanceof THREE.Mesh)
+      if (object instanceof THREE.Mesh) {
+        const list = Array.isArray(object.material) ? object.material : [object.material];
+        object.castShadow = list.some(material => !material.transparent && !(material instanceof THREE.MeshBasicMaterial));
+        object.receiveShadow = list.some(material => !material.transparent);
         for (const material of Array.isArray(object.material) ? object.material : [object.material])
           materials.add(material);
+      }
     });
     for (const material of materials) {
       const compile = material.onBeforeCompile;
@@ -384,7 +462,9 @@ export class StationInterior {
     this.textures.forEach(texture => texture.dispose());
     this.textures.clear();
     this.scene.environment = null;
-    this.environment?.dispose();
+    this.probes.forEach(probe => probe.dispose()); this.probes.clear();
+    this.sunlight.shadow.dispose(); this.lampShadow.shadow.dispose();
+    this.lightingRoom = ""; this.roomLights = [];
     this.environment = undefined;
     this.instruments = undefined;
     this.surfaces = [];

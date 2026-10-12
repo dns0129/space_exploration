@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { stellarShader } from "./stellar-light";
 import { PROCEDURAL_DETAIL_WIDTH } from "./procedural-body";
 import { SHATTERED_FRACTURE_GLSL } from "./shattered-geometry";
 import { SHATTERED_LAVA_GLSL } from "./shattered-lava";
@@ -17,6 +18,7 @@ export function createShatteredMaterial(uniforms: Record<string, THREE.IUniform>
       rockDetailLimit: { value: PROCEDURAL_DETAIL_WIDTH } },
     side: THREE.DoubleSide,
     fragmentShader: `
+      ${stellarShader}
       #include <logdepthbuf_pars_fragment>
       uniform float uTime, rockSeed, isSatellite, bodyRadius, rockDetailEnabled, rockDetailLimit;
       uniform vec3 sunDirection;
@@ -139,7 +141,9 @@ export function createShatteredMaterial(uniforms: Record<string, THREE.IUniform>
           *(0.66+strata*0.25+micro.x*0.65);
         base=mix(base,cutRock,cut);
         float roughness=clamp(0.97-mineral*0.07+micro.x*0.035,0.88,1.0);
-        vec3 color=rockBRDF(base,n,light,view,roughness,0.0)*occlusion;
+        vec3 color=rockBRDF(base,n,light,view,roughness,0.0)*occlusion*lightTint*stellarEnergy*stellarVisibility;
+        if (dot(secondaryIrradiance,secondaryIrradiance)>0.00001)
+          color+=rockBRDF(base,n,secondarySunDirection,view,roughness,0.0)*occlusion*secondaryIrradiance;
         color+=base*0.018*occlusion;
 
         color+=lava.rgb*innerMantle;

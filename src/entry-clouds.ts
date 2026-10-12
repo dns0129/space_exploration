@@ -1,5 +1,8 @@
 /** Kilometre-scale local cloud volume. Coordinates stay in the planet's collision frame. */
 export const entryClouds = /* glsl */ `
+  #ifndef CLOUD_STEPS
+    #define CLOUD_STEPS 8
+  #endif
   float entryHash(vec3 p) {
     p = fract(p * 0.1031);
     p += dot(p, p.yzx + 33.33);
@@ -53,11 +56,11 @@ export const entryClouds = /* glsl */ `
     // A fixed horizon range bounds fragment work in the independent local scene.
     exitPoint = min(exitPoint, entry + 420.0 * cloudScale);
     if (exitPoint <= entry) return vec4(0.0);
-    float stepLength = (exitPoint - entry) / 8.0;
+    float stepLength = (exitPoint - entry) / float(CLOUD_STEPS);
     float transmission = 1.0;
     vec3 light = vec3(0.0);
     float forward = pow(max(dot(ray, sunDirection), 0.0), 14.0);
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < CLOUD_STEPS; i++) {
       // At most 2.5% of the remaining light can contribute beyond a dense bank.
       if (transmission < 0.025) break;
       float t = entry + (float(i) + 0.5) * stepLength;

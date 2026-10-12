@@ -17,14 +17,18 @@ import { createStationModel } from "./orbital-structures";
 import { createStarshipReflection } from "./starship-hull";
 import { StationInterior } from "./station-interior";
 import { STATION_SPAWN } from "../shared/station-layout.mjs";
-import { validateFlightState } from "../shared/flight-state.mjs";
+import { validateFlightState, world } from "../shared/flight-state.mjs";
 import { createShip, SHIP_LENGTH_KM } from "./ship-model";
 import { createWarpEffect } from "./warp-effect";
 import { FlightLight } from "./flight-light";
 import { GalaxySky, selectGalaxyFile } from "./galaxy-sky";
 import type { GalaxyTextureFile } from "./galaxy-sky";
 import { SurfaceScene } from "./surface-scene";
-import { BARNARD_LIGHT_COLOR } from "./stellar-light";
+import { sampleStellarLighting, stellarShader, stellarUniforms } from "./stellar-light";
+import type { StellarSample } from "./stellar-light";
+import { HdrPipeline } from "./hdr-pipeline";
+import { RenderMetrics } from "./render-metrics";
+import { lightingQuality } from "./lighting-quality";
 import { atmosphereStrength } from "./atmosphere";
 import { surfaceProfile, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 import { projectFlightTarget } from "./flight-target";
@@ -115,6 +119,7 @@ const earthSurfaceVertex = surfaceVertex
   `);
 
 const surfaceFragment = /* glsl */ `
+  ${stellarShader}
   #include <logdepthbuf_pars_fragment>
   uniform sampler2D dayMap;
   uniform sampler2D nightMap;
@@ -196,13 +201,14 @@ const surfaceFragment = /* glsl */ `
       1.0-acos(clamp(shadowPoint.y,-1.0,1.0))/3.14159265359);
     vec2 cloudUv = vec2(vUv.x + cloudOffset, vUv.y);
     float cloudCover = sampleMap(cloudMap, shadowUv, cloudSize, gx, gy, seam).r * cloudsEnabled;
-    vec3 color = day * (0.015 + diffuse * 1.08 * (1.0-cloudCover*0.26));
+    vec3 color = day * (vec3(0.015) + stellarDiffuse(terrainNormal, normal, sunDirection) * 1.08 * (1.0-cloudCover*0.26));
     // Isolate the warm city lights from the blue-tinted night-map terrain.
     color += vec3(1.0, 0.65, 0.32) * pow(cityLight, 1.15) * nightWeight * 2.4 * (1.0-cloudCover*0.6);
     float fresnel = 0.02 + 0.98 * pow(1.0-max(dot(terrainNormal,viewDirection),0.0),5.0);
-    color += vec3(0.75, 0.87, 1.0) * specular * water * smoothstep(0.0, 0.15, daylight) * (0.12+fresnel*0.35);
+    color += lightTint * vec3(0.75, 0.87, 1.0) * specular * water * smoothstep(0.0, 0.15, daylight) * (0.12+fresnel*0.35) * stellarEnergy * stellarVisibility;
     float visibleCloud = sampleMap(cloudMap, cloudUv, cloudSize, gx, gy, seam).r * cloudsEnabled;
-    color = mix(color,vec3(0.92,0.96,1.0)*(0.035+max(daylight,0.0)*1.1),visibleCloud*flatClouds*0.82);
+    color = mix(color,vec3(0.92,0.96,1.0)*(vec3(0.035)
+      + stellarDiffuse(normal,normal,sunDirection)*1.1),visibleCloud*flatClouds*0.82);
     #include <logdepthbuf_fragment>
     gl_FragColor = vec4(color, 1.0);
     #include <tonemapping_fragment>
@@ -212,6 +218,7 @@ const surfaceFragment = /* glsl */ `
 
 /** Separate cloud shell, shaded exactly like the merged distant clouds so Earth's colours never shift. */
 const earthCloudFragment = /* glsl */ `
+  ${stellarShader}
   #include <logdepthbuf_pars_fragment>
   uniform sampler2D cloudMap;
   uniform vec2 mapSize;
@@ -239,7 +246,9 @@ const earthCloudFragment = /* glsl */ `
     float daylight = max(dot(normalize(vNormal), sunDirection), 0.0);
     #include <logdepthbuf_fragment>
     float silver = pow(max(dot(normalize(cameraPosition-vWorldPosition), sunDirection),0.0),12.0) * (1.0-cover) * 0.2;
-    gl_FragColor = vec4(vec3(0.92,0.96,1.0) * (0.035 + daylight * 1.1 + silver), cover * 0.82);
+    gl_FragColor = vec4(vec3(0.92,0.96,1.0) * (vec3(0.035)
+      + stellarDiffuse(normalize(vNormal), normalize(vNormal), sunDirection) * 1.1
+      + lightTint * silver * stellarEnergy * stellarVisibility), cover * 0.82);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -248,6 +257,8 @@ const earthCloudFragment = /* glsl */ `
 /** Owns rendering and GPU resources; UI consumes its public controls and metrics. */
 export class SolarScene {
   private readonly renderer: THREE.WebGLRenderer;
+  private readonly hdr: HdrPipeline;
+  private readonly renderMetrics: RenderMetrics;
   private readonly spaceScene = new THREE.Scene();
   private readonly surfaceWorldScene = new THREE.Scene();
   private readonly surfaceCelestialScene = new THREE.Scene();
@@ -278,6 +289,11 @@ export class SolarScene {
   private readonly shipCamera = new THREE.PerspectiveCamera(58, 1, 0.01, 200);
   private readonly localRenderCamera = new THREE.PerspectiveCamera();
   private readonly shipSun = new THREE.DirectionalLight(0xfff3e5, 2.5);
+  private readonly secondaryShipSun = new THREE.DirectionalLight(0xffffff, 0);
+  private stellarSamples: StellarSample[] = [];
+  private readonly orbitalLightCache = new WeakMap<PlanetModel, {
+    config: WorldConfig; position: number[]; samples: StellarSample[];
+  }>();
   private readonly shipAmbient = new THREE.HemisphereLight(0xc1e6ee, 0x233643, 0.85);
   private readonly shipRim = new THREE.DirectionalLight(0x77bfff, 0.45);
   private shipScale = SHIP_LENGTH_KM / (6371 * this.ship.hullLength);
@@ -383,6 +399,21 @@ export class SolarScene {
       alpha: false,
       powerPreference: "high-performance",
     });
+    // Restrict per-body ordering to transparent items: changing Group.renderOrder
+    // would also draw opaque planets before the depth-free galaxy background.
+    const celestialOwner = (object: THREE.Object3D) => {
+      let parent: THREE.Object3D | null = object;
+      while (parent && parent.userData.celestialRank === undefined) parent = parent.parent;
+      return parent;
+    };
+    this.renderer.setTransparentSort((a, b) => {
+      const ownerA = celestialOwner(a.object), ownerB = celestialOwner(b.object);
+      const categoryA = ownerA ? 0 : a.renderOrder < 0 ? -1 : 1;
+      const categoryB = ownerB ? 0 : b.renderOrder < 0 ? -1 : 1;
+      if (categoryA !== categoryB) return categoryA - categoryB;
+      if (ownerA && ownerB && ownerA !== ownerB) return ownerA.userData.celestialRank - ownerB.userData.celestialRank;
+      return a.groupOrder - b.groupOrder || a.renderOrder - b.renderOrder || b.z - a.z || a.id - b.id;
+    });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     const gl = this.renderer.getContext();
     const debug = gl.getExtension("WEBGL_debug_renderer_info");
@@ -411,6 +442,8 @@ export class SolarScene {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
+    this.hdr = new HdrPipeline(this.renderer);
+    this.renderMetrics = new RenderMetrics(this.renderer);
     this.renderer.setClearColor(0x000000, 1);
     this.renderer.domElement.setAttribute(
       "aria-label",
@@ -447,6 +480,7 @@ export class SolarScene {
     this.shipScene.add(
       this.ship.group,
       this.shipSun,
+      this.secondaryShipSun,
       this.shipAmbient,
       this.shipRim,
     );
@@ -500,6 +534,7 @@ export class SolarScene {
     this.planet.clear();
     this.planet.add(model.group);
     this.currentModel = model;
+    this.flightFrameDirty = true;
     this.publishSurfaceResolution(model);
     this.useSystemBackground(getBody(id).systemId ?? "solar");
     this.controls.minDistance = id === "gargantua" ? 6 : 1.25;
@@ -513,7 +548,7 @@ export class SolarScene {
       `交互式 3D ${model.body.name}：拖动旋转视角，滚轮或双指缩放`,
     );
     this.renderer.compile(this.spaceScene, this.camera);
-    this.renderer.render(this.spaceScene, this.camera);
+    this.renderObservation();
     onProgress(100);
     if (!this.frame) this.animate(0);
     return true;
@@ -913,6 +948,7 @@ export class SolarScene {
         vertexShader: earthSurfaceVertex,
         fragmentShader: surfaceFragment,
         uniforms: {
+          ...stellarUniforms(),
           dayMap: { value: maps[0] },
           nightMap: { value: maps[1] },
           terrainMap: { value: maps[2] },
@@ -938,6 +974,7 @@ export class SolarScene {
         vertexShader: surfaceVertex,
         fragmentShader: earthCloudFragment,
         uniforms: {
+          ...stellarUniforms(),
           cloudMap: { value: maps[3] },
           mapSize: { value: new THREE.Vector2(maps[3].image.width, maps[3].image.height) },
           sunDirection: { value: sunDirection },
@@ -952,7 +989,7 @@ export class SolarScene {
       new THREE.ShaderMaterial({
         vertexShader: surfaceVertex,
         fragmentShader: atmosphereFragment,
-        uniforms: { sunDirection: { value: sunDirection },
+        uniforms: { ...stellarUniforms(), sunDirection: { value: sunDirection },
           planetCenter: { value: group.position }, bodyRadius: { value: 1 },
           atmosphereColor: { value: new THREE.Color(surfaceProfile("earth").sky) },
           atmosphereHeight: { value: EARTH.atmosphereKm! / EARTH.radiusKm }, strength: { value: atmosphereStrength("earth") }, uTime: { value: 0 } },
@@ -962,6 +999,7 @@ export class SolarScene {
         depthWrite: false,
       }),
     );
+    atmosphere.renderOrder = 2;
     group.add(surface, clouds, atmosphere);
     this.renderer.domElement.dataset.earthMaps = this.earthHighMaps ? "8k" : "4k";
     this.renderer.domElement.dataset.earthMesh = `${geometry.parameters.widthSegments}x${geometry.parameters.heightSegments}`;
@@ -998,6 +1036,7 @@ export class SolarScene {
     this.renderer.setSize(width, height);
     this.stationInterior?.resize(width, height);
     this.configureRenderBudget();
+    if (this.flying && this.flightPaused) this.updateFlightCamera(1);
   };
 
   private configureRenderBudget() {
@@ -1008,6 +1047,19 @@ export class SolarScene {
     this.renderer.setPixelRatio(this.renderBudget.ratio);
     this.flightFrameDirty = true;
     this.renderer.domElement.dataset.renderScale = this.renderBudget.ratio.toFixed(2);
+    const quality = lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel);
+    this.hdr.configure(quality, this.minimumRenderRatio < 0.5);
+    this.surfaceScene.configureLighting(quality);
+    this.stationInterior?.configureLighting(quality);
+    if (this.shipSun.shadow.mapSize.x !== quality.shadowSize) {
+      this.shipSun.shadow.map?.dispose(); this.shipSun.shadow.map = null;
+      this.shipSun.shadow.mapSize.set(quality.shadowSize, quality.shadowSize);
+    }
+    for (const model of [...this.models.values(), ...this.flightModels]) this.configureModelLighting(model);
+    this.renderer.domElement.dataset.lightingLevel = String(quality.level);
+    this.renderer.domElement.dataset.shadowSize = String(quality.shadowSize);
+    this.renderer.domElement.dataset.atmosphereSteps = String(quality.atmosphereSteps);
+    this.renderer.domElement.dataset.cloudSteps = String(quality.cloudSteps);
   }
 
   /** Chase smoothing can approach its final pose indefinitely; subpixel changes need no new paused frame. */
@@ -1026,7 +1078,141 @@ export class SolarScene {
     this.renderer.domElement.dataset.worldRenderCount = String(++this.worldRenderCount);
   }
 
+  private configureModelLighting(model: PlanetModel) {
+    const quality = lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel);
+    model.group.traverse(object => {
+      if (!(object instanceof THREE.Mesh) || !(object.material instanceof THREE.ShaderMaterial)
+        || !object.material.fragmentShader.includes("scatterAtmosphere")) return;
+      if (object.material.defines.ATMOSPHERE_STEPS !== quality.atmosphereSteps) {
+        object.material.defines.ATMOSPHERE_STEPS = quality.atmosphereSteps;
+        object.material.needsUpdate = true;
+      }
+    });
+  }
+
+  private updateStellarSources(ship: ShipDynamics) {
+    this.stellarSamples = sampleStellarLighting(ship.activeBodies, ship.position, ship.config.unitsKm,
+      this.aboardStarship ? "earth-station" : undefined);
+    const primary = this.stellarSamples[0];
+    if (primary) {
+      this.flightSun.position.fromArray(primary.body.position).sub(ship.position);
+      this.flightSun.color.copy(primary.color);
+    }
+    this.flightSun.intensity = 2.5 * (primary?.energy ?? 0);
+    this.shipSun.color.copy(this.flightSun.color);
+  }
+
+  private updateModelLighting(model: PlanetModel) {
+    if (model.body.kind === "star" || model.body.kind === "black-hole") return;
+    const config = this.dynamics?.config ?? world;
+    const body = config.bodies.find(body => body.id === model.body.id);
+    if (!body) return;
+    // This world's stellar/planetary ephemerides are static. Camera movement
+    // does not change a planet's irradiance; moving vessels still sample each frame.
+    let cached = this.orbitalLightCache.get(model);
+    if (!cached || cached.config !== config || body.position.some((value, index) => value !== cached!.position[index])) {
+      cached = { config, position: [...body.position], samples: sampleStellarLighting(
+        config.bodies.filter(other => other.systemId === body.systemId),
+        new THREE.Vector3().fromArray(body.position), config.unitsKm, body.id) };
+      this.orbitalLightCache.set(model, cached);
+    }
+    const samples = cached.samples;
+    const primary = samples[0], secondary = samples[1];
+    const rotation = primary && !this.flying
+      ? new THREE.Quaternion().setFromUnitVectors(primary.direction, this.sunDirection) : new THREE.Quaternion();
+    model.group.traverse(object => {
+      if (!(object instanceof THREE.Mesh) || !(object.material instanceof THREE.ShaderMaterial)) return;
+      const uniforms = object.material.uniforms;
+      if (!uniforms.stellarEnergy) return;
+      if (this.flying && uniforms.sunDirection && primary) uniforms.sunDirection.value.copy(primary.direction);
+      uniforms.lightTint.value.copy(primary?.color ?? new THREE.Color(0xffffff));
+      uniforms.stellarEnergy.value = primary?.energy ?? 0;
+      uniforms.stellarVisibility.value = primary?.visibility ?? 0;
+      uniforms.secondarySunDirection.value.copy(secondary?.direction ?? new THREE.Vector3()).applyQuaternion(rotation);
+      uniforms.secondaryIrradiance.value.copy(secondary?.color ?? new THREE.Color(0, 0, 0))
+        .multiplyScalar((secondary?.energy ?? 0) * (secondary?.visibility ?? 0));
+    });
+    if (!this.flying && primary) {
+      this.observeSun.color.copy(primary.color);
+      this.observeSun.intensity = 2.5 * primary.energy * primary.visibility;
+    }
+  }
+
+  /** Keep each body's transparent layers together, far bodies first. */
+  private orderCelestialLayers() {
+    const models = this.flying ? this.flightModels.filter(model => model.group.visible)
+      : this.currentModel ? [this.currentModel] : [];
+    const position = new THREE.Vector3();
+    models.sort((a, b) => {
+      a.group.updateWorldMatrix(true, false); b.group.updateWorldMatrix(true, false);
+      return b.group.getWorldPosition(position).distanceToSquared(this.camera.position)
+        - a.group.getWorldPosition(position).distanceToSquared(this.camera.position);
+    });
+    models.forEach((model, index) => { model.group.userData.celestialRank = index; });
+  }
+
+  private renderObservation() {
+    if (this.currentModel) {
+      this.configureModelLighting(this.currentModel);
+      this.updateModelLighting(this.currentModel);
+    }
+    this.orderCelestialLayers();
+    this.renderMetrics.begin();
+    this.hdr.begin();
+    try { this.renderer.render(this.spaceScene, this.camera); }
+    finally { this.hdr.finish(); this.renderMetrics.finish(); }
+    this.recordFlightRender();
+  }
+
   private renderFlightWorld() {
+    this.orderCelestialLayers();
+    this.renderMetrics.begin();
+    this.hdr.begin();
+    try { this.renderWorldLayers(); this.renderShip(); }
+    finally { this.hdr.finish(); this.renderMetrics.finish(); }
+  }
+
+  private renderShip() {
+    if (this.ship.group.visible || this.starshipHull?.visible) {
+      // The hull pass uses the same physical scale as the world camera.
+      const camera = this.shipCamera;
+      if (camera.aspect !== this.camera.aspect || camera.fov !== this.camera.fov) {
+        camera.aspect = this.camera.aspect;
+        camera.fov = this.camera.fov;
+        camera.updateProjectionMatrix();
+      }
+      camera.position.copy(this.camera.position).multiplyScalar(1 / this.renderedShipScale);
+      camera.quaternion.copy(this.camera.quaternion);
+      this.shipSun.position.copy(this.flightSun.position).normalize().multiplyScalar(10);
+      this.shipSun.intensity = 2.8 * this.flightLight.illumination * (this.stellarSamples[0]?.energy ?? 0);
+      const secondary = this.stellarSamples[1];
+      this.secondaryShipSun.position.copy(secondary?.direction ?? this.shipSun.position).normalize().multiplyScalar(10);
+      this.secondaryShipSun.color.copy(secondary?.color ?? this.shipSun.color);
+      this.secondaryShipSun.intensity = 2.8 * (secondary?.energy ?? 0) * (secondary?.visibility ?? 0);
+      const shadowCamera = this.shipSun.shadow.camera;
+      const shadowSpan = this.aboardStarship ? 4.2 : 1.6;
+      if (shadowCamera.right !== shadowSpan) {
+        Object.assign(shadowCamera, { left: -shadowSpan, right: shadowSpan, top: shadowSpan, bottom: -shadowSpan,
+          near: this.aboardStarship ? 4 : 7, far: this.aboardStarship ? 16 : 13 });
+        shadowCamera.updateProjectionMatrix();
+      }
+      this.starshipHull?.traverse(object => {
+        if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial)
+          object.material.envMapIntensity = 0.8 * this.flightLight.illumination;
+      });
+      // Sky bounce only grows near an atmosphere; vacuum keeps directional contrast.
+      const atmosphereBounce = this.surfaceScene.usesAtmosphere(this.dynamics!) ? 1 : 0;
+      this.shipRim.position.copy(this.shipSun.position).multiplyScalar(-1);
+      this.shipRim.intensity = (0.06 + atmosphereBounce * 0.18) * this.flightLight.illumination;
+      this.shipAmbient.intensity = 0.055 + this.flightLight.illumination * (0.17 + atmosphereBounce * 0.35);
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.shipScene, camera);
+      this.renderer.autoClear = true;
+    }
+  }
+
+  private renderWorldLayers() {
     if (this.bridgeView) {
       // Draw the actual orbital world, then let the local hull and glazing
       // occlude it. Celestial resources stay owned by the outer space scene.
@@ -1106,63 +1292,32 @@ export class SolarScene {
     if (this.destroyed) return;
     this.frame = requestAnimationFrame(this.animate);
     if (this.hidden) return;
-    const delta = this.lastTime
-      ? Math.min((time - this.lastTime) / 1000, 0.25)
-      : 0;
+    const frameSeconds = this.lastTime ? Math.max(0, (time - this.lastTime) / 1000) : 0;
+    const delta = Math.min(frameSeconds, 0.25);
     this.lastTime = time;
     // Adapt resolution only while the picture moves; a paused, still view is restored to full sharpness.
-    const moved = !this.camera.position.equals(this.lastCameraPosition) || !this.camera.quaternion.equals(this.lastCameraQuaternion);
+    const positionTolerance = Math.max(1e-14, this.camera.position.lengthSq() * 1e-8);
+    const moved = this.camera.position.distanceToSquared(this.lastCameraPosition) > positionTolerance
+      || 1 - Math.abs(this.camera.quaternion.dot(this.lastCameraQuaternion)) > 1e-9;
     this.lastCameraPosition.copy(this.camera.position);
     this.lastCameraQuaternion.copy(this.camera.quaternion);
     const animating = this.flying ? !this.flightPaused : !this.paused || moved || !!this.targetPosition;
     this.stillSeconds = animating ? 0 : this.stillSeconds + delta;
-    if (animating ? this.renderBudget.sample(delta) : this.stillSeconds > 0.4 && this.renderBudget.rest()) this.applyRenderBudget();
+    // Physics caps a step for stability; the budget measures the actual frame.
+    if (animating ? this.renderBudget.sample(Math.min(frameSeconds, 1)) : this.stillSeconds > 0.4 && this.renderBudget.rest()) this.applyRenderBudget();
     if (this.flying) {
       this.animateFlight(delta, time);
       if (this.inStation || this.renderPolicy.mode === "space") {
         this.updateSurfaceMaps(delta, time);
         this.updateEarthDetail(delta, time);
       }
-      const reuseFrame = this.flightPaused && (this.bridgeView || this.renderPolicy.mode === "surface")
+      const reuseFrame = this.flightPaused
         && this.stillSeconds > 0.4 && !this.flightFrameDirty && this.flightCameraQuiet();
       this.renderer.domElement.dataset.surfaceFrameIdle = String(reuseFrame);
       // RAF, controls, tracking and HUD continue above; retain the last canvas frame instead of repeating GPU work.
       if (reuseFrame) return;
       this.renderFlightWorld();
       this.recordFlightRender();
-      if (this.ship.group.visible || this.starshipHull?.visible) {
-        // The hull pass uses the same physical scale as the world camera.
-        const camera = this.shipCamera;
-        if (camera.aspect !== this.camera.aspect || camera.fov !== this.camera.fov) {
-          camera.aspect = this.camera.aspect;
-          camera.fov = this.camera.fov;
-          camera.updateProjectionMatrix();
-        }
-        camera.position.copy(this.camera.position).multiplyScalar(1 / this.renderedShipScale);
-        camera.quaternion.copy(this.camera.quaternion);
-        this.shipSun.position.copy(this.flightSun.position).normalize().multiplyScalar(10);
-        this.shipSun.intensity = 2.8 * this.flightLight.illumination;
-        const shadowCamera = this.shipSun.shadow.camera;
-        const shadowSpan = this.aboardStarship ? 4.2 : 1.6;
-        if (shadowCamera.right !== shadowSpan) {
-          Object.assign(shadowCamera, { left: -shadowSpan, right: shadowSpan, top: shadowSpan, bottom: -shadowSpan,
-            near: this.aboardStarship ? 4 : 7, far: this.aboardStarship ? 16 : 13 });
-          shadowCamera.updateProjectionMatrix();
-        }
-        this.starshipHull?.traverse(object => {
-          if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial)
-            object.material.envMapIntensity = 0.8 * this.flightLight.illumination;
-        });
-        // Sky bounce only grows near an atmosphere; vacuum keeps directional contrast.
-        const atmosphereBounce = this.surfaceScene.usesAtmosphere(this.dynamics!) ? 1 : 0;
-        this.shipRim.position.copy(this.shipSun.position).multiplyScalar(-1);
-        this.shipRim.intensity = (0.06 + atmosphereBounce * 0.18) * this.flightLight.illumination;
-        this.shipAmbient.intensity = 0.055 + this.flightLight.illumination * (0.17 + atmosphereBounce * 0.35);
-        this.renderer.autoClear = false;
-        this.renderer.clearDepth();
-        this.renderer.render(this.shipScene, camera);
-        this.renderer.autoClear = true;
-      }
       this.finishPhotoCapture();
       return;
     }
@@ -1197,7 +1352,10 @@ export class SolarScene {
     }
     this.controls.update();
     this.updateEarthDetail(delta, time);
-    this.renderer.render(this.spaceScene, this.camera);
+    const observationIdle = this.paused && this.stillSeconds > 0.4 && !this.flightFrameDirty
+      && !this.mapFades.size && this.flightCameraQuiet();
+    this.renderer.domElement.dataset.observationFrameIdle = String(observationIdle);
+    if (!observationIdle) this.renderObservation();
     this.finishPhotoCapture();
     this.frames++;
     if (!this.metricsStart) this.metricsStart = time;
@@ -1612,6 +1770,8 @@ export class SolarScene {
       if (model.group.parent !== parent) parent.add(model.group);
       model.group.position.copy(this.flightRelative);
       model.group.visible = true;
+      this.configureModelLighting(model);
+      this.updateModelLighting(model);
       if (surface || this.inStation) celestialBodies.push(body.id);
       // Maps stream in as bodies grow beyond a few pixels; far ones keep the procedural fallback.
       if (!surface && pixelRadius > 4) this.touchSurfaceMap(model.body.id);
@@ -1681,14 +1841,11 @@ export class SolarScene {
       if (this.surfaceScene.sky.parent !== this.spaceScene || this.flightSun.parent !== this.spaceScene)
         this.spaceScene.add(this.surfaceScene.sky, this.flightLight.mesh, this.flightSun);
       this.updateSpaceWorld();
-      const sun = ship.activeBodies.filter(body => body.kind === "star" || body.kind === "black-hole")
-        .reduce((a, b) => ship.position.distanceToSquared(new THREE.Vector3(...a.position))
-          < ship.position.distanceToSquared(new THREE.Vector3(...b.position)) ? a : b);
-      this.flightSun.position.fromArray(sun.position).sub(ship.position);
-      this.flightSun.color.set(getBody(sun.id).color);
-      this.flightSun.intensity = sun.kind === "black-hole" ? 0 : 2.5;
+      this.updateStellarSources(ship);
       this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
       this.flightLight.update(ship, this.camera, this.flightSun, this.aboardStarship ? "earth-station" : undefined);
+      interior.configureLighting(lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel));
+      interior.updateLighting(this.stellarSamples, this.stationSpaceRotation);
       this.useSystemBackground(ship.systemId);
       this.resumeSpaceWork();
       this.ship.group.visible = false;
@@ -1729,14 +1886,7 @@ export class SolarScene {
     }
     if (mode === "space") this.updateSpaceWorld();
     else this.updateSpaceWorld(true);
-    const stars = ship.activeBodies.filter(body => body.kind === "star" || body.kind === "black-hole");
-    const light = stars.reduce((closest, body) =>
-      this.flightRelative.fromArray(body.position).distanceToSquared(ship.position)
-        < this.flightForward.fromArray(closest.position).distanceToSquared(ship.position) ? body : closest);
-    this.flightSun.position.fromArray(light.position).sub(ship.position);
-    this.flightSun.color.set(light.id === "barnard-star" ? BARNARD_LIGHT_COLOR : getBody(light.id).color);
-    this.flightSun.intensity = light.kind === "black-hole" ? 0 : 2.5;
-    this.shipSun.color.copy(this.flightSun.color);
+    this.updateStellarSources(ship);
     this.useSystemBackground(ship.systemId);
     // Use the same 24 m surface lander as walking, growing smoothly back to flight scale on ascent.
     const surfaceHull = environment.profile.solid
@@ -1874,7 +2024,9 @@ export class SolarScene {
       this.pilotingStarship && !this.flightPaused ? input : emptyInput(), time)) this.flightFrameDirty = true;
     const exhaust = this.flightPaused || ship.warping ? 0.1 : input.boost && input.throttle > 0 ? 2.4 : input.throttle > 0 ? 1 : 0.22;
     this.ship.exhaust.scale.z = THREE.MathUtils.lerp(this.ship.exhaust.scale.z, exhaust, 1 - Math.exp(-delta * 10));
-    this.updateFlightCamera(1 - Math.exp(-delta * 9));
+    // Freeze the camera as well as physics. Re-blending a chase offset outside
+    // the allowed altitude band caused perpetual projection drift while paused.
+    this.updateFlightCamera(this.flightPaused ? 0 : 1 - Math.exp(-delta * 9));
     if (!this.flightPaused && !this.paused && (this.inStation || this.renderPolicy.mode === "space"))
       for (const model of this.flightModels) {
         if (!model.group.visible) continue;
@@ -1985,6 +2137,7 @@ export class SolarScene {
     this.speed = speed;
   }
   setLayer(layer: Layer, visible: boolean) {
+    this.flightFrameDirty = true;
     const object =
       layer === "stars" ? this.galaxySky.mesh : this.currentModel?.layers[layer];
     if (object) object.visible = visible;
@@ -2112,6 +2265,8 @@ export class SolarScene {
     materials.forEach((material) => material.dispose());
     instances.forEach(mesh => mesh.dispose());
     this.textures.forEach((texture) => texture.dispose());
+    this.renderMetrics.dispose();
+    this.hdr.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }

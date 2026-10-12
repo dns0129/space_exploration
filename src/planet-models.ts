@@ -10,7 +10,7 @@ import { PROCEDURAL_DETAIL_WIDTH, proceduralBodyProfile } from "./procedural-bod
 import { SATURN_RING_INNER, SATURN_RING_OUTER, saturnRingOptics } from "./saturn-rings";
 import { createBlackHoleModel } from "./black-hole-model";
 import { createEchoModel } from "./echo-models";
-import { BARNARD_LIGHT_COLOR } from "./stellar-light";
+import { stellarShader, stellarUniforms } from "./stellar-light";
 
 export interface PlanetModel {
   body: CelestialBody;
@@ -193,6 +193,7 @@ export const mapSampling = /* glsl */ `
 `;
 
 const planetFragment = /* glsl */ `
+  ${stellarShader}
   #include <logdepthbuf_pars_fragment>
   uniform sampler2D detailMap;
   uniform vec2 mapSize;
@@ -208,7 +209,6 @@ const planetFragment = /* glsl */ `
   uniform vec3 moonColor;
   uniform float moonSeed, moonStyle;
   uniform vec3 stellarTint;
-  uniform vec3 illuminantTint;
   uniform float stellarIllustration;
   uniform vec3 bodySeed, detailStretch;
   uniform vec4 bodyTerrain, bodyWeather;
@@ -421,13 +421,15 @@ const planetFragment = /* glsl */ `
       }
     #endif
     #include <logdepthbuf_fragment>
+    vec3 irradiance = stellarDiffuse(normal, geometric, sunDirection);
+    // Ring transmission attenuates primary direct irradiance without affecting night fill.
+    float originalDiffuse = max(dot(normal,sunDirection),0.0)*smoothstep(-0.12,0.04,dot(geometric,sunDirection));
+    irradiance *= originalDiffuse > 0.00001 ? diffuse / originalDiffuse : 1.0;
+    float nightFloor = 0.009;
     #ifdef BARNARD_ROCK
-    // Host-spectrum tint is shared with ship and surface lighting. Dry regolith
-    // has a restrained neutral night floor, with no invented lava emission.
-    gl_FragColor = vec4(max(color*(vec3(0.0035)+illuminantTint*diffuse*1.05),vec3(0.0)),1.0);
-    #else
-    gl_FragColor = vec4(max(color*(0.009+diffuse*1.05),vec3(0.0)),1.0);
+      nightFloor = 0.0035;
     #endif
+    gl_FragColor = vec4(max(color*(vec3(nightFloor)+irradiance*1.05),vec3(0.0)),1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #endif
@@ -435,6 +437,7 @@ const planetFragment = /* glsl */ `
 `;
 
 export const atmosphereFragment = /* glsl */ `
+  ${stellarShader}
   #include <logdepthbuf_pars_fragment>
   uniform vec3 sunDirection;
   uniform vec3 atmosphereColor;
@@ -467,7 +470,11 @@ export const atmosphereFragment = /* glsl */ `
       vec3 origin = (cameraPosition-planetCenter)/bodyRadius;
       vec4 scattering = scatterAtmosphere(normalize(origin), max(0.0, length(origin)-1.0),
         ray, 1.0, atmosphereHeight, sunDirection, atmosphereColor, strength);
-      vec3 color = scattering.rgb;
+      vec3 color = scattering.rgb * lightTint * stellarEnergy * stellarVisibility;
+      if (dot(secondaryIrradiance, secondaryIrradiance) > 0.00001) {
+        color += scatterAtmosphere(normalize(origin), max(0.0, length(origin)-1.0),
+          ray, 1.0, atmosphereHeight, secondarySunDirection, atmosphereColor, strength).rgb * secondaryIrradiance;
+      }
       float opacity = scattering.a;
     #endif
     #include <logdepthbuf_fragment>
@@ -478,6 +485,7 @@ export const atmosphereFragment = /* glsl */ `
 `;
 
 const cloudsFragment = /* glsl */ `
+  ${stellarShader}
   #include <logdepthbuf_pars_fragment>
   uniform vec3 sunDirection;
   uniform float uTime;
@@ -496,11 +504,11 @@ const cloudsFragment = /* glsl */ `
       float swirl = fbm(p*bodyWeather.w+circulation+(clouds-0.5)*bodyWeather.y);
       vec3 color = mix(vec3(0.67,0.45,0.21),vec3(0.96,0.85,0.62),swirl*0.75+0.15);
       #include <logdepthbuf_fragment>
-    gl_FragColor = vec4(color*(0.06+diffuse*1.15),0.995);
+    gl_FragColor = vec4(color*(vec3(0.06)+stellarDiffuse(normalize(vNormal),normalize(vNormal),sunDirection)*1.15),0.995);
     #else
       float streaks = fbm(p*vec3(bodyWeather.w,bodyWeather.x*3.0,bodyWeather.w)+circulation);
       #include <logdepthbuf_fragment>
-    gl_FragColor = vec4(vec3(0.72,0.83,0.92)*(0.035+diffuse*1.15),smoothstep(0.52,0.72,streaks)*0.45);
+    gl_FragColor = vec4(vec3(0.72,0.83,0.92)*(vec3(0.035)+stellarDiffuse(normalize(vNormal),normalize(vNormal),sunDirection)*1.15),smoothstep(0.52,0.72,streaks)*0.45);
     #endif
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -508,6 +516,7 @@ const cloudsFragment = /* glsl */ `
 `;
 
 const ringFragment = /* glsl */ `
+  ${stellarShader}
   #include <logdepthbuf_pars_fragment>
   uniform vec3 sunDirection;
   uniform vec3 planetAxis;
@@ -577,7 +586,7 @@ const ringFragment = /* glsl */ `
     float scattering = lightSide*viewSide>0.0 ? reflection : transmission;
     // Weak planetshine falls with radius and vanishes over Saturn's night side.
     float planetshine = 0.012*max(dot(normalize(relative),sunDirection),0.0)/(radius*radius);
-    vec3 radiance = color*(visibility*scattering*phase*1.10
+    vec3 radiance = color*(lightTint*stellarEnergy*stellarVisibility*visibility*scattering*phase*1.10
       + opacity*(0.002+planetshine));
     #include <logdepthbuf_fragment>
     // The slab integral already includes extinction. Premultiplied blending adds
@@ -646,6 +655,7 @@ export function createPlanetModel(
   const surfaceMap = SURFACE_MAPS[body.id];
   const profile = proceduralBodyProfile(body);
   const proceduralUniforms = {
+    ...stellarUniforms(body.systemId === "barnard" ? "barnard-star" : body.hostStarId),
     solarAngularRadius: { value: 0.00465 / Math.max(body.distanceFromSunMillionKm / 149.5978707, 0.01) },
     bodySeed: { value: new THREE.Vector3(...profile.seed) },
     bodyTerrain: { value: new THREE.Vector4(...profile.terrain) },
@@ -680,7 +690,6 @@ export function createPlanetModel(
         moonSeed: { value: profile.grainSeed },
         moonStyle: { value: body.surfaceStyle ?? 0 },
         stellarTint: { value: new THREE.Color(body.color) },
-        illuminantTint: { value: new THREE.Color(body.systemId === "barnard" ? BARNARD_LIGHT_COLOR : "#ffffff") },
         stellarIllustration: { value: body.kind === "star" ? 1 : 0 },
       },
     }),
@@ -709,6 +718,7 @@ export function createPlanetModel(
         fragmentShader: atmosphereFragment,
         defines: solar ? { SOLAR_CORONA: 1, ...(body.id === "barnard-star" ? { BARNARD_CORONA: 1 } : {}) } : {},
         uniforms: {
+          ...stellarUniforms(body.systemId === "barnard" ? "barnard-star" : body.hostStarId),
           sunDirection: { value: sunDirection },
           planetCenter: { value: placement.center },
           bodyRadius: { value: placement.radius },
@@ -725,6 +735,9 @@ export function createPlanetModel(
         blending: solar ? THREE.AdditiveBlending : THREE.NormalBlending,
       }),
     );
+    // Equal-centred transparent spheres otherwise fall back to creation order.
+    // Clouds must be blended before extinction by the surrounding atmosphere.
+    halo.renderOrder = 2;
     halo.scale.y = body.flattening;
     const atmosphere = new THREE.Group();
     atmosphere.add(halo);
@@ -770,6 +783,7 @@ export function createPlanetModel(
         vertexShader: modelVertex,
         fragmentShader: ringFragment,
         uniforms: {
+          ...stellarUniforms(),
           sunDirection: { value: sunDirection },
           solarAngularRadius: proceduralUniforms.solarAngularRadius,
           planetFlattening: { value: body.flattening },

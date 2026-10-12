@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
-import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RectAreaLightUniformsLib } from "three/addons/lights/RectAreaLightUniformsLib.js";
 import { STATION_OBSTACLES, STATION_ROOMS, STATION_WALLS } from "../shared/station-layout.mjs";
 import { createShip } from "./ship-model";
@@ -36,8 +35,6 @@ function finish(color: number, metalness: number, roughness: number, grain = 0.0
         float contactShade = mix(0.48, 1.0, smoothstep(0.0, 0.75, contactDistance));
         reflectedLight.indirectDiffuse *= contactShade;
         reflectedLight.indirectSpecular *= contactShade;
-        reflectedLight.directDiffuse *= contactShade;
-        reflectedLight.directSpecular *= contactShade;
       `);
     }
   };
@@ -49,14 +46,9 @@ function finish(color: number, metalness: number, roughness: number, grain = 0.0
 export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
   textures: Set<THREE.Texture>, projectionMaterial: THREE.Material) {
   RectAreaLightUniformsLib.init();
-  const studio = new RoomEnvironment();
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const environment = pmrem.fromScene(studio, 0.06);
-  studio.dispose();
-  pmrem.dispose();
-  scene.environment = environment.texture;
-  scene.environmentIntensity = 0.3;
+  scene.environmentIntensity = 0.25;
   scene.add(new THREE.HemisphereLight(0xdce7ed, 0x26333b, 0.35));
+  const roomLights: { id: string; light: THREE.RectAreaLight }[] = [];
   for (const room of STATION_ROOMS) {
     const width = room.maxX - room.minX, length = room.maxZ - room.minZ;
     const light = new THREE.RectAreaLight(0xe4edf2, room.id === "docking" ? 2 : 2.7,
@@ -64,6 +56,7 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
     light.position.set((room.minX + room.maxX) / 2, room.height - 0.3, (room.minZ + room.maxZ) / 2);
     light.rotation.x = -Math.PI / 2;
     scene.add(light);
+    roomLights.push({ id: room.id, light });
   }
   const titanium = finish(0x64717a, 0.82, 0.31, 0.045);
   const ceramic = finish(0x8e979b, 0.22, 0.48);
@@ -481,9 +474,11 @@ export function buildStarshipDeck(scene: THREE.Scene, renderer: THREE.WebGLRende
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = "Starship deck / manufactured surfaces";
       mesh.matrixAutoUpdate = false;
+      mesh.castShadow = !material.transparent && !(material instanceof THREE.MeshBasicMaterial);
+      mesh.receiveShadow = !material.transparent;
       scene.add(mesh);
       surfaces.push(mesh);
     }
   }
-  return { environment, projection, instruments, surfaces };
+  return { projection, instruments, surfaces, roomLights };
 }

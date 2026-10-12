@@ -1,6 +1,7 @@
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import type { WorldConfig, FlightState } from "../shared/flight-state.mjs";
 const key = "voyager-flight-v1";
+const pendingKey = "voyager-flight-pending-sync";
 
 async function fetchWithDeadline<T>(
   path: string,
@@ -48,6 +49,15 @@ export class FlightStore {
   }
   async read(): Promise<FlightState | null> {
     if (!navigator.onLine) this.online = false;
+    // A successful local fallback is newer than the last acknowledged server
+    // checkpoint. Reconnecting must not discard it during a graphics-heavy reload.
+    try {
+      const local = localStorage.getItem(key);
+      if (local && localStorage.getItem(pendingKey) === local) {
+        const state = validateFlightState(JSON.parse(local));
+        if (state) return state;
+      }
+    } catch { /* Storage may be unavailable; retain the server path. */ }
     if (this.online)
       try {
         const saved = await fetchWithDeadline(
@@ -72,9 +82,11 @@ export class FlightStore {
     const safe = validateFlightState(state);
     if (!safe) throw new Error("Invalid flight state");
     let local = false;
+    const serialized = JSON.stringify(safe);
     try {
-      localStorage.setItem(key, JSON.stringify(safe));
+      localStorage.setItem(key, serialized);
       local = true;
+      localStorage.setItem(pendingKey, serialized);
     } catch {
       /* Server storage can still succeed. */
     }
@@ -89,7 +101,12 @@ export class FlightStore {
             body: JSON.stringify(safe),
           },
         );
-        if (saved) return "server";
+        if (saved) {
+          try {
+            if (localStorage.getItem(pendingKey) === serialized) localStorage.removeItem(pendingKey);
+          } catch { /* A server acknowledgement remains valid without local storage. */ }
+          return "server";
+        }
       } catch {
         /* Fall back to a local save. */
       }

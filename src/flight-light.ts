@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { ShipDynamics } from "./ship-dynamics";
-import { stellarDiskVisibility } from "./light-occlusion";
+import { stellarVisibility } from "./stellar-light";
 
 /** Optical light from the visible star and a velocity-dependent atmospheric bow shock. */
 export class FlightLight {
@@ -43,7 +43,6 @@ export class FlightLight {
   private readonly center = new THREE.Vector3();
   private readonly origin = new THREE.Vector3();
   private readonly cameraInverse = new THREE.Quaternion();
-  private readonly perpendicular = new THREE.Vector3();
 
   constructor() {
     this.mesh.frustumCulled = false;
@@ -92,21 +91,9 @@ export class FlightLight {
     // The active source is selected by its position, including binary-star systems.
     const source = ship.activeBodies.find(body => body.kind === "star"
       && this.center.fromArray(body.position).sub(ship.position).distanceTo(star) < 1e-6);
-    const angularRadius = Math.asin(Math.min(1, (source?.radius ?? distance * 0.00465) / distance));
-    let visibility = 1;
-    for (const body of ship.activeBodies) {
-      // A piloted vessel replaces its old orbital marker. Its own geometry casts
-      // near-field shadows; that marker must not eclipse its sunlight after boarding.
-      if (body.kind === "star" || body.id === ownedVesselId) continue;
-      this.center.fromArray(body.position).sub(ship.position).sub(origin);
-      const along = this.center.dot(this.ray);
-      if (along <= 0 || along >= distance) continue;
-      const bodyDistance = this.center.length();
-      const separation = Math.atan2(this.perpendicular.copy(this.center).cross(this.ray).length(), along);
-      const blockerRadius = Math.asin(Math.min(1, body.radius / bodyDistance));
-      visibility = Math.min(visibility, stellarDiskVisibility(angularRadius, blockerRadius, separation));
-      if (visibility === 0) break;
-    }
-    return visibility;
+    const receiver = ship.position.clone().add(origin);
+    return stellarVisibility(ship.activeBodies, receiver, source ?? {
+      kind: "star", radius: distance * 0.00465, position: ship.position.clone().add(star).toArray(),
+    }, ownedVesselId);
   }
 }

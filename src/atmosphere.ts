@@ -17,6 +17,9 @@ export function atmosphereCloudProfile(id: string, atmosphereKm: number) {
 
 /** Shared orbital/local optics. Distances use the caller's units; alpha is extinction. */
 export const atmosphereScattering = /* glsl */ `
+  #ifndef ATMOSPHERE_STEPS
+    #define ATMOSPHERE_STEPS 12
+  #endif
   vec4 scatterAtmosphere(vec3 up, float altitude, vec3 ray, float radius,
       float height, vec3 sunDirection, vec3 tint, float strength) {
     if (strength <= 0.0) return vec4(0.0);
@@ -38,7 +41,7 @@ export const atmosphereScattering = /* glsl */ `
       groundCosine = clamp(sqrt(groundD) / radius, 0.0, 1.0);
     }
     if (exitPoint <= entry) return vec4(0.0);
-    float stepLength = (exitPoint - entry) / 12.0;
+    float stepLength = (exitPoint - entry) / float(ATMOSPHERE_STEPS);
     // Most optical mass is close to the surface. A tenuous upper component
     // keeps entry continuous without painting a broad luminous orbital shell.
     float scaleHeight = height * 0.105;
@@ -54,7 +57,7 @@ export const atmosphereScattering = /* glsl */ `
     float rayleigh = 0.75 * (1.0 + mu * mu);
     float g = 0.76;
     float mie = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * mu, 0.02), 1.5);
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < ATMOSPHERE_STEPS; i++) {
       float t = entry + (float(i) + 0.5) * stepLength;
       vec3 point = up * radial + ray * t;
       // Rationalized height avoids precision loss near a planet-sized ground.

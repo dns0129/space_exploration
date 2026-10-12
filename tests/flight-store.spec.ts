@@ -2,6 +2,28 @@ import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { terrainHeightKm, LANDING_CLEARANCE_KM, TERRAIN_VERSION } from "../shared/surface.mjs";
 
+test("重新连接保留尚未同步的较新本机检查点，同步确认后继续使用服务器", async ({ page }) => {
+  const checkpoint = await seedCheckpoint(page);
+  const local = { ...checkpoint, elapsed: 57 };
+  const result = await page.evaluate(async ({ checkpoint, local }) => {
+    const { FlightStore } = await import("/src/flight-store.ts");
+    const store = new FlightStore();
+    store.online = false;
+    const destination = await store.save(local);
+    await store.connect();
+    const restored = await store.read();
+    const synced = await store.save({ ...local, elapsed: 58 });
+    // After an acknowledged sync, an authoritative subsequent server save wins.
+    await fetch("/api/flight/save", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...checkpoint, elapsed: 59 }) });
+    return { destination, restored, synced, final: await store.read() };
+  }, { checkpoint, local });
+  expect(result.destination).toBe("local");
+  expect(result.restored).toEqual(local);
+  expect(result.synced).toBe("server");
+  expect(result.final).toEqual({ ...checkpoint, elapsed: 59 });
+});
+
 async function seedCheckpoint(page: Page) {
   const world = await (await page.request.get("/api/world")).json();
   const body = world.bodies.find((candidate: any) => candidate.id === "earth");

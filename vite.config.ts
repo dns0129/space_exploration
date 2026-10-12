@@ -1,6 +1,8 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  // Optical browser tests import the shared Three module from the dev bundle.
+  optimizeDeps: { include: ["three"] },
   server: {
     proxy: {
       "/api": {

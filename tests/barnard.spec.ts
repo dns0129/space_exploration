@@ -195,7 +195,7 @@ test("巴纳德恒星粒状纹理随视角变化，四颗行星受暖色母星�
     for (const id of ["barnard-d", "barnard-b", "barnard-c", "barnard-e"]) {
       const model = createPlanetModel(getBody(id), light);
       scene.add(model.group);
-      const tint = model.surface.material.uniforms.illuminantTint.value;
+      const tint = model.surface.material.uniforms.lightTint.value;
       const warmTint = tint.toArray();
       const lit = capture(`${id}-warm-host-light`);
       tint.setRGB(1, 1, 1);
@@ -219,7 +219,7 @@ test("巴纳德恒星粒状纹理随视角变化，四颗行星受暖色母星�
       disposeModel(model);
     }
     const solar = createPlanetModel(getBody("mars"), light);
-    const solarTint = solar.surface.material.uniforms.illuminantTint.value.toArray();
+    const solarTint = solar.surface.material.uniforms.lightTint.value.toArray();
     disposeModel(solar);
     const glError = renderer.getContext().getError();
     target.dispose();

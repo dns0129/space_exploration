@@ -67,6 +67,8 @@ export class ExplorerView {
     this.group.traverse(object => {
       if (!(object instanceof THREE.Mesh)) return;
       const materials = Array.isArray(object.material) ? object.material : [object.material];
+      object.castShadow = object !== this.beacon && object !== this.shadow;
+      object.receiveShadow = object !== this.beacon && object !== this.shadow;
       materials.forEach(material => { material.transparent = true; });
     });
     this.group.visible = false;
@@ -116,7 +118,9 @@ export class ExplorerView {
     this.shadow.position.copy(feet).addScaledVector(up, (0.035 - walker.groundClearanceM));
     this.shadow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), up);
     this.shadow.scale.setScalar(1);
-    this.shadow.visible = walker.groundClearanceM < 8;
+    // Directional maps own the projected silhouette; keep only faint foot contact.
+    (this.shadow.material as THREE.MeshBasicMaterial).opacity = 0.08;
+    this.shadow.visible = walker.grounded && walker.groundClearanceM < 0.15;
 
     const look = walker.orientation.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), walker.pitch));
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(look);

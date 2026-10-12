@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { stellarShader, stellarUniforms } from "./stellar-light";
 import type { PlanetModel } from "./planet-models";
 import type { CelestialBody } from "./solar-system";
 import { echoSurfaceColor, echoTerrainTexture } from "./echo-surface";
@@ -16,10 +17,12 @@ export function createEchoModel(body: CelestialBody, sun: THREE.Vector3,
   group.rotation.z = THREE.MathUtils.degToRad(body.axialTiltDeg);
   const time = { value: 0 };
   const uniforms: Record<string, THREE.IUniform> = {
+    ...stellarUniforms("echo-pulsar"),
     uTime: time, sunDirection: { value: sun }, planetCenter: { value: placement.center },
     bodyRadius: { value: placement.radius },
   };
   const common = `#include <logdepthbuf_pars_fragment>
+    ${stellarShader}
     uniform float uTime; uniform vec3 sunDirection, planetCenter; uniform float bodyRadius;
     varying vec2 vUv; varying vec3 vLocalPosition, vWorldPosition, vNormal;
     ${sources.noise}`;
@@ -51,7 +54,7 @@ export function createEchoModel(body: CelestialBody, sun: THREE.Vector3,
       color = mix(color, mix(vec3(0.10, 0.27, 0.29), vec3(0.86, 0.74, 0.49), spiral * 0.5 + 0.5), (1.0-smoothstep(0.72, 1.24, d)) * 0.85);
       color *= 0.87 + noise3(p * 340.0) * 0.17;
       float day = max(dot(normalize(vNormal), sunDirection), 0.0);
-      color *= 0.022 + day * 1.18;
+      color *= vec3(0.022) + stellarDiffuse(normalize(vNormal), normalize(vNormal), sunDirection) * 1.18;
       ${ending} }`;
   } else if (body.id === "echo-thalassa" || body.id === "cinder") {
     const texture = echoTerrainTexture(body.id);
@@ -72,7 +75,7 @@ export function createEchoModel(body: CelestialBody, sun: THREE.Vector3,
         vec2 field = texture2D(echoTerrain, vUv).rg;
         vec3 color = echoLandColor(p, field.r, field.g, oceanMoon);
         float day = max(dot(normalize(vNormal), sunDirection), 0.0);
-        color *= 0.018 + day * 1.15;
+        color *= vec3(0.018) + stellarDiffuse(normalize(vNormal), normalize(vNormal), sunDirection) * 1.15;
         vec3 view = normalize(cameraPosition - vWorldPosition);
         float glint = pow(max(dot(reflect(-sunDirection, normalize(vNormal)), view), 0.0), 110.0);
         color += vec3(0.35, 0.55, 0.62) * glint * field.g * oceanMoon * day;
@@ -87,6 +90,7 @@ export function createEchoModel(body: CelestialBody, sun: THREE.Vector3,
           atmosphereHeight: { value: (body.atmosphereKm ?? 100) / body.radiusKm }, strength: { value: 1.2 } },
         transparent: true, depthWrite: false }));
     atmosphere.scale.y = body.flattening;
+    atmosphere.renderOrder = 2;
     group.add(atmosphere); model.layers.atmosphere = atmosphere;
   }
   return model;

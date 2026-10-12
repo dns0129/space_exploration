@@ -25,7 +25,7 @@ npm run test:performance -- --hardware
 npm run test:performance -- --baseline /path/to/baseline/dist
 ```
 
-`--hardware` 使用系统图形后端，报告中的 `graphicsRenderer` 记录实际驱动；用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 可指定 Chrome/Chromium 路径，或先执行 `npx playwright install chromium`。结果与截图写入 `test-results/performance/`。回归门槛为平均至少 55 FPS、P95 不超过 22 ms；渲染目标仍为 60 Hz。浏览器交互结果另写入 `test-results/browser/`。
+`--hardware` 使用系统图形后端，报告中的 `graphicsRenderer` 记录实际驱动；用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 可指定 Chrome/Chromium 路径，或先执行 `npx playwright install chromium`。结果与截图写入 `test-results/performance/`。默认门槛为平均至少 55 FPS、P95 不超过 22 ms；渲染目标仍为 60 Hz。若软件环境连原版也无法达到该门槛，`--baseline` 在两个独立浏览器进程中比较同一驱动：新版 FPS 至少保留原版的 90%，P95 不超过原版的 125%（最低允许 22 ms），内部画布像素至少保留 95%。比较通过不表示绝对 60 FPS 目标通过。浏览器交互结果另写入 `test-results/browser/`。
 
 ## 舰内行走
 
@@ -34,3 +34,22 @@ npm run test:performance -- --baseline /path/to/baseline/dist
 三块原生 2K 仪表仅在镜头朝向显示器、且距离不超过 15 m 时刷新；接近或接管驾驶座后读取当前航行数据。暂停后的静态画面继续复用，玻璃保持由远到近的透明排序，行走碰撞和存档坐标沿用共享布局。
 
 `npx playwright test tests/station-performance.spec.ts` 在桌面和手机对六种实际舰内视角逐像素比较完整窗景与裁剪窗景，覆盖停泊区、廊道、驾驶室、近窗、第三人称和接管驾驶座，并检查远处仪表不重绘、接近后刷新。画面对照固定使用 0.5 渲染比例，以排除自适应分辨率差异；帧率仍需在玩家的实际显卡上测量。
+
+## 光影效果预算与 GPU 用时
+
+新增线性 HDR 输出与局部阴影后，旧表继续仅作为历史基线。阴影、光学采样和低分辨率辉光采用独立三档预算，见 [光影说明](LIGHTING.md)。持续超预算时先降低效果，后降低整幅画布分辨率。
+
+当前性能脚本额外记录 colorPipeline、lightingLevel、shadowSize、atmosphereSteps、cloudSteps、drawCalls、triangles，以及硬件驱动支持时每 30 帧抽样的异步 gpuFrameMs。GPU 计时扩展不可用时记录 null 与 unavailable；软件驱动禁用 GPU 查询并标记 software-disabled，避免驱动同步干扰软件测量。比较优化前后时同时核对内部画布尺寸和效果档位，不能仅用最终 FPS 判断成本。
+
+本次光影改动在当前云环境中与原版 `f7b4e728` 作相同驱动比较，六个场景均通过上述相对回归门槛。下表不是全分辨率或硬件显卡成绩；桌面原版也没有达到绝对 55 FPS / 22 ms 门槛。两个版本均开启高清，并由各自预算控制器调整内部画布。新版采样时为标准光影档位，512 阴影、6 次大气采样、4 次云体采样、无 Bloom；太空驾驶仍沿用不绘制行星大气壳的规则。
+
+| 场景 | 原版 FPS / P95 | 新版 FPS / P95 | 原版 → 新版内部画布 |
+| --- | --- | --- | --- |
+| 桌面 / 地球 | 30.4 / 33.4 ms | 30.1 / 33.4 ms | 180 × 120 → 180 × 120 |
+| 桌面 / 火星 | 31.5 / 33.4 ms | 31.3 / 33.4 ms | 180 × 120 → 180 × 120 |
+| 桌面 / 木星 | 25.0 / 50.1 ms | 24.9 / 50.1 ms | 180 × 120 → 180 × 120 |
+| 手机 / 地球 | 57.8 / 16.8 ms | 59.4 / 16.8 ms | 51 × 114 → 60 × 133 |
+| 手机 / 火星 | 59.8 / 16.8 ms | 59.6 / 16.8 ms | 61 × 136 → 61 × 136 |
+| 手机 / 木星 | 53.4 / 33.3 ms | 53.9 / 33.3 ms | 51 × 114 → 51 × 114 |
+
+性能对比使用当前依赖从原版源码构建的基线，不使用文首历史表替代。暂停后稳定画面恢复所选档位和完整画布，不重复绘制；实际显卡上的完整画质性能仍需在对应设备测量。

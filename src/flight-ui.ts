@@ -175,6 +175,7 @@ export class FlightInterface {
         return;
       if (event.code === "KeyJ") {
         event.preventDefault();
+        if (this.paused) { this.notify("航行已暂停，继续后按 J 启动跃迁"); return; }
         this.jump();
       }
       if (event.code === "KeyL") {

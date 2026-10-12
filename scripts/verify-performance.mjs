@@ -13,14 +13,17 @@ const quick = process.argv.includes('--quick');
 const roots = baselineIndex >= 0
   ? [['baseline', resolve(process.argv[baselineIndex + 1])], ['current', resolve('dist')]]
   : [['current', resolve('dist')]];
-const browser = await chromium.launch({
+const launchOptions = {
   executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined),
   args: hardware ? [] : ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-gpu-compositing'],
-});
+};
+let browser;
 const results = [];
 await mkdir('test-results/performance', { recursive: true });
 try {
   for (const [version, staticRoot] of roots) {
+    // Isolate driver caches and resource retirement between compared builds.
+    browser = await chromium.launch(launchOptions);
     const dataDir = await mkdtemp(join(tmpdir(), 'voyager-performance-'));
     const server = createVoyagerServer({ staticRoot, dataDir });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -68,6 +71,10 @@ try {
               medianMs: Math.round(samples[Math.floor(samples.length * .5)] * 10) / 10,
               p95Ms: Math.round(samples[Math.floor(samples.length * .95)] * 10) / 10,
               frames: samples.length, renderScale: canvas.dataset.renderScale ?? 'fixed',
+              colorPipeline: canvas.dataset.colorPipeline, lightingLevel: canvas.dataset.lightingLevel,
+              shadowSize: canvas.dataset.shadowSize, atmosphereSteps: canvas.dataset.atmosphereSteps, cloudSteps: canvas.dataset.cloudSteps,
+              drawCalls: Number(canvas.dataset.drawCalls), triangles: Number(canvas.dataset.triangles),
+              gpuFrameMs: canvas.dataset.gpuFrameMs ? Number(canvas.dataset.gpuFrameMs) : null, gpuTiming: canvas.dataset.gpuTiming,
               canvas: [canvas.width,canvas.height], graphicsRenderer: canvas.dataset.graphicsRenderer ?? 'not exposed by baseline',
               destination: document.querySelector('#flight-target').textContent, altitude: document.querySelector('#flight-altitude').textContent };
           });
@@ -79,15 +86,32 @@ try {
           await writeFile('test-results/performance/metrics.json', JSON.stringify({
             renderer: hardware ? 'Chromium system backend (see graphicsRenderer)' : 'Chromium SwiftShader (CPU, no hardware GPU)',
             compositor: hardware ? 'system' : 'software', results }, null, 2));
-          if (version === 'current' && (sample.fps < 55 || sample.p95Ms > 22)) throw new Error(`Frame budget exceeded: ${JSON.stringify(result)}`);
+          if (version === 'current') {
+            const reference = results.find(item => item.version === 'baseline' && item.device === device && item.target === target);
+            if (reference) {
+              assertComparison(reference, result);
+            } else if (sample.fps < 55 || sample.p95Ms > 22) {
+              throw new Error(`Frame budget exceeded: ${JSON.stringify(result)}; use a same-driver --baseline comparison when the software environment cannot meet the absolute target`);
+            }
+          }
           if (version === 'current') await page.screenshot({ path: `test-results/performance/${device}-${target}.png` });
         }
         if (errors.length) throw new Error(errors.join('\n'));
         await context.close();
       }
     } finally {
+      await browser.close();
       await new Promise(resolve => server.close(resolve));
       await rm(dataDir, { recursive: true, force: true });
     }
   }
-} finally { await browser.close(); }
+} finally { await browser?.close(); }
+
+function assertComparison(reference, current) {
+  if (reference.graphicsRenderer !== current.graphicsRenderer) throw new Error('Baseline must use the same graphics driver');
+  const baselinePixels = reference.canvas[0] * reference.canvas[1], pixels = current.canvas[0] * current.canvas[1];
+  if (pixels < baselinePixels * 0.95) throw new Error(`Sharpness regression: ${pixels} vs ${baselinePixels} pixels`);
+  if (current.fps < reference.fps * 0.90 || current.p95Ms > Math.max(22, reference.p95Ms * 1.25))
+    throw new Error(`Relative frame-budget regression: ${JSON.stringify({ reference, current })}`);
+  console.log(`PASS ${current.device}/${current.target}: same-driver FPS, P95 and canvas-pixel regression checks`);
+}
