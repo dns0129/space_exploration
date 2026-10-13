@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { terrainHeightKm } from "../shared/surface.mjs";
 import type { ShipDynamics } from "./ship-dynamics";
 import type { WalkingDynamics } from "./walking-dynamics";
 import { atmosphereCloudProfile, atmosphereScattering, atmosphereStrength } from "./atmosphere";
@@ -122,6 +121,7 @@ export class SurfaceScene {
     return !!env.body.atmosphereKm && env.altitudeKm < env.body.atmosphereKm * 4 && !ship.warping;
   }
   configureLighting(quality: LightingQuality) {
+    if (!quality.shadowsEnabled) { this.light.shadow.map?.dispose(); this.light.shadow.map = null; }
     if (this.light.shadow.mapSize.x !== quality.shadowSize) {
       this.light.shadow.map?.dispose(); this.light.shadow.map = null;
       this.light.shadow.mapSize.set(quality.shadowSize, quality.shadowSize);
@@ -213,7 +213,7 @@ export class SurfaceScene {
     this.group.position.copy(shipLocal).add(this.anchor).sub(shipRadialM);
     this.horizon!.position.set(0, 0, 0);
     this.terrainUniforms.groundCamera.value.copy(camera.position).sub(this.group.position);
-    this.updateCollisionGround(ship, walker);
+    this.updateCollisionGround(walker);
     this.terrainUniforms.groundSun.value.copy(sun);
     const barnard = env.body.systemId === "barnard";
     this.terrainUniforms.groundLightTint.value.set(0xffffff);
@@ -360,7 +360,7 @@ export class SurfaceScene {
     this.horizon.renderOrder = -15;
     this.group.add(this.horizon);
   }
-  private updateCollisionGround(ship: ShipDynamics, walker?: WalkingDynamics) {
+  private updateCollisionGround(walker?: WalkingDynamics) {
     const patch = walker?.active ? walker.terrainPatch : undefined;
     this.terrainUniforms.groundPatchExtent.value = patch?.halfExtentM ?? 0;
     if (!patch) {
@@ -400,30 +400,11 @@ export class SurfaceScene {
         (this.collisionGround.material as THREE.Material).needsUpdate = true;
       }
       const geometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(patch.vertices.length);
-      const radials = new Float32Array(patch.vertices.length);
-      const colors = new Float32Array(patch.vertices.length);
-      const environment = ship.environment;
-      const ground = new THREE.Color(environment.profile.ground);
-      const earthTint = new THREE.Color("#70834f");
-      const color = new THREE.Color();
-      const radial = new THREE.Vector3();
-      const normal: [number, number, number] = [0, 0, 0];
-      for (let i = 0; i < positions.length; i += 3) {
-        radial.fromArray(patch.vertices, i).sub(patch.centerLocalM);
-        radial.toArray(positions, i);
-        radial.add(patch.centerRadialM).normalize();
-        radial.toArray(radials, i);
-        const height = terrainHeightKm(environment.body.id, radial.toArray(normal));
-        color.copy(ground).multiplyScalar(0.72 + height * 3);
-        if (environment.body.id === "earth") color.lerp(earthTint, 0.16);
-        color.toArray(colors, i);
-      }
-      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-      geometry.setAttribute("surfaceRadial", new THREE.BufferAttribute(radials, 3));
-      geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      geometry.setAttribute("position", new THREE.BufferAttribute(patch.renderPositions, 3));
+      geometry.setAttribute("surfaceRadial", new THREE.BufferAttribute(patch.renderRadials, 3));
+      geometry.setAttribute("color", new THREE.BufferAttribute(patch.renderColors, 3));
+      geometry.setAttribute("normal", new THREE.BufferAttribute(patch.renderNormals, 3));
       geometry.setIndex(new THREE.BufferAttribute(patch.indices, 1));
-      geometry.computeVertexNormals();
       this.collisionGround.geometry = geometry;
       this.collisionRevision = patch.revision;
       this.collisionPatch = patch;

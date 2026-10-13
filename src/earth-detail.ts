@@ -39,7 +39,7 @@ export class EarthDetail {
   private checkAt = 0;
 
   constructor(
-    private readonly fallback: THREE.Texture,
+    private fallback: THREE.Texture,
     private readonly load: (file: string) => Promise<THREE.Texture>,
     private readonly release: (texture: THREE.Texture) => void,
     private readonly upload: (texture: THREE.Texture) => void,
@@ -116,5 +116,11 @@ export class EarthDetail {
       this.canvas.dataset.earthDetailTiles = "0";
     }
   }
+  setFallback(texture: THREE.Texture) {
+    this.clear(false);
+    this.fallback = texture;
+    for (let i = 0; i < 4; i++) this.uniforms[`detailTile${i}`].value = texture;
+  }
+  clearTiles() { this.clear(); }
   dispose() { this.disposed = true; this.clear(false); }
 }

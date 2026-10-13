@@ -14,6 +14,8 @@ test("徒步镜头使用真实三角地形处理山脊遮挡，并在重定位�
     const { SurfaceScene } = await import("/src/surface-scene.ts");
     const { sampleSurface, surfaceRadiusM } = await import("/shared/spatial-frame.mjs");
     const { validateFlightState } = await import("/shared/flight-state.mjs");
+    const { prepareTerrainFields } = await import('/shared/terrain-fields.mjs');
+    await prepareTerrainFields(['earth','naiad']);
     await initializeWalkingPhysics();
     const results = [];
     for (const fixture of [

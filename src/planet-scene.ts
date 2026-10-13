@@ -10,7 +10,8 @@ import { bodySystem, systemConfig } from "../shared/world-navigation.mjs";
 import { ShipDynamics, emptyInput } from "./ship-dynamics";
 import { FlightControls } from "./flight-controls";
 import { WalkingDynamics } from "./walking-dynamics";
-import { initializeWalkingPhysics } from "./walking-physics";
+import { initializeWalkingPhysics, walkingPhysicsReady } from "./walking-physics";
+import { prepareTerrainFields } from "../shared/terrain-fields.mjs";
 import { SpatialScale } from "../shared/spatial-frame.mjs";
 import { ExplorerView } from "./explorer-view";
 import { createStationModel } from "./orbital-structures";
@@ -38,6 +39,10 @@ import type { FlightState, WorldConfig } from "../shared/flight-state.mjs";
 import { RenderBudget } from "./render-budget";
 import { EarthDetail, earthDetailSampling } from "./earth-detail";
 import type { RenderQuality } from "./earth-detail";
+import { GRAPHICS_EVENT, FrameLimiter, readGraphics, writeGraphics, graphicsPreset, textureWidth, textureBudgetBytes } from "./graphics-settings";
+import type { GraphicsSettings } from "./graphics-settings";
+import lowTextureManifest from "../shared/texture-variants.json";
+const lowTextureSources = new Set(lowTextureManifest);
 import { FlightRenderPolicy } from "./render-mode";
 import type { FlightRenderMode } from "./render-mode";
 import { surfaceMapRotation } from "./surface-map-pose";
@@ -280,7 +285,7 @@ export class SolarScene {
   private readonly planet = new THREE.Group();
   private readonly galaxySky: GalaxySky;
   private readonly surfaceGalaxySky: GalaxySky;
-  private readonly galaxyFile: GalaxyTextureFile;
+  private galaxyFile: GalaxyTextureFile;
   private currentModel?: PlanetModel;
   private readonly flightRoot = new THREE.Group();
   private asteroidBelt?: THREE.Group;
@@ -309,7 +314,6 @@ export class SolarScene {
   private backgroundSystem: SystemId = "solar";
   private starsEnabled = true;
   private spacePromise?: Promise<void>;
-  private readonly planetMaps = new Map<BodyId, THREE.Texture>();
   /** Moon, star and exoplanet maps load on approach and are released when unused, keyed by file. */
   private readonly lazyMaps = new Map<string, { texture?: THREE.Texture; loading?: Promise<void>; failedAt?: number; used: number }>();
   private readonly mapFades = new Set<PlanetModel>();
@@ -326,7 +330,85 @@ export class SolarScene {
   private readonly tinySphere = new THREE.SphereGeometry(1, 16, 12);
   private readonly largeSphere = new THREE.SphereGeometry(1, 128, 80);
   private readonly renderBudget = new RenderBudget();
-  private quality: RenderQuality = this.compactTextures ? "high" : "ultra";
+  private graphics = readGraphics();
+  private quality: RenderQuality = this.graphics.baseQuality;
+  private readonly frameLimiter = new FrameLimiter();
+  private textureRevision = 0;
+  private textureReloading = false;
+  private readonly releaseGraphicsInput = () => this.flightControls?.clear();
+  private readonly graphicsChanged = (event: Event) => {
+    const next = (event as CustomEvent<GraphicsSettings>).detail;
+    const previous = this.graphics;
+    this.graphics = next; this.quality = next.baseQuality;
+    this.surfaceAnisotropy = Math.min(next.anisotropy, this.renderer.capabilities.getMaxAnisotropy());
+    this.frameLimiter.reset(); this.lastTime = 0;
+    this.galaxySky.setDetailed(next.textures !== 'low' && !this.compactTextures
+      && this.renderer.domElement.dataset.softwareRenderer !== 'true');
+    for (const texture of this.textures) {
+      const maximum = texture === this.galaxy ? 4 : this.surfaceAnisotropy;
+      if (texture.anisotropy !== maximum) { texture.anisotropy = maximum; texture.needsUpdate = true; }
+    }
+    this.configureRenderBudget();
+    this.renderer.domElement.dataset.maxFps = String(next.maxFps);
+    this.renderer.domElement.dataset.graphicsPreset = next.preset;
+    this.renderer.domElement.dataset.textureQuality = next.textures;
+    if (next.textures !== previous.textures) void this.reloadTextureQuality();
+    else this.releaseSurfaceMaps();
+  };
+  private reflectionStrength() {
+    return [0, 0.25, 0.6, 0.8][lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel, this.graphics).reflectionLevel];
+  }
+  private async reloadTextureQuality() {
+    const revision = ++this.textureRevision;
+    this.textureReloading = true;
+    this.resumeSpaceWork();
+    this.renderer.domElement.dataset.textureLoading = 'true';
+    this.earthDetails.forEach(detail => detail.clearTiles());
+    if (this.earthHighMaps) {
+      for (const [model, detail] of this.earthDetails) { detail.setFallback(this.earthMaps![0]); this.applyEarthMaps(model, this.earthMaps!); }
+      this.earthHighMaps.forEach(texture => this.releaseEarthMap(texture)); this.earthHighMaps = undefined;
+    }
+    this.earthUpgraded = false; this.earthUpgradeAt = 0;
+    for (const model of this.allModels()) if (model.mapUniforms) setSurfaceMap(model, null, 0);
+    for (const entry of this.lazyMaps.values()) if (entry.texture) this.releaseEarthMap(entry.texture);
+    this.lazyMaps.clear(); this.mapFades.clear(); this.pendingSurfaceMaps.clear();
+    this.surfaceMapBody = null;
+    const loaded: THREE.Texture[] = [];
+    try {
+      const galaxyFile = this.chooseGalaxyFile();
+      const galaxy = await this.loadTexture(galaxyFile, false); loaded.push(galaxy);
+      let earth: THREE.Texture[] | undefined;
+      if (this.earthMaps) {
+        const results = await Promise.allSettled(['earth-day.jpg','earth-night.jpg','earth-terrain-4k.png','earth-clouds-4k.jpg']
+          .map(async file => { const map = await this.loadEarthMap(file, file !== 'earth-day.jpg'); loaded.push(map); return map; }));
+        if (results.some(result => result.status === 'rejected')) throw new Error('基础贴图加载失败');
+        earth = results.map(result => (result as PromiseFulfilledResult<THREE.Texture>).value);
+      }
+      if (this.destroyed || revision !== this.textureRevision) { loaded.forEach(map => this.releaseEarthMap(map)); return; }
+      const oldGalaxy = this.galaxy;
+      this.galaxy = galaxy; this.galaxyFile = galaxyFile; this.textures.add(galaxy);
+      for (const system of STAR_SYSTEMS) this.backgrounds.set(system.id as SystemId, galaxy);
+      this.galaxySky.setTexture(galaxy); this.surfaceGalaxySky.setTexture(galaxy);
+      if (oldGalaxy) this.releaseEarthMap(oldGalaxy);
+      if (earth) {
+        const old = this.earthMaps!; this.earthMaps = earth;
+        for (const [model, detail] of this.earthDetails) { detail.setFallback(earth[0]); this.applyEarthMaps(model, earth); }
+        old.forEach(map => this.releaseEarthMap(map));
+        this.renderer.domElement.dataset.earthMaps = earth[0].image.width >= 4096 ? '4k' : '2k';
+      }
+      this.surfaceMapBody = null;
+      if (this.currentModel) this.touchSurfaceMap(this.currentModel.body.id);
+      if (this.dynamics) this.touchSurfaceMap(this.dynamics.target);
+      this.useSystemBackground(this.backgroundSystem);
+      this.flightFrameDirty = true;
+      this.renderer.domElement.dataset.textureError = 'false';
+    } catch {
+      loaded.forEach(map => this.releaseEarthMap(map));
+      if (revision === this.textureRevision) this.renderer.domElement.dataset.textureError = 'true';
+    } finally {
+      if (revision === this.textureRevision) { this.textureReloading = false; this.renderer.domElement.dataset.textureLoading = 'false'; }
+    }
+  }
   private minimumRenderRatio = 0.5;
   /** Sharp oblique detail on GPUs; software rasterizers keep the cheaper 4x filtering. */
   private surfaceAnisotropy = 4;
@@ -398,7 +480,7 @@ export class SolarScene {
     // MSAA smooths planet limbs and atmosphere edges; software rasterizers skip it to stay responsive.
     this.renderer = new THREE.WebGLRenderer({
       logarithmicDepthBuffer: true,
-      antialias: !SolarScene.softwareRendering(),
+      antialias: false,
       alpha: false,
       powerPreference: "high-performance",
     });
@@ -423,12 +505,12 @@ export class SolarScene {
     const graphicsRenderer = debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) : "unavailable";
     const software = /swiftshader|llvmpipe|software/i.test(graphicsRenderer);
     this.renderer.domElement.dataset.graphicsRenderer = graphicsRenderer;
-    if (software) { this.minimumRenderRatio = 0.125; this.quality = "high"; }
-    else this.surfaceAnisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    if (software) this.minimumRenderRatio = 0.125;
+    this.surfaceAnisotropy = Math.min(this.graphics.anisotropy, this.renderer.capabilities.getMaxAnisotropy());
     this.renderer.domElement.dataset.softwareRenderer = String(software);
     this.galaxySky = new GalaxySky(this.compactTextures || software);
     this.surfaceGalaxySky = new GalaxySky(true);
-    this.galaxyFile = selectGalaxyFile(this.renderer.capabilities.maxTextureSize, this.compactTextures, software);
+    this.galaxyFile = this.chooseGalaxyFile();
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.shipSun.castShadow = true;
@@ -498,6 +580,8 @@ export class SolarScene {
     this.resizeObserver = new ResizeObserver(this.resize);
     this.resizeObserver.observe(container);
     document.addEventListener("visibilitychange", this.visibilityHandler);
+    window.addEventListener(GRAPHICS_EVENT, this.graphicsChanged);
+    window.addEventListener('voyager-graphics-open', this.releaseGraphicsInput);
     this.resize();
   }
 
@@ -506,7 +590,7 @@ export class SolarScene {
     group.traverse(object => {
       if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) {
         object.material.envMap = this.starshipReflection!.texture;
-        object.material.envMapIntensity = 0.8;
+        object.material.envMapIntensity = this.reflectionStrength();
         object.material.needsUpdate = true;
       }
     });
@@ -518,6 +602,7 @@ export class SolarScene {
   ): Promise<boolean> {
     this.leaveFlight();
     const version = ++this.selectionVersion;
+    await prepareTerrainFields([id]);
     await this.loadSpaceTextures();
     const maps =
       id === "earth" ? await this.loadEarthTextures(onProgress) : undefined;
@@ -529,7 +614,7 @@ export class SolarScene {
       model =
         id === "earth"
           ? this.createEarthModel(maps!)
-          : createPlanetModel(getBody(id), this.sunDirection, undefined, this.planetMaps.get(id) ?? lazyMap ?? undefined);
+          : createPlanetModel(getBody(id), this.sunDirection, undefined, lazyMap ?? undefined);
       if (model.body.kind === "station") this.finishStarshipHull(model.group);
       this.models.set(id, model);
     } else if (lazyMap && model.mapUniforms?.detailMap.value !== lazyMap) setSurfaceMap(model, lazyMap, 1);
@@ -568,49 +653,29 @@ export class SolarScene {
     }
   }
 
+  private chooseGalaxyFile() {
+    return selectGalaxyFile(Math.min(this.renderer.capabilities.maxTextureSize, textureWidth(this.graphics, this.compactTextures)),
+      this.compactTextures, this.renderer.domElement.dataset.softwareRenderer === "true");
+  }
+  private textureFile(file: string) {
+    const maximum = Math.min(this.renderer.capabilities.maxTextureSize, textureWidth(this.graphics, this.compactTextures));
+    const map = Object.values(SURFACE_MAPS).find(map => map?.file === file);
+    if (map?.compactFile && maximum < map.width) file = map.compactFile;
+    if (maximum <= 2048 && lowTextureSources.has(file)) file = `low/${file}`;
+    return file;
+  }
   private loadSpaceTextures(): Promise<void> {
     if (this.galaxy) return Promise.resolve();
     if (this.spacePromise) return this.spacePromise;
-    const ids = (Object.keys(SURFACE_MAPS) as BodyId[]).filter(id => SURFACE_MAPS[id]!.core);
-    const skyFiles = [this.galaxyFile];
-    const files = [...skyFiles, ...ids.map((id) => SURFACE_MAPS[id]!.file)];
-    const batch: THREE.Texture[] = [];
-    let failed = false;
-    this.spacePromise = Promise.all(files.map(async (file, index) => {
-      const texture = await this.loadTexture(file, index >= skyFiles.length);
-      if (this.destroyed || failed) { texture.dispose(); throw new Error("场景已关闭或贴图加载失败"); }
-      batch.push(texture);
-      return texture;
-    })).then((maps) => {
-      maps.forEach((map) => this.textures.add(map));
-      for (const system of STAR_SYSTEMS) {
-        const texture = maps[0];
-        this.backgrounds.set(system.id as SystemId, texture);
-      }
-      this.galaxy = this.backgrounds.get("solar");
-      this.useSystemBackground("solar");
-      // Both render modes reuse the resident panorama; entering a planet never requests or rebuilds it.
-      this.surfaceGalaxySky.setTexture(this.galaxy ?? null);
-      ids.forEach((id, i) => this.planetMaps.set(id, maps[i + skyFiles.length]));
-    }).catch((error) => {
-      failed = true;
-      batch.forEach((texture) => texture.dispose());
-      throw error;
+    this.spacePromise = this.loadTexture(this.galaxyFile, false).then(texture => {
+      if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
+      this.textures.add(texture);
+      for (const system of STAR_SYSTEMS) this.backgrounds.set(system.id as SystemId, texture);
+      this.galaxy = texture;
+      this.useSystemBackground(this.backgroundSystem);
+      this.surfaceGalaxySky.setTexture(texture);
     }).finally(() => { this.spacePromise = undefined; });
     return this.spacePromise;
-  }
-
-  private static softwareRendering() {
-    try {
-      const gl = document.createElement("canvas").getContext("webgl2");
-      if (!gl) return false;
-      const debug = gl.getExtension("WEBGL_debug_renderer_info");
-      const name = debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) : "";
-      gl.getExtension("WEBGL_lose_context")?.loseContext();
-      return /swiftshader|llvmpipe|software/i.test(name);
-    } catch {
-      return false;
-    }
   }
 
   /** Decoded before upload so large maps don't stall a frame; surface maps wrap in longitude. */
@@ -619,6 +684,8 @@ export class SolarScene {
     if (surfaceMap?.compactFile && (this.compactTextures || this.renderer.capabilities.maxTextureSize < surfaceMap.width)) {
       file = surfaceMap.compactFile;
     }
+    const originalFile = file;
+    file = this.textureFile(file);
     const loader = new THREE.TextureLoader();
     let texture: THREE.Texture;
     try {
@@ -628,7 +695,7 @@ export class SolarScene {
       // Optional native 8K imagery can fail without replacing the complete 4K surface with noise.
       await this.waitForSpaceWork(file);
       if (this.destroyed) throw error;
-      file = surfaceMap.compactFile;
+      file = this.textureFile(surfaceMap.compactFile);
       texture = await loader.loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
     }
     await this.waitForSpaceWork(file);
@@ -638,7 +705,7 @@ export class SolarScene {
     await this.waitForSpaceWork(file);
     if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
     const maximumWidth = Math.min(this.renderer.capabilities.maxTextureSize,
-      surface && this.compactTextures && !surfaceMap?.compactFile ? 2048 : Infinity);
+      textureWidth(this.graphics, this.compactTextures));
     if (image.width > maximumWidth) {
       // Respect GPU limits; ordinary compact surfaces keep their existing low-memory 2K copies.
       const canvas = document.createElement("canvas");
@@ -650,7 +717,7 @@ export class SolarScene {
       texture.image = canvas;
     }
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.name = file;
+    texture.name = originalFile;
     texture.anisotropy = surface ? this.surfaceAnisotropy : Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
     if (surface) texture.wrapS = THREE.RepeatWrapping;
     texture.needsUpdate = true;
@@ -661,7 +728,7 @@ export class SolarScene {
   private async waitForSpaceWork(file?: string) {
     while (!this.destroyed && this.flying && !this.inStation && this.renderPolicy.mode === "surface") {
       const map = SURFACE_MAPS[this.dynamics!.environment.body.id];
-      if (file && (file === map?.file || file === map?.compactFile)) return;
+      if (this.textureReloading || (file && (file === map?.file || file === map?.compactFile))) return;
       await new Promise<void>(resolve => this.spaceWorkWaiters.add(resolve));
     }
   }
@@ -673,14 +740,14 @@ export class SolarScene {
 
   private isLazyMap(id: BodyId) {
     const surfaceMap = SURFACE_MAPS[id];
-    return !!surfaceMap && !surfaceMap.core;
+    return !!surfaceMap;
   }
 
   /** Marks a body's map as in use and starts loading it if it isn't resident. */
   private touchSurfaceMap(id: BodyId) {
     if (this.flying && this.renderPolicy.mode === "surface" && id !== this.dynamics!.environment.body.id) return;
     const surfaceMap = SURFACE_MAPS[id];
-    if (!surfaceMap || surfaceMap.core) return;
+    if (!surfaceMap) return;
     const now = performance.now();
     const file = surfaceMap.file;
     let entry = this.lazyMaps.get(file);
@@ -716,11 +783,14 @@ export class SolarScene {
         }
     }
     this.pendingSurfaceMaps.clear();
+    this.surfaceMapBody = null;
     this.releaseSurfaceMaps();
   }
 
   private async loadSurfaceMap(id: BodyId): Promise<THREE.Texture | null> {
     if (!this.isLazyMap(id)) return null;
+    const previous = this.lazyMaps.get(SURFACE_MAPS[id]!.file);
+    if (previous) previous.failedAt = undefined;
     this.touchSurfaceMap(id);
     const entry = this.lazyMaps.get(SURFACE_MAPS[id]!.file);
     await entry?.loading;
@@ -732,23 +802,31 @@ export class SolarScene {
   }
 
   /** Keeps GPU memory bounded: the least recently seen maps return to their procedural fallback. */
+  private textureBytes(texture: THREE.Texture) {
+    const image = texture.image;
+    return (image?.width ?? 1) * (image?.height ?? 1) * (texture.format === THREE.RedFormat ? 1 : 4)
+      * (texture.generateMipmaps ? 4 / 3 : 1);
+  }
   private releaseSurfaceMaps() {
-    const limit = this.compactTextures ? 3 : 6;
-    const now = performance.now();
-    const resident = [...this.lazyMaps].filter(([, entry]) => entry.texture).sort((a, b) => a[1].used - b[1].used);
+    const now = performance.now(), budget = textureBudgetBytes(this.graphics, this.compactTextures);
+    let used = [...this.textures].reduce((sum, texture) => sum + this.textureBytes(texture), 0);
+    const active = this.flying ? this.dynamics?.environment.body.id : this.currentModel?.body.id;
+    const pinned = new Set([SURFACE_MAPS[active!]?.file, SURFACE_MAPS[this.dynamics?.target!]?.file]);
+    const resident = [...this.lazyMaps].filter(([, entry]) => entry.texture).sort((a,b) => a[1].used - b[1].used);
     for (const [file, entry] of resident) {
-      if (resident.filter(([, item]) => item.texture).length <= limit || now - entry.used < 8000) break;
-      for (const model of this.allModels())
-        if (model.surfaceMap?.file === file) {
-          setSurfaceMap(model, null, 0);
-          this.mapFades.delete(model);
-          if (!this.flying && model === this.currentModel) this.publishSurfaceResolution(model);
-        }
-      this.textures.delete(entry.texture!);
-      entry.texture!.dispose();
-      entry.texture = undefined;
-      this.lazyMaps.delete(file);
+      if (pinned.has(file) || (used <= budget && now - entry.used < 60000)) continue;
+      for (const model of this.allModels()) if (model.surfaceMap?.file === file) {
+        setSurfaceMap(model, null, 0); this.mapFades.delete(model);
+      }
+      used -= this.textureBytes(entry.texture!);
+      this.releaseEarthMap(entry.texture!); entry.texture = undefined;
+      // Avoid repeatedly reloading a small visible body when the byte budget is full.
+      entry.failedAt = now;
     }
+    const canvas = this.renderer.domElement;
+    canvas.dataset.textureMemoryMiB = (used / 1048576).toFixed(1);
+    canvas.dataset.textureBudgetMiB = (budget / 1048576).toFixed(0);
+    canvas.dataset.textureCacheCount = String([...this.lazyMaps.values()].filter(entry => entry.texture).length);
   }
 
   private updateSurfaceMaps(delta: number, time: number) {
@@ -769,6 +847,7 @@ export class SolarScene {
   private useSystemBackground(id: SystemId) {
     const system = STAR_SYSTEMS.find(item => item.id === id)!;
     const texture = this.backgrounds.get(id) ?? null;
+    if (!texture) return;
     const sky = this.flying && this.renderPolicy.mode === "surface" ? this.surfaceGalaxySky : this.galaxySky;
     if (sky.mesh.material.uniforms.skyMap.value !== texture) {
       sky.setTexture(texture);
@@ -787,9 +866,9 @@ export class SolarScene {
     this.renderer.domElement.dataset.backgroundVariant = variant;
     this.backgroundSystem = id;
     if (this.renderer.domElement.dataset.system !== id) this.renderer.domElement.dataset.system = id;
-    if (this.renderer.domElement.dataset.background !== this.galaxyFile) {
+    if (this.renderer.domElement.dataset.background !== this.galaxyFile || this.renderer.domElement.dataset.backgroundResolution !== `${texture.image.width}x${texture.image.height}`) {
       this.renderer.domElement.dataset.background = this.galaxyFile;
-      this.renderer.domElement.dataset.backgroundResolution = this.galaxyFile.includes("8k") ? "8192x4096" : "4096x2048";
+      this.renderer.domElement.dataset.backgroundResolution = `${texture.image.width}x${texture.image.height}`;
       this.renderer.domElement.dataset.backgroundSampling = "direct-equirectangular";
     }
   }
@@ -841,6 +920,7 @@ export class SolarScene {
   }
 
   private async loadEarthMap(file: string, monochrome = false): Promise<THREE.Texture> {
+    file = this.textureFile(file);
     let texture = await new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}textures/${file}`);
     await this.waitForSpaceWork(file);
     if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
@@ -848,27 +928,35 @@ export class SolarScene {
     await image.decode?.().catch(() => undefined);
     await this.waitForSpaceWork(file);
     if (this.destroyed) { texture.dispose(); throw new Error("场景已关闭"); }
+    const width = Math.min(image.width, this.renderer.capabilities.maxTextureSize, textureWidth(this.graphics, this.compactTextures));
+    const height = Math.max(1, Math.round(image.height * width / image.width));
     if (monochrome) {
       // One-byte density/elevation/radiance maps use one quarter of RGBA texture memory.
       const canvas = document.createElement("canvas");
-      canvas.width = image.width;
-      canvas.height = image.height;
+      canvas.width = width;
+      canvas.height = height;
       const context = canvas.getContext("2d", { willReadFrequently: true })!;
-      context.drawImage(image, 0, 0);
-      const rgba = context.getImageData(0, 0, image.width, image.height).data;
-      const data = new Uint8Array(image.width * image.height);
+      context.drawImage(image, 0, 0, width, height);
+      const rgba = context.getImageData(0, 0, width, height).data;
+      const data = new Uint8Array(width * height);
       // Typed-array uploads are bottom-up, unlike the source image's north-to-south rows.
-      for (let y = 0; y < image.height; y++) {
-        const source = (image.height - 1 - y) * image.width * 4;
-        for (let x = 0; x < image.width; x++) data[y * image.width + x] = rgba[source + x * 4];
+      for (let y = 0; y < height; y++) {
+        const source = (height - 1 - y) * width * 4;
+        for (let x = 0; x < width; x++) data[y * width + x] = rgba[source + x * 4];
       }
       texture.dispose();
       canvas.width = canvas.height = 1;
-      texture = new THREE.DataTexture(data, image.width, image.height, THREE.RedFormat);
+      texture = new THREE.DataTexture(data, width, height, THREE.RedFormat);
       texture.generateMipmaps = true;
       texture.minFilter = THREE.LinearMipmapLinearFilter;
       texture.magFilter = THREE.LinearFilter;
-    } else texture.colorSpace = THREE.SRGBColorSpace;
+    } else {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      if (width < image.width) {
+        const reduced = document.createElement("canvas"); reduced.width = width; reduced.height = height;
+        reduced.getContext("2d")!.drawImage(image, 0, 0, width, height); texture.image = reduced;
+      }
+    }
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
     texture.anisotropy = this.surfaceAnisotropy;
@@ -880,18 +968,19 @@ export class SolarScene {
   private updateEarthDetail(delta: number, time: number) {
     const model = this.flying ? this.flightModels.find(model => model.body.id === "earth") : this.models.get("earth");
     const active = !!model && (this.flying ? model.group.visible && this.dynamics?.systemId === "solar" : this.currentModel === model);
-    const capable = !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 8192
-      && (this.renderer.domElement.dataset.softwareRenderer !== "true" || this.quality === "ultra");
+    const capable = textureWidth(this.graphics, this.compactTextures) >= 8192 && !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 8192
+      && (this.renderer.domElement.dataset.softwareRenderer !== "true" || this.graphics.textures === "ultra");
     for (const [earth, detail] of this.earthDetails) {
       const blend = detail.uniforms.detailBlend.value as THREE.Vector4;
       const { x, y, z, w } = blend;
       const current = earth === model && active;
       detail.update(current ? earth.surface : undefined, this.camera,
-        current && capable && this.earthUpgraded && this.quality === "ultra", delta, time);
+        current && capable && this.earthUpgraded && this.graphics.textures === "ultra", delta, time);
       // A paused view still redraws resident detail as it arrives and fades in.
       if (blend.x !== x || blend.y !== y || blend.z !== z || blend.w !== w) this.flightFrameDirty = true;
     }
-    if (!active || !capable || this.quality === "standard" || this.earthUpgraded || this.earthUpgrade || time < this.earthUpgradeAt) return;
+    if (!active || !capable || this.textureReloading || this.earthUpgraded || this.earthUpgrade || time < this.earthUpgradeAt) return;
+    const revision = this.textureRevision;
     const batch: THREE.Texture[] = [];
     this.earthUpgrade = (async () => {
       // Stagger decoding and uploads; one large map at a time avoids a burst of frame stalls.
@@ -901,18 +990,18 @@ export class SolarScene {
         const texture = await this.loadEarthMap(file, file !== "earth-day-8k.jpg");
         batch.push(texture);
         await this.waitForSpaceWork(file);
-        if (this.destroyed) throw new Error("场景已关闭");
+        if (this.destroyed || revision !== this.textureRevision) throw new Error("贴图设置已变化");
         this.renderBudget.hold(1.5);
         this.renderer.initTexture(texture);
       }
-      if (this.destroyed) throw new Error("场景已关闭");
+      if (this.destroyed || revision !== this.textureRevision) throw new Error("贴图设置已变化");
       this.earthHighMaps = batch;
       for (const earth of this.earthDetails.keys()) this.applyEarthMaps(earth, batch);
       this.earthUpgraded = true;
       this.renderer.domElement.dataset.earthMaps = "8k";
     })().catch(() => {
       batch.forEach(texture => this.releaseEarthMap(texture));
-      this.earthUpgradeAt = performance.now() + 30_000;
+      if (revision === this.textureRevision) this.earthUpgradeAt = performance.now() + 30_000;
     }).finally(() => { this.earthUpgrade = undefined; });
   }
 
@@ -1004,7 +1093,7 @@ export class SolarScene {
     );
     atmosphere.renderOrder = 2;
     group.add(surface, clouds, atmosphere);
-    this.renderer.domElement.dataset.earthMaps = this.earthHighMaps ? "8k" : "4k";
+    this.renderer.domElement.dataset.earthMaps = maps[0].image.width >= 8192 ? '8k' : maps[0].image.width >= 4096 ? '4k' : '2k';
     this.renderer.domElement.dataset.earthMesh = `${geometry.parameters.widthSegments}x${geometry.parameters.heightSegments}`;
     const model: PlanetModel = {
       body: EARTH,
@@ -1043,15 +1132,23 @@ export class SolarScene {
   };
 
   private configureRenderBudget() {
-    this.renderBudget.configure(this.quality, window.devicePixelRatio, this.flightWidth, this.flightHeight, this.minimumRenderRatio);
+    this.renderBudget.configure(this.quality, window.devicePixelRatio, this.flightWidth, this.flightHeight, this.minimumRenderRatio, this.graphics);
     this.applyRenderBudget();
   }
   private applyRenderBudget() {
     this.renderer.setPixelRatio(this.renderBudget.ratio);
     this.flightFrameDirty = true;
     this.renderer.domElement.dataset.renderScale = this.renderBudget.ratio.toFixed(2);
-    const quality = lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel);
-    this.hdr.configure(quality, this.minimumRenderRatio < 0.5);
+    this.renderer.domElement.dataset.maxFps = String(this.graphics.maxFps);
+    this.renderer.domElement.dataset.graphicsPreset = this.graphics.preset;
+    this.renderer.domElement.dataset.textureQuality = this.graphics.textures;
+    const quality = lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel, this.graphics);
+    this.hdr.configure(quality, this.minimumRenderRatio < 0.5, this.graphics.antialias);
+    this.renderer.shadowMap.enabled = quality.shadowsEnabled;
+    if (!quality.shadowsEnabled) { this.shipSun.shadow.map?.dispose(); this.shipSun.shadow.map = null; }
+    for (const model of this.allModels()) model.group.traverse(object => {
+      if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) object.material.envMapIntensity = this.reflectionStrength();
+    });
     this.surfaceScene.configureLighting(quality);
     this.stationInterior?.configureLighting(quality);
     if (this.shipSun.shadow.mapSize.x !== quality.shadowSize) {
@@ -1063,6 +1160,8 @@ export class SolarScene {
     this.renderer.domElement.dataset.shadowSize = String(quality.shadowSize);
     this.renderer.domElement.dataset.atmosphereSteps = String(quality.atmosphereSteps);
     this.renderer.domElement.dataset.cloudSteps = String(quality.cloudSteps);
+    this.renderer.domElement.dataset.reflections = String(quality.reflectionLevel);
+    this.renderer.domElement.dataset.shadowsEnabled = String(quality.shadowsEnabled);
   }
 
   /** Chase smoothing can approach its final pose indefinitely; subpixel changes need no new paused frame. */
@@ -1082,7 +1181,7 @@ export class SolarScene {
   }
 
   private configureModelLighting(model: PlanetModel) {
-    const quality = lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel);
+    const quality = lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel, this.graphics);
     model.group.traverse(object => {
       if (!(object instanceof THREE.Mesh) || !(object.material instanceof THREE.ShaderMaterial)
         || !object.material.fragmentShader.includes("scatterAtmosphere")) return;
@@ -1202,7 +1301,7 @@ export class SolarScene {
         shadowCamera.updateProjectionMatrix();
       }
       if (this.starshipHull?.visible) for (const material of this.starshipHullMaterials)
-        material.envMapIntensity = 0.8 * this.flightLight.illumination;
+        material.envMapIntensity = this.reflectionStrength() * this.flightLight.illumination;
       // Sky bounce only grows near an atmosphere; vacuum keeps directional contrast.
       const atmosphereBounce = this.surfaceScene.usesAtmosphere(this.dynamics!) ? 1 : 0;
       this.shipRim.position.copy(this.shipSun.position).multiplyScalar(-1);
@@ -1300,6 +1399,7 @@ export class SolarScene {
     if (this.destroyed) return;
     this.frame = requestAnimationFrame(this.animate);
     if (this.hidden) return;
+    if (!this.frameLimiter.accepts(time, this.graphics.maxFps, !!this.photoCapture || this.flightFrameDirty)) return;
     const frameSeconds = this.lastTime ? Math.max(0, (time - this.lastTime) / 1000) : 0;
     const delta = Math.min(frameSeconds, 0.25);
     this.lastTime = time;
@@ -1386,7 +1486,9 @@ export class SolarScene {
     placement?: SurfacePlacement,
   ): Promise<boolean> {
     const version = ++this.selectionVersion;
-    await initializeWalkingPhysics();
+    const system = getBody(id).systemId ?? 'solar';
+    await prepareTerrainFields(config.bodies.filter(body => bodySystem(body) === system).map(body => body.id));
+    if (placement?.kind === "person") await initializeWalkingPhysics();
     if (this.destroyed || version !== this.selectionVersion) return false;
     const dynamics = new ShipDynamics(config);
     const walker = new WalkingDynamics(config);
@@ -1475,7 +1577,7 @@ export class SolarScene {
         : createPlanetModel(getBody(body.id), light, {
             center,
             radius: body.radius,
-          }, this.planetMaps.get(body.id) ?? this.lazyMaps.get(SURFACE_MAPS[body.id]?.file ?? "")?.texture);
+          }, this.lazyMaps.get(SURFACE_MAPS[body.id]?.file ?? "")?.texture);
     if (body.kind === "station") this.finishStarshipHull(model.group);
     const solarAngularRadius = Math.asin(Math.min(1, host.radius / center.distanceTo(new THREE.Vector3().fromArray(host.position))));
     const spheres: THREE.Mesh[] = [];
@@ -1558,6 +1660,8 @@ export class SolarScene {
     return walking ? { ...state, walking: { ...walking, camera: this.explorerCamera } } : state;
   }
   restoreFlight(state: unknown) {
+    const candidate = validateFlightState(state);
+    if (candidate?.walking && !walkingPhysicsReady()) return false;
     const restored = this.dynamics?.restore(state) ?? false;
     if (restored) {
       this.bridgeEarthShot = false;
@@ -1583,6 +1687,10 @@ export class SolarScene {
     }
     return restored;
   }
+  async prepareBridgeEarthShot() {
+    const config = this.dynamics?.config ?? world;
+    await prepareTerrainFields(config.bodies.filter(body => bodySystem(body) === 'solar').map(body => body.id));
+  }
   showBridgeEarthShot(): string | null {
     if (!this.dynamics) return "请等待航行准备完成";
     if (!this.restoreFlight(bridgeEarthState(this.dynamics.config))) return "驾驶室镜头未能准备完成";
@@ -1604,24 +1712,17 @@ export class SolarScene {
     this.flightFrameDirty = true;
     if (this.walking) this.updateFlightCamera(1);
   }
-  walkFlight(): string | null {
+  async prepareFlightRestore(state: FlightState) {
+    await prepareTerrainFields(world.bodies.filter(body => bodySystem(body) === (state.systemId ?? 'solar')).map(body => body.id));
+    if (state.walking) await initializeWalkingPhysics();
+  }
+  async walkFlight(): Promise<string | null> {
     if (!this.dynamics || !this.walker) return "飞船尚未就绪";
-    if (this.aboardStarship) {
-      if (this.flightPaused) return "请先继续航行或探索";
-      if (this.dynamics.warping) return "请等待跃迁结束，再离开驾驶座";
-      if (this.pilotingStarship) {
-        this.stationInterior!.releaseHelm();
-        this.dynamics.angularVelocity.set(0, 0, 0);
-      } else {
-        if (!this.helmAvailable) return "请沿引导线走到驾驶室前窗的驾驶台，落地后在 3 米内按 E 接管星舰";
-        this.stationInterior!.takeHelm();
-        this.dynamics.camera = "cockpit";
-      }
-      this.flightControls?.setWalking(this.walking);
-      this.flightControls?.clear();
-      this.flightFrameDirty = true;
-      this.updateFlightCamera(1);
-      return null;
+    if (this.aboardStarship) return this.switchStarshipHelm();
+    if (!this.walking && this.dynamics.landingPhase === "landed") {
+      const dynamics = this.dynamics, walker = this.walker;
+      await initializeWalkingPhysics();
+      if (this.dynamics !== dynamics || this.walker !== walker || !this.flying) return "航行状态已变化，请重新离舱";
     }
     const error = this.walking ? this.walker.board(this.dynamics) : this.walker.disembark(this.dynamics);
     if (!error) {
@@ -1634,6 +1735,23 @@ export class SolarScene {
       this.updateFlightCamera(1);
     }
     return error;
+  }
+  private switchStarshipHelm(): string | null {
+      if (this.flightPaused) return "请先继续航行或探索";
+      if (this.dynamics!.warping) return "请等待跃迁结束，再离开驾驶座";
+      if (this.pilotingStarship) {
+        this.stationInterior!.releaseHelm();
+        this.dynamics!.angularVelocity.set(0, 0, 0);
+      } else {
+        if (!this.helmAvailable) return "请沿引导线走到驾驶室前窗的驾驶台，落地后在 3 米内按 E 接管星舰";
+        this.stationInterior!.takeHelm();
+        this.dynamics!.camera = "cockpit";
+      }
+      this.flightControls?.setWalking(this.walking);
+      this.flightControls?.clear();
+      this.flightFrameDirty = true;
+      this.updateFlightCamera(1);
+      return null;
   }
   setDestination(id: BodyId) {
     if (this.walking) return;
@@ -1649,9 +1767,15 @@ export class SolarScene {
     if (this.flying && this.dynamics) this.updateFlightCamera(1);
     this.flightControls?.clear();
   }
-  jumpFlight(): string | null {
+  async jumpFlight(): Promise<string | null> {
     if (!this.dynamics) return "飞船尚未就绪";
     if (this.walking) return "请先返回飞船，再启动跃迁";
+    const dynamics = this.dynamics, target = dynamics.target;
+    const destination = dynamics.config.bodies.find(body => body.id === target)!;
+    try {
+      await prepareTerrainFields(dynamics.config.bodies.filter(body => bodySystem(body) === bodySystem(destination)).map(body => body.id));
+    } catch { return '目的地地形加载失败，请检查连接后重试跃迁'; }
+    if (!this.flying || this.dynamics !== dynamics || dynamics.target !== target) return '导航目标已变化，请重新启动跃迁';
     const error = this.dynamics.startWarp();
     if (!error) this.flightFrameDirty = true;
     this.flightControls?.clear();
@@ -1670,7 +1794,7 @@ export class SolarScene {
     return this.dynamics?.setLowFlightSpeed(mps) ?? (this.dynamics ? null : "飞船尚未就绪");
   }
   landFlight(): string | null {
-    if (this.inStation) return this.walkFlight();
+    if (this.inStation) return this.switchStarshipHelm();
     if (this.walking) return "请先返回飞船，再起飞";
     if (!this.dynamics) return "飞船尚未就绪";
     if (!this.aboardStarship && this.dynamics.target === "earth-station" && this.dynamics.landingPhase === "manual") return this.dockStation();
@@ -1832,7 +1956,7 @@ export class SolarScene {
       { group: pose.group, surface: pose.clouds }) : rotation;
     const earth = this.earthHighMaps ?? this.earthMaps;
     const texture = bodyId === "earth" ? earth?.[0]
-      : this.planetMaps.get(bodyId) ?? this.lazyMaps.get(SURFACE_MAPS[bodyId]?.file ?? "")?.texture;
+      : this.lazyMaps.get(SURFACE_MAPS[bodyId]?.file ?? "")?.texture;
     this.surfaceScene.setHorizonMap(bodyId, texture ?? null, rotation,
       bodyId === "earth" ? earth?.[3] ?? null : null, cloudRotation,
       new THREE.Vector3(...(map?.tint ?? [1, 1, 1])));
@@ -1865,7 +1989,7 @@ export class SolarScene {
       this.updateStellarSources(ship);
       this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
       this.flightLight.update(ship, this.camera, this.flightSun, this.aboardStarship ? "earth-station" : undefined);
-      interior.configureLighting(lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel));
+      interior.configureLighting(lightingQuality(this.quality, this.compactTextures, this.renderBudget.effectLevel, this.graphics));
       interior.updateLighting(this.stellarSamples, this.stationSpaceRotation,
         ship.systemId === "solar" ? this.earthshine.sample(ship.config, ship.position) : undefined);
       this.useSystemBackground(ship.systemId);
@@ -2018,6 +2142,7 @@ export class SolarScene {
     this.renderer.domElement.dataset.localOrigin = JSON.stringify(localFrame!.originUniverse);
     this.renderer.domElement.dataset.localPositionM = JSON.stringify((this.walking ? this.walker!.localPositionM : ship.localPositionM).toArray());
     this.renderer.domElement.dataset.physicsEngine = this.walking ? "rapier" : "flight";
+    this.renderer.domElement.dataset.terrainWorker = this.walker?.terrainWorkerState ?? "idle";
     this.renderer.domElement.dataset.exploration = this.pilotingStarship ? "starship" : this.walking ? "walking" : "ship";
     this.renderer.domElement.setAttribute("aria-label", this.walking
       ? "地表探索：WASD 行走，Shift 奔跑，空格跳跃，方向键或拖动看向，E 返回飞船"
@@ -2174,10 +2299,7 @@ export class SolarScene {
   }
   setQuality(quality: RenderQuality) {
     if (quality === this.quality) return;
-    this.quality = quality;
-    this.galaxySky.setDetailed(quality !== "standard" && !this.compactTextures
-      && this.renderer.domElement.dataset.softwareRenderer !== "true");
-    this.configureRenderBudget();
+    writeGraphics(graphicsPreset(quality));
   }
   getQuality(): RenderQuality { return this.quality; }
   /** Preserve the selected visible map feature as observation surfaces rotate. */
@@ -2252,6 +2374,8 @@ export class SolarScene {
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
     document.removeEventListener("visibilitychange", this.visibilityHandler);
+    window.removeEventListener(GRAPHICS_EVENT, this.graphicsChanged);
+    window.removeEventListener("voyager-graphics-open", this.releaseGraphicsInput);
     this.renderer.domElement.removeEventListener(
       "webglcontextlost",
       this.contextLost,

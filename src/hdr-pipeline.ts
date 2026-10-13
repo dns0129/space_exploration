@@ -40,9 +40,13 @@ export class HdrPipeline {
         #include <colorspace_fragment>
       }` });
   private quality?: LightingQuality;
+  private readonly availableSamples: number[];
 
   constructor(private readonly renderer: THREE.WebGLRenderer) {
     this.supported = renderer.extensions.has("EXT_color_buffer_float");
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    this.availableSamples = renderer.domElement.dataset.softwareRenderer === 'true' ? [0]
+      : Array.from(gl.getInternalformatParameter(gl.RENDERBUFFER, this.supported ? gl.RGBA16F : gl.RGBA8, gl.SAMPLES) as Int32Array);
     const options = { type: this.supported ? THREE.HalfFloatType : THREE.UnsignedByteType,
       minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false };
     this.target = new THREE.WebGLRenderTarget(1, 1, options);
@@ -55,10 +59,12 @@ export class HdrPipeline {
     this.scene.add(this.quad);
     renderer.domElement.dataset.colorPipeline = this.supported ? "linear-hdr" : "linear-ldr";
   }
-  configure(quality: LightingQuality, software: boolean) {
+  configure(quality: LightingQuality, software: boolean, antialias = 4) {
     this.quality = quality;
     // Multisampling stays on real GPUs. Software rasterizers need the cheaper target.
-    this.target.samples = software ? 0 : 4;
+    const samples = software ? 0 : Math.max(0, ...this.availableSamples.filter(value => value <= antialias));
+    if (this.target.samples !== samples) { this.target.dispose(); this.target.samples = samples; }
+    this.renderer.domElement.dataset.antialias = String(samples);
     this.resize();
   }
   setBridgeLook(active: boolean, photograph = false) {
@@ -69,7 +75,7 @@ export class HdrPipeline {
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     const width = Math.max(1, size.x), height = Math.max(1, size.y);
     this.target.setSize(width, height);
-    const scale = this.quality?.bloomScale ?? 0.25;
+    const scale = this.supported && (this.quality?.bloomStrength ?? 0) > 0 ? this.quality!.bloomScale : 0;
     this.bloomA.setSize(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
     this.bloomB.setSize(this.bloomA.width, this.bloomA.height);
   }

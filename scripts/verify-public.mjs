@@ -17,9 +17,9 @@ async function get(path, json = false) {
   assert.equal(response.status, 200, `${path} must return public HTTP 200`);
   return json ? response.json() : response.text();
 }
-async function verifyDownload(download) {
+async function verifyDownload(download, filename = "voyager-warp.zip") {
   assert.equal(download?.revision, expected, "Offline download must come from the deployed source revision");
-  assert.equal(download.url, root.pathname + "downloads/voyager-warp.zip", "Offline download must use the public site path");
+  assert.equal(download.url, root.pathname + "downloads/" + filename, "Offline download must use the public site path");
   assert(Number.isSafeInteger(download.size) && download.size > 0, "Offline download must declare its exact byte size");
   assert.match(download.sha256, /^[a-f0-9]{64}$/, "Offline download must publish its SHA-256");
   const head = await request(download.url, { method: "HEAD", headers: { "Accept-Encoding": "identity" } });
@@ -50,7 +50,7 @@ async function verifyDownload(download) {
     await reader.cancel();
   }
   assert.deepEqual([...signature], [0x50, 0x4b, 0x03, 0x04], "Public offline download must contain a real ZIP header");
-  evidence.download = { ...download, rangeStatus: response.status, signature: "504b0304" };
+  evidence[filename === "voyager-warp.zip" ? "download" : "directoryDownload"] = { ...download, rangeStatus: response.status, signature: "504b0304" };
 }
 await mkdir("test-results/public", { recursive: true });
 try {
@@ -81,6 +81,7 @@ try {
     assert(revisionEmbedded, `Public ${name} JavaScript must embed the exact build revision`);
   }
   await verifyDownload(evidence.version.download);
+  await verifyDownload(evidence.version.directoryDownload, "voyager-directory.zip");
   evidence.checkedAt = new Date().toISOString();
   console.log(`PASS public home/game/assets/download HTTP 200; ZIP size and signature match; version.json revision ${expected}`);
 } finally {

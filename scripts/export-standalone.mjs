@@ -1,8 +1,9 @@
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { deflateRawSync } from "node:zlib";
+import { archive } from "./archive.mjs";
 import { build } from "vite";
+import { runtimeTerrain } from "./runtime-terrain.mjs";
 
 const project = fileURLToPath(new URL("../", import.meta.url));
 const filename = "voyager-warp.html";
@@ -35,7 +36,7 @@ const rasterDefinitions = (() => {
 // remain in use; retired AI detail and the replaced panorama are omitted.
 const retiredTextures = new Set(["surface-material-atlas.jpg", "earth-terrain-8k.png", "centauri-milky-way-4k.jpg"]);
 const textures = {};
-for (const file of (await readdir(join(project, "public/textures"))).filter((file) => /\.(jpg|png)$/.test(file) && !retiredTextures.has(file)).sort()) {
+for (const file of (await readdir(join(project, "public/textures"), { recursive: true })).filter((file) => /\.(jpg|png)$/.test(file) && !retiredTextures.has(file)).sort()) {
   const bytes = await readFile(join(project, "public/textures", file));
   const type = file.endsWith(".png") ? "image/png" : "image/jpeg";
   textures[file] = `data:${type};base64,${bytes.toString("base64")}`;
@@ -46,6 +47,7 @@ const result = await build({
   root: project,
   base: "./",
   publicDir: false,
+  worker: { plugins: () => [runtimeTerrain({ emit: false })] },
   plugins: [
     {
       name: "standalone-local-textures",
@@ -159,54 +161,6 @@ const windowsStart =
   '@echo off\r\nchcp 65001 >nul\r\ncd /d "%~dp0"\r\nwhere node >nul 2>nul\r\nif errorlevel 1 (echo 请先安装 Node.js 24 LTS & pause & exit /b 1)\r\necho 浏览器打开 http://127.0.0.1:3000/\r\nnode server/server.mjs --standalone\r\npause\r\n';
 const unixStart =
   '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\necho "Open http://127.0.0.1:3000/ after the server starts."\nexec node server/server.mjs --standalone\n';
-
-// ZIP records keep export portable without Python or an archiver.
-function crc32(bytes) {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++)
-      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-function archive(entries) {
-  const files = [],
-    directory = [];
-  let offset = 0;
-  for (const [name, content] of entries) {
-    const path = Buffer.from(name);
-    const bytes = Buffer.from(content);
-    const compressed = deflateRawSync(bytes, { level: 9 });
-    const crc = crc32(bytes);
-    const header = Buffer.alloc(30);
-    header.writeUInt32LE(0x04034b50, 0);
-    header.writeUInt16LE(20, 4);
-    header.writeUInt16LE(0x800, 6); // UTF-8 filenames.
-    header.writeUInt16LE(8, 8);
-    header.writeUInt16LE(0x5d42, 12); // 2026-10-02, deterministic export date.
-    header.writeUInt32LE(crc, 14);
-    header.writeUInt32LE(compressed.length, 18);
-    header.writeUInt32LE(bytes.length, 22);
-    header.writeUInt16LE(path.length, 26);
-    files.push(header, path, compressed);
-    const central = Buffer.alloc(46);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);
-    header.copy(central, 6, 4, 28);
-    central.writeUInt32LE(offset, 42);
-    directory.push(central, path);
-    offset += header.length + path.length + compressed.length;
-  }
-  const index = Buffer.concat(directory);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(index.length, 12);
-  end.writeUInt32LE(offset, 16);
-  return Buffer.concat([...files, index, end]);
-}
 
 await mkdir(join(project, "dist-standalone"), { recursive: true });
 await writeFile(join(project, "dist-standalone", filename), html);

@@ -52,6 +52,7 @@ export class WalkingDynamics {
     return this.radialM.length() - this.groundRadiusM(this.outward);
   }
   get suitAssisted() { return this.active && this.gravity < SUIT_MIN_FALL_ACCELERATION_MPS2; }
+  get terrainWorkerState() { return this.physics?.terrainWorkerState ?? 'idle'; }
   get terrainPatch(): WalkingTerrainPatch | undefined { return this.physics?.terrainPatch; }
   get collisionCount() { return this.physics?.collisionCount ?? 0; }
   get collisionGroundClearanceM() { return this.physics?.groundDistanceM(this.localPositionM, this.outward) ?? 0; }

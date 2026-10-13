@@ -50,7 +50,7 @@ export class FlightInterface {
       "beforeend",
       `<section id="flight-ui" class="flight-ui" aria-label="飞船驾驶台" hidden>
   <div class="flight-title"><span class="eyebrow">REAL SCALE / 星际航行</span><h2>VOYAGER <b>01</b></h2><span id="flight-system" class="flight-system">当前位置 · 太阳系</span><span id="flight-status">手动驾驶 · 引擎待命</span></div>
-  <div class="flight-toolbar"><button id="starship-helm" hidden>接管星舰（E）</button><button id="flight-camera" aria-pressed="false">切换外部视角 <kbd>C</kbd></button><button id="flight-assist" aria-pressed="true">驾驶辅助：开</button><button id="flight-pause" aria-pressed="false">暂停航行</button><button id="flight-save">保存航行</button><button id="flight-resume" disabled>恢复存档</button><select id="flight-quality" aria-label="航行画质"><option value="ultra">超清</option><option value="high">高清</option><option value="standard">标准</option></select></div>
+  <div class="flight-toolbar"><button data-open-graphics>画质设置</button><button id="starship-helm" hidden>接管星舰（E）</button><button id="flight-camera" aria-pressed="false">切换外部视角 <kbd>C</kbd></button><button id="flight-assist" aria-pressed="true">驾驶辅助：开</button><button id="flight-pause" aria-pressed="false">暂停航行</button><button id="flight-save">保存航行</button><button id="flight-resume" disabled>恢复存档</button><select id="flight-quality" aria-label="航行画质"><option value="ultra">超清</option><option value="high">高清</option><option value="standard">标准</option></select></div>
   <aside class="flight-navigation"><details id="flight-navigation" open><summary id="flight-navigation-summary" aria-label="展开或收起导航目标"><span><small id="flight-target-label">导航目标</small><b id="flight-target">地球</b></span><small id="flight-distance-summary">— km</small></summary><section class="flight-navigation-body"><p><strong id="flight-distance">—</strong><small id="flight-distance-unit"> km</small></p><small id="flight-distance-au"></small><div class="flight-navigation-actions"><button id="flight-align">对准目标</button><button id="flight-jump">跃迁 <kbd>J</kbd></button></div></section></details><button id="flight-land">自动着陆（L）</button></aside>
   <aside id="flight-propulsion" class="flight-propulsion" data-mode="space" data-band="cruise" aria-label="引擎航速"><label for="flight-engine-slider" class="flight-propulsion-reading"><strong id="flight-engine-band">巡航档</strong><span><small>目标</small> <output id="flight-target-speed">100</output><small id="flight-target-speed-unit"> km/s</small></span></label><input id="flight-engine-slider" type="range" min="0" max="500" step="0.1" value="100" aria-label="目标航速"><div id="flight-engine-bands" class="flight-engine-bands" aria-label="航速档位">${PROPULSION_BANDS.map(band => `<button type="button" data-engine-band="${band.id}" title="${band.name} · ${band.minKm.toLocaleString("zh-CN")}–${band.maxKm.toLocaleString("zh-CN")} km/s">${({ maneuver: "1–<wbr>100", cruise: "100–<wbr>1千", transfer: "1千–<wbr>1万", planetary: "1–<wbr>5万", interstellar: "5–<wbr>15万" })[band.id]}</button>`).join("")}</div><small id="flight-engine-hint">W 推进 · 空格刹车</small></aside>
   <aside class="warp-engine" id="warp-engine" data-phase="ready" aria-label="跃迁引擎"><span class="eyebrow">HYPERDRIVE / 跃迁引擎</span><strong id="warp-label">引擎就绪</strong><div class="warp-track"><i id="warp-progress"></i></div><small id="warp-hint">选择目的地，按 J 蓄能启航</small><button id="warp-cancel" hidden>中止跃迁</button></aside>
@@ -79,7 +79,13 @@ export class FlightInterface {
     };
     $("#flight-pause").onclick = () => this.pause(!this.paused);
     $("#flight-save").onclick = () => void this.save(false);
-    $("#flight-resume").onclick = () => {
+    $("#flight-resume").onclick = async () => {
+      const generation = this.generation, scene = this.scene, saved = this.saved;
+      if (saved && scene) {
+        try { await scene.prepareFlightRestore(saved); }
+        catch { this.notify("徒步系统加载失败，请重试恢复存档"); return; }
+      }
+      if (generation !== this.generation || scene !== this.scene || saved !== this.saved) return;
       if (this.saved && this.scene?.restoreFlight(this.saved)) {
         this.shotPreview = false;
         this.shotReturn = undefined;
@@ -174,7 +180,7 @@ export class FlightInterface {
         event.altKey ||
         document.querySelector("dialog[open]") ||
         (event.target instanceof Element &&
-          event.target.closest("input,select,textarea"))
+          event.target.closest("input,select,textarea,dialog"))
       )
         return;
       if (event.code === "KeyJ") {
@@ -290,9 +296,16 @@ export class FlightInterface {
     this.scene?.setDestination(id);
     this.sync();
   }
-  private jump() {
+  private jumping = false;
+  private async jump() {
     if (this.scene?.walking) { this.notify("人物正在舱外探索，请先返回飞船再启动跃迁"); return; }
-    const error = this.scene?.jumpFlight();
+    if (this.jumping) return;
+    const generation = this.generation;
+    this.jumping = true;
+    let error: string | null | undefined;
+    try { error = await this.scene?.jumpFlight(); }
+    finally { this.jumping = false; }
+    if (generation !== this.generation) return;
     if (error) { this.notify(error); return; }
     this.pause(false);
     this.notify("跃迁引擎开始蓄能，可随时暂停或中止");
@@ -311,12 +324,20 @@ export class FlightInterface {
     this.notify(previous === "landed" ? "起飞辅助启动，正在离开地表" : previous === "manual"
       ? "自动着陆启动，刹车或手动操纵可中止" : "已中止自动航行，恢复手动驾驶");
   }
-  private explore() {
+  private exploring = false;
+  private async explore() {
     if (!this.active || !this.scene) return;
+    if (this.exploring) return;
     if (this.paused) { this.notify("请先继续航行或探索，再离舱或返回飞船"); return; }
     const returning = this.scene.walking;
     const stationReturn = this.scene.aboardStarship;
-    const error = this.scene.walkFlight();
+    const generation = this.generation, scene = this.scene;
+    this.exploring = true;
+    let error: string | null;
+    try { error = await scene.walkFlight(); }
+    catch { error = "徒步系统加载失败，请重试离舱"; }
+    finally { this.exploring = false; }
+    if (generation !== this.generation || scene !== this.scene) return;
     if (error) { this.notify(error); return; }
     this.sync();
     this.notify(stationReturn ? this.scene.pilotingStarship ? "已接管星舰 · W/S 推力，方向键转向，R/F 升降，Q/E 翻滚，C 外部视角，X 离开驾驶座" : "已离开驾驶座 · 可在舰内自由走动，星舰继续由驾驶辅助控制" : returning ? "已返回飞船，按 L 起飞" : "已离开飞船 · WASD 行走，空格跳跃，Shift 奔跑；靠近飞船按 E 返回");

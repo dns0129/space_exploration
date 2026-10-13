@@ -105,8 +105,9 @@ try {
       console.log("Offline Earth: embedded 8K maps and native 16K tiles rendered without network requests");
     }
     if (id === "mars" || id === "moon") {
+      await page.locator('#quality').selectOption('ultra');
       await expect(page.locator("canvas")).toHaveAttribute("data-surface-map", `${id}-real-8k.jpg`);
-      await expect(page.locator("canvas")).toHaveAttribute("data-surface-resolution", "8192x4096");
+      await expect(page.locator("canvas")).toHaveAttribute("data-surface-resolution", "8192x4096", { timeout: 60000 });
       console.log(`Offline ${id}: native 8K imagery loaded without network requests`);
     }
     // Late in the full offline tour, software WebGL may need more than the
@@ -119,6 +120,7 @@ try {
     }
     assert(surface > 6000, `${id}: rendered surface is missing`);
     console.log(`Offline ${id}: ${surface} rendered surface pixels`);
+    if (id === "mars" || id === "moon") await page.locator("#quality").selectOption("standard");
   }
   await page.locator(".brand").click();
   await page.waitForFunction(

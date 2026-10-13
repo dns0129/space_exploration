@@ -2,6 +2,7 @@ import type { RenderQuality } from "./earth-detail";
 import "./style.css";
 import { watchSiteVersion } from "./site-version";
 import { FlightInterface } from "./flight-ui";
+import { GraphicsControls } from "./graphics-controls";
 import { PanelLayout } from "./panel-layout";
 import { SolarScene } from "./planet-scene";
 import { surfaceMapLabel } from "./body-textures";
@@ -43,7 +44,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <header class="header">
       <a class="brand" href="${publicSite ? `${import.meta.env.BASE_URL}index.html` : "#planet=earth"}" aria-label="${publicSite ? "星际探索首页" : "远航首页"}">${icon("orbit")}<span>${publicSite ? "星际探索" : "远航"} <b>VOYAGER</b></span></a>
       <nav class="main-nav" aria-label="主导航"><button id="mode-observe" class="nav-active" aria-pressed="true">行星观测</button><button id="mode-flight" class="scene-control" aria-pressed="false" disabled>自由航行</button></nav>
-      <div class="header-tools"><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button scene-control" id="bridge-earth-shot" aria-label="地球舷窗镜头" title="地球舷窗镜头 · Enter 保存照片 · P/Esc 或双击退出" disabled>${icon("window")}</button><button class="icon-button scene-control" id="photo-mode" aria-label="摄影模式" aria-pressed="false" title="摄影模式（P）· Enter 保存照片 · Esc 或双击画面退出" disabled>${icon("camera")}</button><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
+      <div class="header-tools"><button class="icon-button scene-control" data-open-graphics aria-label="画质设置" title="画质设置" disabled>${icon("settings")}</button><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button scene-control" id="bridge-earth-shot" aria-label="地球舷窗镜头" title="地球舷窗镜头 · Enter 保存照片 · P/Esc 或双击退出" disabled>${icon("window")}</button><button class="icon-button scene-control" id="photo-mode" aria-label="摄影模式" aria-pressed="false" title="摄影模式（P）· Enter 保存照片 · Esc 或双击画面退出" disabled>${icon("camera")}</button><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
     </header>
 
     <nav class="planet-rail" aria-label="太阳系天体">
@@ -152,6 +153,7 @@ const flight = new FlightInterface(toast, (active, target) => {
   updatePlacementControls();
 });
 panelLayout = new PanelLayout();
+new GraphicsControls();
 
 function updatePlacementControls() {
   const solid = surfaceProfile(state.body).solid;
@@ -546,13 +548,17 @@ $("#mobile-settings").addEventListener("click", () => {
   panelLayout?.toggleSettings();
 });
 $("#photo-mode").addEventListener("click", () => setPhotoMode(!state.photoMode));
-$("#bridge-earth-shot").addEventListener("click", () => {
+$("#bridge-earth-shot").addEventListener("click", async () => {
   if (!state.ready || !scene) return;
   if (!flight.active) {
     bridgeShotPending = true;
     $<HTMLButtonElement>("#mode-flight").click();
     return;
   }
+  const activeScene = scene, version = requestVersion;
+  try { await activeScene.prepareBridgeEarthShot(); }
+  catch { toast('地球镜头资源加载失败，请检查连接后重试'); return; }
+  if (scene !== activeScene || requestVersion !== version || !flight.active) return;
   const error = flight.showBridgeEarthShot();
   if (error) toast(error);
   else setPhotoMode(true);

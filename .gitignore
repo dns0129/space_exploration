@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-site/
 dist-standalone/
+dist-directory/
 test-results/
 playwright-report/
 .vite/

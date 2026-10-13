@@ -1,5 +1,15 @@
 import { world, validateFlightState } from "../shared/flight-state.mjs";
 import type { WorldConfig, FlightState } from "../shared/flight-state.mjs";
+import { prepareTerrainFields } from "../shared/terrain-fields.mjs";
+
+async function prepareSavedTerrain(value: unknown) {
+  if (!value || typeof value !== "object") return;
+  const state = value as Partial<FlightState>;
+  const ids = [state.landedBody, state.walking?.bodyId, state.referenceFrame?.kind === 'body-fixed' ? state.referenceFrame.bodyId : undefined]
+    .filter((id): id is NonNullable<typeof id> => typeof id === "string" && world.bodies.some(body => body.id === id));
+  await prepareTerrainFields(ids);
+}
+
 const key = "voyager-flight-v1";
 const pendingKey = "voyager-flight-pending-sync";
 
@@ -54,7 +64,9 @@ export class FlightStore {
     try {
       const local = localStorage.getItem(key);
       if (local && localStorage.getItem(pendingKey) === local) {
-        const state = validateFlightState(JSON.parse(local));
+        const value = JSON.parse(local);
+        await prepareSavedTerrain(value);
+        const state = validateFlightState(value);
         if (state) return state;
       }
     } catch { /* Storage may be unavailable; retain the server path. */ }
@@ -64,21 +76,23 @@ export class FlightStore {
           "/api/flight/save", 2500,
           (response) => response.ok ? response.json() : null,
         );
+        await prepareSavedTerrain(saved?.state);
         const state = validateFlightState(saved?.state);
         if (state) return state;
       } catch {
         this.online = false;
       }
     try {
-      return validateFlightState(
-        JSON.parse(localStorage.getItem(key) ?? "null"),
-      );
+      const value = JSON.parse(localStorage.getItem(key) ?? "null");
+      await prepareSavedTerrain(value);
+      return validateFlightState(value);
     } catch {
       return null;
     }
   }
   async save(state: FlightState): Promise<"server" | "local"> {
     if (!navigator.onLine) this.online = false;
+    await prepareSavedTerrain(state);
     const safe = validateFlightState(state);
     if (!safe) throw new Error("Invalid flight state");
     let local = false;

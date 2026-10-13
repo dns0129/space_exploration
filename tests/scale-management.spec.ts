@@ -12,6 +12,8 @@ test("米制地面网格、人物和相机在远处卫星与重定位后共用�
     const { initializeWalkingPhysics } = await import("/src/walking-physics.ts");
     const { SurfaceScene } = await import("/src/surface-scene.ts");
     const { ExplorerView } = await import("/src/explorer-view.ts");
+    const { prepareTerrainFields } = await import('/shared/terrain-fields.mjs');
+    await prepareTerrainFields(['earth','nereid']);
     await initializeWalkingPhysics();
     const checks = [];
     for (const id of ["earth", "nereid", "echo-thalassa"] as const) {
@@ -33,6 +35,8 @@ test("米制地面网格、人物和相机在远处卫星与重定位后共用�
       const renderer = new THREE.WebGLRenderer({ preserveDrawingBuffer: true });
       renderer.setSize(64, 64);
       const visibleScene = new THREE.Scene(); visibleScene.add(ground.group, ground.sky);
+      // This checks geometry underfoot independently of the very dim stellar light at Neptune.
+      visibleScene.add(new THREE.AmbientLight(0xffffff, 1));
       const texture = new THREE.DataTexture(new Uint8Array([0, 255, 0, 255]), 1, 1);
       texture.needsUpdate = true;
       ground.setHorizonMap(id, texture, new THREE.Matrix3());
@@ -86,7 +90,7 @@ test("米制地面网格、人物和相机在远处卫星与重定位后共用�
           maxVertexError = Math.max(maxVertexError, visible.distanceTo(physics));
         }
       }
-      checks.push({ id, groundVisible, rebases, cameraDiscontinuity, maxVertexError, restoredVertexError,
+      checks.push({ id, pixel: [...pixel], groundVisible, rebases, cameraDiscontinuity, maxVertexError, restoredVertexError,
         outwardWinding: new THREE.Vector3().fromArray(walker.terrainPatch!.vertices, walker.terrainPatch!.indices[1] * 3)
           .sub(new THREE.Vector3().fromArray(walker.terrainPatch!.vertices, walker.terrainPatch!.indices[0] * 3))
           .cross(new THREE.Vector3().fromArray(walker.terrainPatch!.vertices, walker.terrainPatch!.indices[2] * 3)
@@ -99,7 +103,7 @@ test("米制地面网格、人物和相机在远处卫星与重定位后共用�
     return checks;
   });
   for (const check of result) {
-    expect(check.groundVisible, "actual ground must draw beneath the feet").toBe(true);
+    expect(check.groundVisible, `actual ground must draw beneath ${check.id}: ${check.pixel}; vertex error ${check.maxVertexError}`).toBe(true);
     expect(check.maxVertexError, check.id).toBeLessThan(0.0001);
     expect(check.restoredVertexError, `restored mesh ${check.id}`).toBeLessThan(0.0001);
     expect(check.cameraDiscontinuity, check.id).toBeLessThan(0.5);

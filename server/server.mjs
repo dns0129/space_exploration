@@ -1,5 +1,8 @@
 import { createServer } from "node:http";
-import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
+import { readFile, mkdir, writeFile, rename, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { createGzip } from "node:zlib";
+import { pipeline } from "node:stream/promises";
 import { resolve, sep, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -14,6 +17,7 @@ const mime = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".ico": "image/x-icon",
+  ".zip": "application/zip",
 };
 const sessionPattern =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -145,23 +149,38 @@ export function createVoyagerServer({
       );
       if (!path.startsWith(resolve(staticRoot) + sep))
         return json(res, 403, { error: "Path outside game directory" });
-      let bytes;
+      let info;
       try {
-        bytes = await readFile(path);
+        info = await stat(path);
+        if (!info.isFile()) throw Object.assign(new Error('Not a file'), { code: 'EISDIR' });
       } catch (error) {
         if (error.code !== "ENOENT" && error.code !== "EISDIR") throw error;
         if (!extname(pathname) && req.headers.accept?.includes("text/html")) {
           path = resolve(staticRoot, indexFile);
-          bytes = await readFile(path);
+          info = await stat(path);
         } else return json(res, 404, { error: "File not found" });
       }
-      res.writeHead(200, {
+      const compressed = info.size <= 16 * 1024 * 1024 && /\.(html|js|css|json)$/.test(path)
+        && (req.headers['accept-encoding'] ?? '').split(',').some(part => {
+          const [encoding, parameter] = part.trim().split(';');
+          return encoding === 'gzip' && (!parameter || Number(parameter.trim().replace(/^q=/, '')) > 0);
+        });
+      const etag = `W/"${info.size.toString(16)}-${Math.trunc(info.mtimeMs).toString(16)}${compressed ? '-gz' : ''}"`;
+      const headers = {
         "Content-Type": mime[extname(path)] ?? "application/octet-stream",
         "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "no-cache",
-      });
-      res.end(req.method === "HEAD" ? undefined : bytes);
+        "Cache-Control": /\/(assets|terrain)\//.test(pathname) ? 'public, max-age=31536000, immutable' : 'no-cache',
+        "ETag": etag,
+        "Vary": 'Accept-Encoding',
+        ...(compressed ? { 'Content-Encoding': 'gzip' } : { 'Content-Length': info.size }),
+      };
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return; }
+      res.writeHead(200, headers);
+      if (req.method === 'HEAD') { res.end(); return; }
+      if (compressed) await pipeline(createReadStream(path), createGzip(), res);
+      else await pipeline(createReadStream(path), res);
     } catch (error) {
+      if (["ERR_STREAM_PREMATURE_CLOSE", "ECONNRESET"].includes(error.code)) return;
       console.error("Voyager server request failed:", error.message);
       if (!res.headersSent)
         json(res, 500, { error: "Server could not complete request" });
@@ -174,8 +193,9 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const standalone = process.argv.includes("--standalone");
+  const directory = process.argv.includes('--directory');
   const server = createVoyagerServer({
-    staticRoot: standalone ? project : resolve(project, "dist"),
+    staticRoot: directory ? resolve(project, 'game') : standalone ? project : resolve(project, "dist"),
     indexFile: standalone ? "voyager-warp.html" : "index.html",
     serveOnlyIndex: standalone,
     dataDir: process.env.VOYAGER_DATA_DIR ?? resolve(project, "data"),

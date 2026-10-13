@@ -11,6 +11,8 @@ test("底图加载后的实际地表材质接收方向投影，光线变化移�
     const { ShipDynamics } = await import("/src/ship-dynamics.ts");
     const { world } = await import("/shared/flight-state.mjs");
     const { terrainHeightKm, LANDING_CLEARANCE_KM } = await import("/shared/surface.mjs");
+    const { prepareTerrainFields } = await import('/shared/terrain-fields.mjs');
+    await prepareTerrainFields(['moon']);
     const { HdrPipeline } = await import("/src/hdr-pipeline.ts");
     const { lightingQuality } = await import("/src/lighting-quality.ts");
     const body = world.bodies.find((body: any) => body.id === "moon")!;

@@ -40,6 +40,7 @@ export class StationInterior {
   private readonly consoleFill = new THREE.RectAreaLight(0x8fc3cf, 18, 4.2, 0.55);
   private finishDetail = { value: 1 };
   private effectLevel = 1;
+  private reflectionLevel = 2;
   private roomLights: { id: string; light: THREE.RectAreaLight }[] = [];
   private lightingRoom = "";
   private instruments?: StarshipInstruments;
@@ -118,8 +119,14 @@ export class StationInterior {
   }
   configureLighting(quality: LightingQuality) {
     this.effectLevel = quality.level;
+    if (this.reflectionLevel !== quality.reflectionLevel) {
+      this.scene.environment = null;
+      this.probes.forEach(probe => probe.dispose()); this.probes.clear();
+      this.lightingRoom = ""; this.reflectionLevel = quality.reflectionLevel;
+    }
     this.finishDetail.value = Number(quality.level > 0);
     for (const light of [this.sunlight, this.lampShadow]) {
+      if (!quality.shadowsEnabled) { light.shadow.map?.dispose(); light.shadow.map = null; }
       if (light.shadow.mapSize.x === quality.shadowSize) continue;
       light.shadow.map?.dispose(); light.shadow.map = null;
       light.shadow.mapSize.set(quality.shadowSize, quality.shadowSize);
@@ -154,7 +161,7 @@ export class StationInterior {
     this.lampShadow.target.position.set(this.lampShadow.position.x, 0, this.lampShadow.position.z);
     this.lampShadow.shadow.needsUpdate = this.lampShadow.shadow.map === null
       || room.id !== this.lightingRoom || this.cameraView === "third";
-    if (room.id !== this.lightingRoom) {
+    if (this.reflectionLevel > 0 && room.id !== this.lightingRoom) {
       // Capture actual architecture and lamps once per visited room; never bake
       // moving celestial sunlight or recursively reflect an existing probe.
       let probe = this.probes.get(room.id);
@@ -174,7 +181,7 @@ export class StationInterior {
           this.consoleFill.visible = room.id === "control";
           this.finishDetail.value = 0;
           this.roomLights.forEach(({ light }) => { light.visible = true; });
-          probe = generator.fromScene(this.scene, 0.04, 0.05, 150, { size: 64,
+          probe = generator.fromScene(this.scene, 0.04, 0.05, 150, { size: this.reflectionLevel === 3 ? 128 : this.reflectionLevel === 2 ? 64 : 32,
             position: new THREE.Vector3(this.lampShadow.position.x, 1.8, this.lampShadow.position.z) });
           this.probes.set(room.id, probe);
         } finally {
@@ -189,6 +196,9 @@ export class StationInterior {
       this.scene.environment = probe.texture;
       this.lightingRoom = room.id;
       this.renderer.domElement.dataset.interiorProbe = room.id;
+    }
+    if (this.reflectionLevel === 0) {
+      this.scene.environment = null; this.renderer.domElement.dataset.interiorProbe = "off";
     }
     // Only the current room and its connecting corridor contribute local lamps.
     for (const { id, light } of this.roomLights) light.visible = id === room.id || id === "corridor";

@@ -152,6 +152,8 @@ try {
     for (let i = 0; i < shot.data.length; i += 4)
       if (shot.data[i] + shot.data[i + 1] + shot.data[i + 2] > 240) pixels++;
     assert(pixels > 5000, "Online game must render actual planetary pixels");
+    // Native fidelity is an explicit setting; the default high preset now uses 4K.
+    await page.locator('#quality').selectOption('ultra');
     for (const id of ["mars", "moon"]) {
       if (id === "mars") await page.locator('button[data-body="mars"]').click();
       else await page.locator("#satellite-target").selectOption(id);
@@ -282,7 +284,7 @@ try {
       { timeout: 45000 },
     );
     assert(
-      requests.every((url) => url.startsWith(origin + base)),
+      requests.every((url) => url.startsWith(origin + base) || url.startsWith(`blob:${origin}/`)),
       "All online assets must remain under the project base path",
     );
     assert(

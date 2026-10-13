@@ -1,0 +1,251 @@
+{
+  "description": "2K Lanczos runtime copies; original authors and licences in ../provenance.json",
+  "files": [
+    {
+      "file": "low/ariel-real.jpg",
+      "derivedFrom": "ariel-real.jpg",
+      "sha256": "53b0ea92d1e1b9827f2a66bca9812802e5acdef801e408b24897283e17f17ab4",
+      "sourceSha256": "c26a2da453d7231c23924edd90e966294b2bac7346da58d00a3835fcbfe6d98e"
+    },
+    {
+      "file": "low/barnard-b-4k.jpg",
+      "derivedFrom": "barnard-b-4k.jpg",
+      "sha256": "b374d8489aa56506bd81f656dd1ac3b0f6fdb343b73cb1d55dbf758d5d162005",
+      "sourceSha256": "7d3583b903a40ac665d0debacf8e9050d088f96eb7fb2080c48ea513fb8be821"
+    },
+    {
+      "file": "low/barnard-c-4k.jpg",
+      "derivedFrom": "barnard-c-4k.jpg",
+      "sha256": "6b6b42a5e4206389026dfe0684267399402e1937b52264ba437e4d5ecdb53a69",
+      "sourceSha256": "d1e9a5f45e67e800c599a2fdc39f9e6ffd7595ff8c4f6349eef9eebc2aa98542"
+    },
+    {
+      "file": "low/barnard-d-4k.jpg",
+      "derivedFrom": "barnard-d-4k.jpg",
+      "sha256": "d0defd17ddabc2d9ae6e666bc1b84547883f46bbd710a6ce5ea740df7460bc42",
+      "sourceSha256": "aa20540e6e1cfa122f8725bdb1644337fdd7b8eed9c0663ab23cc16eac07d1a4"
+    },
+    {
+      "file": "low/barnard-e-4k.jpg",
+      "derivedFrom": "barnard-e-4k.jpg",
+      "sha256": "81d5b5458ef00de6e1013317fb760361c8012063a17919349a9fc2d1955d42b4",
+      "sourceSha256": "58a372ab61ec5c520abd49fa6bce14cbe359d54ac3f0ace6408156a0d4a16268"
+    },
+    {
+      "file": "low/barnard-star-4k.jpg",
+      "derivedFrom": "barnard-star-4k.jpg",
+      "sha256": "d06471f3fd3c7a987824c7259d68e04d64b9270dfdf57934c2d70f876b90b02b",
+      "sourceSha256": "d0b67be4b7ef3ec1fae8e0f40c1ab164d111024754f4e24c7a4b4110e8b2cf9b"
+    },
+    {
+      "file": "low/betelgeuse-4k.jpg",
+      "derivedFrom": "betelgeuse-4k.jpg",
+      "sha256": "9d6ea9f4f08164ad5ad373d4ab8963d380a4663103d4286eabf5ef85a2383daa",
+      "sourceSha256": "aac58efe86d7b312567e19c1efdd9967f0f0af40fac111d8a4c9a2d5ea9f179c"
+    },
+    {
+      "file": "low/callisto-real.jpg",
+      "derivedFrom": "callisto-real.jpg",
+      "sha256": "336c1f15aeafb6bed51376368ddad3cf0a03dbd1bc5f891de371a31e062ca39b",
+      "sourceSha256": "5d7462861115ad389893994cdd7053bcdfc68c6ebde524f33d0eb1ae68f2131c"
+    },
+    {
+      "file": "low/concept-asteroid.jpg",
+      "derivedFrom": "concept-asteroid.jpg",
+      "sha256": "cd524a0b2fabc9bd64a5f0fa193a35744f67cc4659d21c5fd432baacf0198c0e",
+      "sourceSha256": "1ba5304e697b95e8a9bd18270e050ac633aa79a07ba1da4a3e773e17ab690ae4"
+    },
+    {
+      "file": "low/concept-ceres.jpg",
+      "derivedFrom": "concept-ceres.jpg",
+      "sha256": "4e3b1d567b8c867874b3fdd05227314a5fa19add83d52ec1bc88c2545904ccf6",
+      "sourceSha256": "368af7b460d2e6c749c03819a53a5f602e3f55bddfdb7c094818889bbcc04b17"
+    },
+    {
+      "file": "low/concept-haumea.jpg",
+      "derivedFrom": "concept-haumea.jpg",
+      "sha256": "be412a3da43d432552e5fa028b487225a9d1e510777233944d7c9e5eaab7edb6",
+      "sourceSha256": "a1f87d9c4c6aea0dc700ad7adf155d136f017e800d55dea57a3e30fbf25ee641"
+    },
+    {
+      "file": "low/concept-makemake.jpg",
+      "derivedFrom": "concept-makemake.jpg",
+      "sha256": "b6178a3d6e853291a90eacb0b30de22392d4b2ea7ba7bef434e2203f03f777bc",
+      "sourceSha256": "e5099932d0fa66c49ee2da6150254eb208fe4b6b942c62d0fa9f59de6cb20cfe"
+    },
+    {
+      "file": "low/concept-venuslike.jpg",
+      "derivedFrom": "concept-venuslike.jpg",
+      "sha256": "dbcd1ab8f3b45f8681c400c0e1e690e937d5647cb2b5fdd6aa920d66d169492c",
+      "sourceSha256": "e8eacbca32002bb4b7d1e4d17682ad27e7d6dd64c1fe1d0412981276abfbbe07"
+    },
+    {
+      "file": "low/dione-real.jpg",
+      "derivedFrom": "dione-real.jpg",
+      "sha256": "b0c12dd0867c52e750bb697cd4ab0383d12d6feca937629c7a3c313359148286",
+      "sourceSha256": "429d0cb239a0135a9fa72b0798cd56288b3deff5f087e9f38d1643f4aaf582bc"
+    },
+    {
+      "file": "low/earth-clouds-4k.jpg",
+      "derivedFrom": "earth-clouds-4k.jpg",
+      "sha256": "f01dc66cc3c32e68e7dde667d28aee543e905138fcf7b0a7f59b093f3f9608a2",
+      "sourceSha256": "1f13c6dcf7e59b9e3f5079187ba1b345a7c02ece41161c49e89a0d145f2388ea"
+    },
+    {
+      "file": "low/earth-day.jpg",
+      "derivedFrom": "earth-day.jpg",
+      "sha256": "f6dc307190eff884a53a3836c8da727d42e4a210b72845d87aaa86400ad1bbf2",
+      "sourceSha256": "3b164082fcd3aedb3212eed574751bf22be940e1986ebe76c71fb0b09b0e91ce"
+    },
+    {
+      "file": "low/earth-night.jpg",
+      "derivedFrom": "earth-night.jpg",
+      "sha256": "88a19fef5257215992ae434c554a925eb351df18f851e03ccdc71fe82934a39f",
+      "sourceSha256": "e06b062e5f14ab4fca0849df8cdfc29922652855494c830ba9a9d460a9909c40"
+    },
+    {
+      "file": "low/earth-terrain-4k.png",
+      "derivedFrom": "earth-terrain-4k.png",
+      "sha256": "193f90761d3c5589685ff0e84ce2497d162af869f52ee9b529657bf8d19a9cbf",
+      "sourceSha256": "7b8d00abbbbb58c4e10554d7476e57fe2b2eb96583e40a8b85ef65606432eeb8"
+    },
+    {
+      "file": "low/enceladus-real.jpg",
+      "derivedFrom": "enceladus-real.jpg",
+      "sha256": "24f8e60a9a94b1dcd286acc8a896347a57cba858f7c4215ec2f836644f7577d1",
+      "sourceSha256": "fa65fdf91b3d6956ca1b92c42a16a777a154ac7e3591b9cee4ab4e34df6a883e"
+    },
+    {
+      "file": "low/europa-real.jpg",
+      "derivedFrom": "europa-real.jpg",
+      "sha256": "f8207d4594c6f44d452fcc7b7955568facff1d2bc6084168d0fefe5acd35da4f",
+      "sourceSha256": "e14bbfa63ab80a548841f31ded8056e22b06ff28e782784ba884e7a8d4324b2a"
+    },
+    {
+      "file": "low/ganymede-real.jpg",
+      "derivedFrom": "ganymede-real.jpg",
+      "sha256": "33cb5829b73e8feba5fae9d94692ee99fc414ba54facdb37ede10cbc1643dc61",
+      "sourceSha256": "d962937df8a425bf0c3b65ed47cbe0e41f06bf4cce4e9543e252e155b42433d6"
+    },
+    {
+      "file": "low/iapetus-real.jpg",
+      "derivedFrom": "iapetus-real.jpg",
+      "sha256": "561bd886723f82dbcfbfd83e19fc3abc70606e369d6e26c29f2787dffb25e2b8",
+      "sourceSha256": "8681f4c1986a181ed85d758e8c48aab6e26b67576151ca826aef8be6565ac2c5"
+    },
+    {
+      "file": "low/io-real.jpg",
+      "derivedFrom": "io-real.jpg",
+      "sha256": "dfb2d08b26a8e2eba9ab4639069171dfad3d7a0c748001ec1602a47fea1d431f",
+      "sourceSha256": "b7deafbc3394ac124afce5b00df660b99b6f61f98055d90a74d3ddc2ace92f05"
+    },
+    {
+      "file": "low/jupiter-real.jpg",
+      "derivedFrom": "jupiter-real.jpg",
+      "sha256": "3f71815e2491975b19fe2022fa57f337c449e60c440b67caaf9ebffed27787ac",
+      "sourceSha256": "43cc6e8402e35c7f0b316ad766ee6171495257dff05194a66be5646ee004d42c"
+    },
+    {
+      "file": "low/mars-real.jpg",
+      "derivedFrom": "mars-real.jpg",
+      "sha256": "579a0fd67eea9ccffd6b138f3494eaaed244d3c1364d37e197f2eae640c51c8a",
+      "sourceSha256": "d6dd84da74837346a7fe90e431dad40dd3ce888cf21cf9600084d28c48f1edf0"
+    },
+    {
+      "file": "low/mercury-real.jpg",
+      "derivedFrom": "mercury-real.jpg",
+      "sha256": "47cd2cb639a906e06ab8e57a4aecc0d50562f27187b84f185032080e6bfdb410",
+      "sourceSha256": "247245f909f14440f41f0817ddd4b47340245473088e3a7e22b6374b71868a4e"
+    },
+    {
+      "file": "low/milky-way-4k.jpg",
+      "derivedFrom": "milky-way-4k.jpg",
+      "sha256": "eb46b60db419b1f37310a2031b645cdcd9500e1b6e92e874ac97cb4fd66a029f",
+      "sourceSha256": "2c8d81c5cd767244ad49c8bd97df7a47f925fc24384e23d5f6772983b5d75f8b"
+    },
+    {
+      "file": "low/mimas-real.jpg",
+      "derivedFrom": "mimas-real.jpg",
+      "sha256": "abe61d39d4d32fcc9e974c8b71ff2f1d9e54feb98a5658be88949d735a58c5d4",
+      "sourceSha256": "4eba8c9141d521394361211da945d5b85dd6aa941968b8a4bfa1de8bb72052cd"
+    },
+    {
+      "file": "low/miranda-real.jpg",
+      "derivedFrom": "miranda-real.jpg",
+      "sha256": "4267de86163c3d7dd6f60c4310de76e9a1492dcfab50e1c0bb964e54e71fafe5",
+      "sourceSha256": "04b291e25b1866d92d1f7e310e8a71c5c5760562ffae7e7fa9f7367611c4d4fd"
+    },
+    {
+      "file": "low/moon-real.jpg",
+      "derivedFrom": "moon-real.jpg",
+      "sha256": "a0a0828c7ebdec3c12c05a8beea9a25d018feda1f7cd89990901701204e9c0ee",
+      "sourceSha256": "61ea4347f3e1e6ee30b0dcabf4c12807993fff50c735ead770743ed69c1b005e"
+    },
+    {
+      "file": "low/neptune-real.jpg",
+      "derivedFrom": "neptune-real.jpg",
+      "sha256": "2e149b801f5a50ceda7af5d1422f4289f9c7c65b980ba5027ac3ede4bfe60014",
+      "sourceSha256": "4de5541a2bfc5a90a86228483811c5d1653f3f5ecb1c29b7713b7f9015f68032"
+    },
+    {
+      "file": "low/rhea-real.jpg",
+      "derivedFrom": "rhea-real.jpg",
+      "sha256": "6a1a2c4da023c0339f604a297168bcae115a67e2b7b64769a7b10155d9153b29",
+      "sourceSha256": "8ea47ab9e586b0e92ede2cb20f114613d0aa4e15ffc9f8aa2da97b284b4a6cfe"
+    },
+    {
+      "file": "low/saturn-real.jpg",
+      "derivedFrom": "saturn-real.jpg",
+      "sha256": "90830600b25397f75987eab865c06df43074b5c3a8db9fabf093d4028ac76514",
+      "sourceSha256": "09086aa5cb7ff38a41a31477ad967e4fb0e9703b2cb7a23f2c0c0a78381f27c4"
+    },
+    {
+      "file": "low/star-g.jpg",
+      "derivedFrom": "star-g.jpg",
+      "sha256": "d35a7884af677905da5e3b6cdcde5220df1e6f43ffc2839a6249cdb5469df486",
+      "sourceSha256": "5a525d8cbdffb5febde56b4185d60e8f8d8212946119ba4e6690e45cbd997cf0"
+    },
+    {
+      "file": "low/star-k.jpg",
+      "derivedFrom": "star-k.jpg",
+      "sha256": "c18973a133a0f7d67ab1268275d8866a3e3e0a0fec979ce596b487a7d8786163",
+      "sourceSha256": "ec4cdf9cff1d3f8bc6e6f79f288dfd88c33c8490de534801a53bd3f2aa6b8f3a"
+    },
+    {
+      "file": "low/star-m.jpg",
+      "derivedFrom": "star-m.jpg",
+      "sha256": "95c928d862f8ac7f7e2a144fa1152b2e1b9a08533ad99c6a590fba5be2bf7842",
+      "sourceSha256": "5b17b7cf2be1228e87df76f8c5489d1d42169b4d1debafb56b4fee0e10fdf97a"
+    },
+    {
+      "file": "low/sun-real.jpg",
+      "derivedFrom": "sun-real.jpg",
+      "sha256": "60a2d8e5fa153f215c2008ab5aed88a015870f4a698d5adf97668a451b5a4cf7",
+      "sourceSha256": "5e6dbccafdec607a4155056c8a36cedf9f012c6be5ed38bfd879d97ef5d00112"
+    },
+    {
+      "file": "low/tethys-real.jpg",
+      "derivedFrom": "tethys-real.jpg",
+      "sha256": "3980f243ce7a5c27a5be878a02c93ace28e9c889197728bedab31684d072dc02",
+      "sourceSha256": "768052fc67e9f0a537cbc9f53b25e04e28eebccd6e9eface38c51fdecbe3252b"
+    },
+    {
+      "file": "low/titan-real.jpg",
+      "derivedFrom": "titan-real.jpg",
+      "sha256": "cffd9f0ddc8886c6cf6ae8f9becf16e83cf8f3a9295e345fcbc05e66167a1f21",
+      "sourceSha256": "fa3f10aabadaceff66693407f305b274b25d16ffde0a54f70452ab7726a802dc"
+    },
+    {
+      "file": "low/triton-real.jpg",
+      "derivedFrom": "triton-real.jpg",
+      "sha256": "cbf4e900182baf68d021aa32c8446e207152b688fad604f360a49486541e8054",
+      "sourceSha256": "23b07d4e24b78c977048885c7021be75003565c483f353d846272fabb5e4a637"
+    },
+    {
+      "file": "low/venus-real.jpg",
+      "derivedFrom": "venus-real.jpg",
+      "sha256": "e0440972bcb16c83fd3bb45bdbe1e42211606727d070ca6021047d6efbc5ab56",
+      "sourceSha256": "9e9cb3ea14d0b1d791ff604cfc701c1cb030a238d8f9ad9cdd9ad3aeaf7e41c1"
+    }
+  ]
+}

@@ -28,3 +28,8 @@ export function getTerrainHeightField(id) {
   fieldCache.set(id, field);
   return field;
 }
+
+// Browser builds replace this with asynchronous source loading; Node retains synchronous sampling.
+export async function prepareTerrainFields(ids) { for (const id of ids) getTerrainHeightField(id); }
+
+export function registerTerrainHeightField(id, field) { fieldCache.set(id, Object.freeze(field)); }

@@ -1306,3 +1306,5 @@ kbd {
 .hero {
   overflow: clip;
 }
+
+.guide-downloads { display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; }

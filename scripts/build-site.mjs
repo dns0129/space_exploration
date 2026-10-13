@@ -25,6 +25,7 @@ execFileSync(process.execPath, [join(project, "scripts/export-standalone.mjs")],
   cwd: project,
   stdio: "inherit",
 });
+execFileSync(process.execPath, [join(project, 'scripts/export-directory.mjs')], { cwd: project, stdio: 'inherit' });
 await build({
   root: project,
   base,
@@ -63,7 +64,15 @@ const download = {
 };
 await writeFile(
   join(output, "version.json"),
-  JSON.stringify({ revision, builtAt: new Date().toISOString(), download }) + "\n",
+  JSON.stringify({ revision, builtAt: new Date().toISOString(), download,
+    directoryDownload: await (async () => {
+      const file = join(output, 'downloads/voyager-directory.zip');
+      await copyFile(join(project, 'dist-standalone/voyager-directory.zip'), file);
+      const hash = createHash('sha256');
+      for await (const chunk of createReadStream(file)) hash.update(chunk);
+      return { revision, url: base + 'downloads/voyager-directory.zip', size: (await stat(file)).size, sha256: hash.digest('hex') };
+    })(),
+  }) + "\n",
 );
 await mkdir(join(output, "legal"), { recursive: true });
 for (const filename of ["ASSETS.md", "THIRD_PARTY_NOTICES.md"])

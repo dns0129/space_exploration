@@ -14,7 +14,9 @@
     "test:server": "node --test server/*.test.mjs",
     "export": "node scripts/export-standalone.mjs",
     "test:offline": "npm run export && node scripts/verify-standalone.mjs",
-    "test:performance": "npm run build && node scripts/verify-performance.mjs"
+    "test:performance": "npm run build && node scripts/verify-performance.mjs",
+    "export:directory": "node scripts/export-directory.mjs",
+    "test:directory": "npm run export:directory && node scripts/verify-directory.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.19.3",

@@ -1,22 +1,29 @@
 import * as THREE from "three";
-import RAPIER from "@dimforge/rapier3d-compat";
+import type * as Rapier from "@dimforge/rapier3d-compat";
 import type { WorldConfig } from "../shared/flight-state.mjs";
-import { sampleSurface } from "../shared/spatial-frame.mjs";
+import { buildWalkingTerrain, terrainTopology, PATCH_HALF_EXTENT_M, PATCH_SPACING_M } from "./walking-terrain.ts";
+import type { TerrainBuild } from "./walking-terrain.ts";
 import type { BodyId } from "./solar-system";
 
 // The compatibility distribution embeds its WASM, including in the offline HTML.
 let initialization: Promise<void> | undefined;
 let initialized = false;
+let RAPIER: typeof import('@dimforge/rapier3d-compat').default;
 export function initializeWalkingPhysics(): Promise<void> {
-  return initialization ??= RAPIER.init().then(() => { initialized = true; });
+  return initialization ??= import("@dimforge/rapier3d-compat").then(async module => {
+    RAPIER = module.default;
+    await RAPIER.init();
+    initialized = true;
+  }).catch(error => { initialization = undefined; throw error; });
 }
+export const walkingPhysicsReady = () => initialized;
 
 export const CHARACTER_RADIUS_M = 0.22;
 export const CHARACTER_HALF_SEGMENT_M = 0.65;
 export const CHARACTER_CONTACT_GAP_M = 0.01;
 export const CHARACTER_CENTER_HEIGHT_M = CHARACTER_RADIUS_M + CHARACTER_HALF_SEGMENT_M + CHARACTER_CONTACT_GAP_M;
-export const WALKING_PATCH_HALF_EXTENT_M = 48;
-export const WALKING_PATCH_SPACING_M = 0.5;
+export const WALKING_PATCH_HALF_EXTENT_M = PATCH_HALF_EXTENT_M;
+export const WALKING_PATCH_SPACING_M = PATCH_SPACING_M;
 const PATCH_REFRESH_DISTANCE_M = 16;
 const GROUND_RAY_EDGE_BIAS_M = 0.00001;
 export const CAMERA_COLLISION_RADIUS_M = 0.2;
@@ -26,6 +33,10 @@ const CAMERA_SWEEP_RETREAT_M = 0.001;
 /** Vertices are in the same metre frame as the character and are used verbatim by rendering. */
 export interface WalkingTerrainPatch {
   vertices: Float32Array;
+  renderPositions: Float32Array;
+  renderRadials: Float32Array;
+  renderColors: Float32Array;
+  renderNormals: Float32Array;
   indices: Uint32Array;
   revision: number;
   centerLocalM: THREE.Vector3;
@@ -38,14 +49,23 @@ export interface WalkingTerrainPatch {
 
 /** Only the nearby metre-scale collision scene lives in Rapier, never astronomical positions. */
 export class WalkingPhysics {
-  readonly world: RAPIER.World;
-  readonly character: RAPIER.RigidBody;
-  readonly collider: RAPIER.Collider;
-  readonly controller: RAPIER.KinematicCharacterController;
+  readonly world: Rapier.World;
+  readonly character: Rapier.RigidBody;
+  readonly collider: Rapier.Collider;
+  readonly controller: Rapier.KinematicCharacterController;
   terrainPatch!: WalkingTerrainPatch;
-  private terrainCollider?: RAPIER.Collider;
+  private terrainCollider?: Rapier.Collider;
   private patchRevision = 0;
   collisionCount = 0;
+  terrainWorkerState = 'fallback';
+  private worker?: import('./walking-terrain-worker').WalkingTerrainWorker;
+  private pendingBuild?: TerrainBuild;
+  private building = false;
+  private generation = 0;
+  private disposed = false;
+  private readonly lastRadial = new THREE.Vector3();
+  private readonly terrainDelta = new THREE.Vector3();
+  private readonly terrainTravel = new THREE.Vector3();
   readonly config: WorldConfig;
   readonly bodyId: BodyId;
 
@@ -63,44 +83,67 @@ export class WalkingPhysics {
     this.controller.setMinSlopeSlideAngle(50 * Math.PI / 180);
     this.controller.disableAutostep();
     this.controller.disableSnapToGround();
+    if (typeof Worker !== 'undefined' && typeof document !== 'undefined') {
+      this.terrainWorkerState = 'warming';
+      void import('./walking-terrain-worker').then(async ({ WalkingTerrainWorker }) => {
+        if (this.disposed) return;
+        const worker = new WalkingTerrainWorker(this.config, this.bodyId);
+        this.worker = worker;
+        try { await worker.ready; if (!this.disposed) this.terrainWorkerState = 'ready'; }
+        catch { worker.dispose(); this.worker = undefined; this.terrainWorkerState = 'fallback'; }
+      }).catch(() => { this.terrainWorkerState = 'fallback'; });
+    }
   }
 
 
   ensureTerrain(radialM: THREE.Vector3, originRadialM: THREE.Vector3, force = false) {
-    if (!force && this.terrainPatch
-      && radialM.clone().sub(this.terrainPatch.centerRadialM).projectOnPlane(radialM.clone().normalize()).length() < PATCH_REFRESH_DISTANCE_M) return false;
-    const body = this.config.bodies.find(candidate => candidate.id === this.bodyId)!;
-    const center = new THREE.Vector3().fromArray(sampleSurface(this.config, body, radialM.toArray()).surfaceRadialM);
-    const up = center.clone().normalize();
-    const right = new THREE.Vector3(Math.abs(up.y) < 0.9 ? 0 : 1, Math.abs(up.y) < 0.9 ? 1 : 0, 0).cross(up).normalize();
-    const forward = up.clone().cross(right).normalize();
-    const cells = Math.round(WALKING_PATCH_HALF_EXTENT_M * 2 / WALKING_PATCH_SPACING_M);
-    const vertices = new Float32Array((cells + 1) ** 2 * 3);
-    const indices = new Uint32Array(cells ** 2 * 6);
-    const point = new THREE.Vector3();
-    for (let z = 0; z <= cells; z++) for (let x = 0; x <= cells; x++) {
-      point.copy(center).addScaledVector(right, x * WALKING_PATCH_SPACING_M - WALKING_PATCH_HALF_EXTENT_M)
-        .addScaledVector(forward, z * WALKING_PATCH_SPACING_M - WALKING_PATCH_HALF_EXTENT_M);
-      point.fromArray(sampleSurface(this.config, body, point.toArray()).surfaceRadialM).sub(originRadialM);
-      point.toArray(vertices, (z * (cells + 1) + x) * 3);
+    const up = this.terrainTravel.copy(radialM).normalize();
+    const displacement = this.terrainDelta.copy(radialM).sub(this.terrainPatch?.centerRadialM ?? radialM).projectOnPlane(up);
+    const distance = displacement.length();
+    const movingAway = this.terrainTravel.copy(radialM).sub(this.lastRadial).dot(displacement) > 0;
+    this.lastRadial.copy(radialM);
+    if (!force && this.terrainPatch) {
+      if (this.worker && movingAway && distance >= 8 && !this.building && !this.pendingBuild) {
+        const predicted = radialM.clone().addScaledVector(displacement.normalize(), 16);
+        const generation = this.generation;
+        this.building = true;
+        void this.worker.build(predicted.toArray(), originRadialM.toArray()).then(result => {
+          if (!this.disposed && generation === this.generation) this.pendingBuild = result;
+        }).catch(() => {
+          this.worker?.dispose(); this.worker = undefined; this.terrainWorkerState = 'fallback';
+        }).finally(() => { if (generation === this.generation) this.building = false; });
+      }
+      if (distance < PATCH_REFRESH_DISTANCE_M) return false;
+      if (this.pendingBuild) {
+        const result = this.pendingBuild; this.pendingBuild = undefined;
+        const ahead = new THREE.Vector3().fromArray(result.centerRadialM).sub(radialM).projectOnPlane(radialM.clone().normalize()).length();
+        if (ahead < 32) { this.installTerrain(result, originRadialM); return true; }
+      }
+      // Retain valid collision underfoot while the worker prepares its successor.
+      // Reversals, fast relocation, slow/failed workers have a synchronous safety fallback.
+      if (this.worker && distance < 32) return false;
     }
-    let i = 0;
-    for (let z = 0; z < cells; z++) for (let x = 0; x < cells; x++) {
-      const a = z * (cells + 1) + x, b = a + 1, c = a + cells + 1, d = c + 1;
-      // right × forward = up; the same outward winding is used for drawing and collision.
-      indices.set([a, b, c, b, d, c], i); i += 6;
+    ++this.generation; this.pendingBuild = undefined; this.building = false;
+    this.installTerrain(buildWalkingTerrain(this.config, this.bodyId, radialM.toArray(), originRadialM.toArray()), originRadialM);
+    return true;
+  }
+
+  private installTerrain(result: TerrainBuild, originRadialM: THREE.Vector3) {
+    const { vertices } = result, indices = terrainTopology();
+    const shift = new THREE.Vector3().fromArray(result.originRadialM).sub(originRadialM);
+    if (shift.lengthSq()) for (let i = 0; i < vertices.length; i += 3) {
+      vertices[i] += shift.x; vertices[i + 1] += shift.y; vertices[i + 2] += shift.z;
     }
+    const center = new THREE.Vector3().fromArray(result.centerRadialM);
     if (this.terrainCollider) this.world.removeCollider(this.terrainCollider, false);
-    // Rapier also keeps a JS shape cache. Give it an independent, identical
-    // vertex buffer: rebasing translates the collider, while the render buffer
-    // is translated below, so mutating one must not double-shift that cache.
     this.terrainCollider = this.world.createCollider(RAPIER.ColliderDesc.trimesh(
       new Float32Array(vertices), indices, RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES));
-    this.terrainPatch = { vertices, indices, revision: ++this.patchRevision,
-      centerLocalM: center.clone().sub(originRadialM), centerRadialM: center, right, forward,
+    this.terrainPatch = { vertices, indices, renderPositions: result.renderPositions, renderRadials: result.renderRadials,
+      renderColors: result.renderColors, renderNormals: result.renderNormals, revision: ++this.patchRevision,
+      centerLocalM: center.clone().sub(originRadialM), centerRadialM: center,
+      right: new THREE.Vector3().fromArray(result.right), forward: new THREE.Vector3().fromArray(result.forward),
       halfExtentM: WALKING_PATCH_HALF_EXTENT_M, radiusM: WALKING_PATCH_HALF_EXTENT_M };
     this.refreshQueries();
-    return true;
   }
 
   setFeet(feetM: THREE.Vector3, up: THREE.Vector3, orientation: THREE.Quaternion) {
@@ -151,7 +194,7 @@ export class WalkingPhysics {
 
   /** Translation only: no velocities, rotations, collider shapes or handles are changed. */
   shiftOrigin(shiftM: THREE.Vector3) {
-    const velocities: { body: RAPIER.RigidBody; linear: RAPIER.Vector; angular: RAPIER.Vector }[] = [];
+    const velocities: { body: Rapier.RigidBody; linear: Rapier.Vector; angular: Rapier.Vector }[] = [];
     this.world.forEachRigidBody(body => {
       velocities.push({ body, linear: { ...body.linvel() }, angular: { ...body.angvel() } });
       const next = new THREE.Vector3().copy(body.nextTranslation()).sub(shiftM);
@@ -230,5 +273,5 @@ export class WalkingPhysics {
     this.world.timestep = dt;
   }
 
-  dispose() { this.world.free(); }
+  dispose() { this.disposed = true; ++this.generation; this.worker?.dispose(); this.world.free(); }
 }

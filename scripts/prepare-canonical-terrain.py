@@ -166,5 +166,7 @@ export function getTerrainHeightField(id) {
   return field;
 }
 """
+output += "\nexport async function prepareTerrainFields(ids) { for (const id of ids) getTerrainHeightField(id); }\n"
+output += "\nexport function registerTerrainHeightField(id, field) { fieldCache.set(id, Object.freeze(field)); }\n"
 (ROOT / "shared" / "terrain-fields.mjs").write_text(output)
 print(f"Generated {len(definitions)} body fields / {len(arrays)} shared rasters ({len(output):,} source bytes)")

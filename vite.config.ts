@@ -1,6 +1,9 @@
 import { defineConfig } from "vite";
+import { runtimeTerrain } from "./scripts/runtime-terrain.mjs";
 
 export default defineConfig({
+  plugins: [runtimeTerrain()],
+  worker: { plugins: () => [runtimeTerrain({ emit: false })] },
   // Optical browser tests import the shared Three module from the dev bundle.
   optimizeDeps: { include: ["three"] },
   server: {
