@@ -8,7 +8,7 @@ test("半人马座三恒星与行星可以观测，使用真实银河且可返�
   page.on("console", message => {
     if (message.type() === "error" && /Shader|WebGL|GL_INVALID/i.test(message.text())) errors.push(message.text());
   });
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await expect(page.locator("canvas")).toHaveAttribute("data-background", "milky-way-4k.jpg");
   await page.getByRole("combobox", { name: "恒星系统", exact: true }).selectOption("alpha-centauri");

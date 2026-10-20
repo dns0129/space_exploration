@@ -44,8 +44,8 @@ test("高空朝外保留暗空，地平线散射随下降变浓，边界连续�
     state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar", position: new THREE.Vector3().fromArray(body.position)
       .addScaledVector(up, body.radius + altitude / world.unitsKm).toArray(), velocity: [0,0,0],
       orientation: orientation.toArray(), target: id, camera: "cockpit", assist: true, elapsed: 0 };
-    if (!images.size) await page.goto("/");
-    else await page.getByRole("button", { name: "行星观测", exact: true }).click();
+    if (!images.size) await page.goto("/#planet=earth");
+    else await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
     await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
     await page.getByRole("button", { name: "自由航行", exact: true }).click();
     await expect(page.locator("#loading-overlay")).toBeHidden();
@@ -92,7 +92,7 @@ test("俯冲时外部镜头保持飞船在画内，并以行星地平线稳定�
     position: [earth.position[0], earth.position[1], earth.position[2] - earth.radius - 100 / world.unitsKm],
     velocity: [0,0,0], orientation: [0,1,0,0], target: "earth", camera: "chase", assist: true, elapsed: 0 };
   await page.route("**/api/flight/save", route => route.fulfill({ json: { state } }));
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
   await expect(page.locator("#loading-overlay")).toBeHidden();

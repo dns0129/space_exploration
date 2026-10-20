@@ -10,7 +10,7 @@ export async function verifyStationVisit(page) {
     await expect(page.locator("#flight-storage")).toHaveText("已保存 · 本机");
     return read();
   };
-  await page.locator("#mode-observe").click();
+  await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "observe");
   await page.locator("#star-system").selectOption("solar");
   await page.locator('button[data-body="earth-station"]').click();

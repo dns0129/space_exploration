@@ -11,7 +11,7 @@ test("超清地球近观呈现原生分块细节，切换画质释放分块，�
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.route("**/textures/earth-detail-*.jpg", async route => { await gate; await route.continue(); });
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   const canvas = page.locator("canvas");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.locator("#quality").selectOption("ultra");
@@ -65,7 +65,7 @@ test("细节下载失败保持地球可操作，紧凑设备使用 4K 回退", a
     if (/earth-detail-|earth-.*-8k/.test(request.url())) detailRequests.push(request.url());
   });
   await page.route("**/textures/earth-detail-*.jpg", route => route.abort());
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   if (info.project.name === "mobile") await page.getByRole("button", { name: "观测设置" }).click();
   await page.locator("#quality").selectOption("ultra");

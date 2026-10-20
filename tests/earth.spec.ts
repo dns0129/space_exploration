@@ -9,7 +9,7 @@ test("地球实际渲染，观察控制和图层工作正常", async ({ page }, 
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute(
     "data-ready",
     "true",
@@ -148,7 +148,7 @@ test("地球实际渲染，观察控制和图层工作正常", async ({ page }, 
 
 test("贴图加载失败时可见错误，重试后恢复场景", async ({ page }) => {
   await page.route("**/textures/earth-day.jpg", (route) => route.abort());
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("高清贴图未能完整加载");
   await expect(

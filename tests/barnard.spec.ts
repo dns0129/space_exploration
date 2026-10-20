@@ -20,7 +20,7 @@ test("巴纳德星与四颗已确认行星使用独立原生高清概念图并�
   test.setTimeout(180_000);
   const errors = recordErrors(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.locator("#star-system").selectOption("barnard");
   await expect(page.locator("button[data-body]:visible")).toHaveCount(5);

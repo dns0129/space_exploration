@@ -159,7 +159,7 @@ test("飞船和人物落在所选地貌且可保存恢复，摄影隐藏驾驶�
   await page.keyboard.press("Escape");
   await expect(page.locator("#flight-ui")).toBeVisible();
   await expect(page.locator("#flight-surface")).toHaveAttribute("data-phase", "landed");
-  await page.locator("#mode-observe").click();
+  await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "observe");
   await page.locator("#place-person").click();
   await tapCanvas(page, mobile, 0.5, 0.56);

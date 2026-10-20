@@ -4,6 +4,9 @@ import { watchSiteVersion } from "./site-version";
 import { FlightInterface } from "./flight-ui";
 import { GraphicsControls } from "./graphics-controls";
 import { PanelLayout } from "./panel-layout";
+import { StarMapInterface } from "./star-map";
+import { MAP_SYSTEMS } from "./star-map-data";
+import type { MapSelection } from "./star-map-data";
 import { SolarScene } from "./planet-scene";
 import { surfaceMapLabel } from "./body-textures";
 import type { SurfacePlacement, View } from "./planet-scene";
@@ -38,12 +41,23 @@ const icons: Record<string, string> = {
 const icon = (name: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
 const publicSite = import.meta.env.VITE_PUBLIC_SITE === "true";
+const initialRoute = new URLSearchParams(location.hash.slice(1));
+const readMapRoute = (): MapSelection | undefined => {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const value = params.get("map");
+  const group = MAP_SYSTEMS.find(system => system.id === value)?.id;
+  if (!group && value !== "galaxy") return undefined;
+  const orbit = params.get("orbit");
+  return { group: group ?? "solar", galaxy: value === "galaxy", parent: orbit && isBodyId(orbit)
+    && getSystemGroup(orbit) === group && !getBody(orbit).parentId ? orbit : undefined };
+};
+const initialMapRoute = readMapRoute();
 
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div class="observatory">
     <header class="header">
       <a class="brand" href="${publicSite ? `${import.meta.env.BASE_URL}index.html` : "#planet=earth"}" aria-label="${publicSite ? "星际探索首页" : "远航首页"}">${icon("orbit")}<span>${publicSite ? "星际探索" : "远航"} <b>VOYAGER</b></span></a>
-      <nav class="main-nav" aria-label="主导航"><button id="mode-observe" class="nav-active" aria-pressed="true">行星观测</button><button id="mode-flight" class="scene-control" aria-pressed="false" disabled>自由航行</button></nav>
+      <nav class="main-nav" aria-label="主导航"><button id="mode-observe" class="nav-active" aria-pressed="true">星图</button><button id="mode-flight" class="scene-control" aria-pressed="false" disabled>自由航行</button></nav>
       <div class="header-tools"><button class="icon-button scene-control" data-open-graphics aria-label="画质设置" title="画质设置" disabled>${icon("settings")}</button><span class="connection"><i></i><span id="connection-text">正在连接观测站</span></span><button class="icon-button scene-control" id="bridge-earth-shot" aria-label="地球舷窗镜头" title="地球舷窗镜头 · Enter 保存照片 · P/Esc 或双击退出" disabled>${icon("window")}</button><button class="icon-button scene-control" id="photo-mode" aria-label="摄影模式" aria-pressed="false" title="摄影模式（P）· Enter 保存照片 · Esc 或双击画面退出" disabled>${icon("camera")}</button><button class="icon-button" id="help" aria-label="操作指南" title="操作指南（H）">${icon("help")}</button></div>
     </header>
 
@@ -132,7 +146,9 @@ const toast = (message: string) => {
 };
 
 let panelLayout: PanelLayout | undefined;
+let starMap: StarMapInterface | undefined;
 const flight = new FlightInterface(toast, (active, target) => {
+  if (active) starMap?.close();
   cancelPlacement();
   state.mode = active ? "flight" : "observe";
   if (target) {
@@ -154,6 +170,15 @@ const flight = new FlightInterface(toast, (active, target) => {
 });
 panelLayout = new PanelLayout();
 new GraphicsControls();
+starMap = new StarMapInterface(() => scene, id => void start(id), id => {
+  starMap?.close();
+  state.body = id;
+  updateBodyInfo(id);
+  $<HTMLButtonElement>("#mode-flight").click();
+});
+$("#return-star-map").addEventListener("click", () => starMap?.open({
+  group: getSystemGroup(state.body), parent: getBody(state.body).parentId ?? (starMap.selection.parent === state.body ? state.body : undefined),
+}, state.body));
 
 function updatePlacementControls() {
   const solid = surfaceProfile(state.body).solid;
@@ -275,7 +300,7 @@ function updateBodyInfo(id: BodyId) {
   $(".planet-info").setAttribute("aria-label", `${body.name}信息`);
   $(".planet-info .eyebrow").innerHTML =
     `<span class="tiny-line"></span>${id === "earth" ? "我们的蓝色家园" : body.tags[1]}`;
-  $("h1").innerHTML = `${id === "ceres" ? "小行星带" : body.name}<span>${body.english}</span>`;
+  $(".planet-info h1").innerHTML = `${id === "ceres" ? "小行星带" : body.name}<span>${body.english}</span>`;
   $(".planet-tags").innerHTML = body.tags
     .map((tag) => `<span>${tag}</span>`)
     .join("");
@@ -370,6 +395,7 @@ function updateBodyInfo(id: BodyId) {
 }
 
 function showError(message: string) {
+  starMap?.close();
   setPhotoMode(false);
   cancelPlacement();
   flight.stop();
@@ -387,6 +413,7 @@ function showError(message: string) {
 }
 
 async function start(id: BodyId = state.body) {
+  starMap?.close();
   setPhotoMode(false);
   cancelPlacement();
   flight.stop();
@@ -678,6 +705,11 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
+  if (starMap?.active && event.code === "Escape" && !$<HTMLDialogElement>("#help-dialog").open) {
+    event.preventDefault();
+    starMap.back();
+    return;
+  }
   if (
     event.target instanceof Element &&
     event.target.closest("button, input, select, textarea, a, dialog")
@@ -695,6 +727,13 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (!state.ready) return;
+  if (starMap?.active) {
+    if (event.code === "Space") { event.preventDefault(); $("#map-motion").click(); }
+    else if (event.key.toLowerCase() === "r") scene?.mapView?.reset();
+    else if (event.key === "+" || event.key === "=") scene?.mapView?.zoom(0.85);
+    else if (event.key === "-") scene?.mapView?.zoom(1.15);
+    return;
+  }
   if (event.code === "Space") {
     event.preventDefault();
     state.paused = !state.paused;
@@ -710,9 +749,15 @@ document.addEventListener("keydown", (event) => {
     );
   }
 });
-window.addEventListener("hashchange", () => {
+window.addEventListener("hashchange", async () => {
+  const map = readMapRoute();
+  if (map && state.ready) {
+    if (flight.active) await start(state.body);
+    if (state.ready) starMap?.open(map);
+    return;
+  }
   const id = readBodyHash();
-  if (id !== state.body) void start(id);
+  if (id !== state.body || starMap?.active) void start(id);
 });
 window.addEventListener("pagehide", () => {
   flight.stop();
@@ -727,6 +772,11 @@ let bridgeShotPending = new URLSearchParams(location.search).get("scene") === "b
 $("#mode-flight").addEventListener("click", async () => {
   if (!state.ready || !scene || flight.active) return;
   cancelPlacement();
+  if (starMap?.active) {
+    state.body = starMap.target;
+    updateBodyInfo(state.body);
+  }
+  starMap?.close();
   const version = ++requestVersion;
   setControlsReady(false);
   $("#loading-overlay").hidden = false;
@@ -753,12 +803,17 @@ $("#mode-flight").addEventListener("click", async () => {
       );
   }
 });
-$("#mode-observe").addEventListener("click", () => {
-  if (flight.active) void start(state.body);
+$("#mode-observe").addEventListener("click", async () => {
+  if (!state.ready) return;
+  if (flight.active) await start(state.body);
+  cancelPlacement();
+  if (state.ready) starMap?.open({ group: getSystemGroup(state.body), parent: getBody(state.body).parentId }, state.body);
 });
 updatePause();
 watchSiteVersion();
 void start().then(() => {
   if (state.ready && (bridgeShotPending || new URLSearchParams(location.search).get("mode") === "flight"))
     $<HTMLButtonElement>("#mode-flight").click();
+  else if (state.ready && (initialMapRoute || !initialRoute.has("planet")))
+    starMap?.open(initialMapRoute ?? { group: getSystemGroup(state.body) });
 });

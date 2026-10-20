@@ -9,7 +9,7 @@ test("月面看到地球，木卫一表面看到木星", async ({ page }, info) 
   const world = await (await page.request.get("/api/world")).json();
   let state: unknown;
   await page.route("**/api/flight/save", route => route.fulfill({ json: { state } }));
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.evaluate(async () => {
     const { SolarScene } = await import("/src/planet-scene.ts");
@@ -56,7 +56,7 @@ test("月面看到地球，木卫一表面看到木星", async ({ page }, info) 
         if ([0, 1, 2].some(channel => Math.abs(png.data[offset + channel] - empty.data[offset + channel]) > 10)) changed++;
       }
     expect(changed, `${targetId} 的实际天体像素出现在天空中央`).toBeGreaterThan(10);
-    await page.getByRole("button", { name: "行星观测", exact: true }).click();
+    await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
   }
   expect(errors).toEqual([]);
 });

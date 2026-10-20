@@ -23,7 +23,7 @@ test("回声裂隙六个天体实际渲染，独立银河背景和地表可用�
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await expect(page.locator("canvas")).toHaveAttribute("data-background-variant", "milky-way");
   await page.locator("#star-system").selectOption("echo-rift");
@@ -112,7 +112,7 @@ for (const id of ["echo-thalassa", "cinder"]) {
     await expect(page.locator("#loading-overlay")).toBeHidden();
     for (const kind of ["ship", "person"]) {
       if (kind === "person") {
-        await page.locator("#mode-observe").click();
+        await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
         await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "observe");
       }
       await page.locator(`#place-${kind}`).click();

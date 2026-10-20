@@ -14,7 +14,7 @@ test("参宿四仅包含恒星，高清表面可观测并能跃迁、恢复和�
       textures.push(response.url());
     }
   });
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   const selector = page.getByRole("combobox", { name: "恒星系统", exact: true });
   await selector.selectOption("betelgeuse");

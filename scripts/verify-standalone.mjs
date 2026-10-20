@@ -11,6 +11,7 @@ import { verifySurfaceFlight } from "./verify-surface.mjs";
 import { verifyWalkingFlight } from "./verify-walking.mjs";
 import { verifyStationVisit } from "./verify-station.mjs";
 import { verifyBridgeEarthShot } from "./verify-bridge-earth.mjs";
+import { verifyStarMap } from "./verify-star-map.mjs";
 import { createServer } from "node:http";
 
 const html = await readFile(
@@ -58,7 +59,7 @@ try {
   // Stream the exact exported document through an ordinary origin, then disconnect.
   // This avoids duplicating a 100+ MiB document through CDP's setContent payload.
   // Only the document request is allowed; every image, script and style is embedded.
-  await page.goto(documentUrl, { waitUntil: "load", timeout: 60_000 });
+  await page.goto(documentUrl + "#planet=earth", { waitUntil: "load", timeout: 60_000 });
   await context.setOffline(true);
   await new Promise((resolve) => origin.close(resolve));
   for (const id of [
@@ -193,6 +194,7 @@ try {
   await verifyWalkingFlight(page);
   await verifyStationVisit(page);
   await verifyBridgeEarthShot(page);
+  await verifyStarMap(page);
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   console.log(

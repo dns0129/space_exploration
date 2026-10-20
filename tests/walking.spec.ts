@@ -24,7 +24,7 @@ async function seedLanded(page: Page, id: string) {
 }
 
 async function launchAndRestore(page: Page, paused = false) {
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "flight");
@@ -143,7 +143,7 @@ test("落地离舱、徒步和跳跃、近船返舱、暂停与存档恢复均�
   for (let i = 0; i < 3; i++) expect(restored.walking.offsetM[i]).toBeCloseTo(frozen.walking.offsetM[i], 1);
   expect(restored.walking.bodyId).toBe("earth");
   await expect(page.locator("#flight-land")).toBeDisabled();
-  await page.getByRole("button", { name: "行星观测", exact: true }).click();
+  await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "observe");
   await expect(page.locator('button[data-body="mars"]')).toBeEnabled();
   await page.locator('button[data-body="mars"]').click();

@@ -30,9 +30,9 @@ test("局部大气和真空地表停止全局模型工作，返回太空重新�
     state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar", position: [body.position[0], body.position[1],
       body.position[2] - body.radius - altitudeKm / world.unitsKm], velocity: [0, 0, 0],
       orientation: [0, 0, 0, 1], target: id, camera: "cockpit", assist: true, elapsed: 0 };
-    if (id === "earth" && altitudeKm === 100) await page.goto("/");
+    if (id === "earth" && altitudeKm === 100) await page.goto("/#planet=earth");
     else {
-      await page.getByRole("button", { name: "行星观测", exact: true }).click();
+      await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
       await expect(page.locator("canvas")).toHaveAttribute("data-render-mode", "observation");
     }
     await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
@@ -94,7 +94,7 @@ test("暂停的局部座舱和追踪镜头保留画布，画质、恢复和视�
     orientation: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(
       new THREE.Vector3(), forward, up)).toArray(), target: "earth", camera: "cockpit", assist: true, elapsed: 0 };
   await page.route("**/api/flight/save", route => route.fulfill({ json: { state } }));
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
   await expect(page.locator("#loading-overlay")).toBeHidden();

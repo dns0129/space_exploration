@@ -12,14 +12,14 @@ test("左右跃迁直线减速抵达，星球留在前方，存档保留落点",
   for (const side of [-1, 1]) {
     if (side === 1) {
       await Promise.all([page.waitForResponse(response=>response.url().endsWith("/api/flight/save") && response.request().method()==="POST"),
-        page.getByRole("button",{name:"行星观测",exact:true}).click()]);
+        page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click())]);
       await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode","observe");
     }
     await page.request.post("/api/flight/save", { data: {
       version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar", position: [earth.position[0] + side * 15, earth.position[1], earth.position[2]],
       velocity: [0,0,0], orientation: [0,0,0,1], target: "earth", camera: "cockpit", assist: true, elapsed: 0,
     } });
-    await page.goto("/");
+    await page.goto("/#planet=earth");
     await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready","true");
     await page.getByRole("button",{name:"自由航行",exact:true}).click();
     await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode","flight");
@@ -53,7 +53,7 @@ test("跃迁末段实际画面从小星球连续拉近，暂停和抵达不改�
     version: 2, worldLayoutVersion: world.layoutVersion, systemId: "solar", position: [earth.position[0], earth.position[1], earth.position[2] - 256],
     velocity: [0,0,0], orientation: [0,1,0,0], target: "earth", camera: "cockpit", assist: true, elapsed: 0,
   } });
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
   await page.locator("#flight-quality").selectOption("standard");

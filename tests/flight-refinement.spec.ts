@@ -3,7 +3,7 @@ import { dragEngineSlider, earthPosition, flightFixture, holdFlightInput, hudNum
   launchPaused, saveFlight, seedFlight } from "./flight-propulsion-helpers";
 
 async function launch(page: any) {
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "flight");

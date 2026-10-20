@@ -27,7 +27,7 @@ export async function seedFlight(page: Page, state: FlightState) {
     // the next snapshot, so pagehide cannot overwrite the new terrain fixture.
     await Promise.all([
       page.waitForResponse(response => response.url().endsWith("/api/flight/save") && response.request().method() === "POST" && response.ok()),
-      page.getByRole("button", { name: "行星观测", exact: true }).click(),
+      page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click()),
     ]);
     await expect(page.locator("#flight-ui")).toBeHidden();
   }
@@ -37,7 +37,7 @@ export async function seedFlight(page: Page, state: FlightState) {
 }
 
 export async function launchPaused(page: Page) {
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.locator("#quality").selectOption("standard", { force: true });
   await page.locator("#flight-quality").selectOption("standard", { force: true });

@@ -31,7 +31,7 @@ test("低空天空与不同星球云系实际出现，穿云连续、晨昏暖�
   const world = await (await page.request.get("/api/world")).json();
   let state: unknown;
   await page.route("**/api/flight/save", route => route.fulfill({ json: { state } }));
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   const results = new Map<string, ReturnType<typeof skyPixels>>();
   for (const [name, id, altitude, side, view] of [
@@ -68,7 +68,7 @@ test("低空天空与不同星球云系实际出现，穿云连续、晨昏暖�
     state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: body.systemId ?? "solar", position: new THREE.Vector3().fromArray(body.position)
       .addScaledVector(up, body.radius + radialAltitude / world.unitsKm).toArray(), velocity: [0, 0, 0],
       orientation: orientation.toArray(), target: id, camera: "cockpit", assist: true, elapsed: 0 };
-    if (results.size) await page.getByRole("button", { name: "行星观测", exact: true }).click();
+    if (results.size) await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
     await page.getByRole("button", { name: "自由航行", exact: true }).click();
     await expect(page.locator("#loading-overlay")).toBeHidden();
     await page.locator("#flight-quality").selectOption("standard");

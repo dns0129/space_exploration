@@ -201,7 +201,7 @@ test("加载地球期间切换天体，旧请求不会覆盖新模型，返回�
   page.on("response", (response) => {
     if (response.url().includes("/textures/earth-")) responses++;
   });
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#planet=earth", { waitUntil: "domcontentloaded" });
   try {
     // The resident Earth batch contains day, night, elevation and clouds.
     await expect.poll(() => requests).toBe(4);

@@ -99,7 +99,7 @@ test('首屏只读取当前地形，普通航行不加载 Rapier，画质设置�
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   page.on('request', request => requests.push(request.url()));
-  await page.goto('/');
+  await page.goto("/#planet=earth");
   await page.locator('#canvas-host[data-ready="true"]').waitFor();
   await page.locator('#pause').click();
   expect(requests.filter(url => /\/terrain\/[^/]+\.json/.test(url))).toHaveLength(1);

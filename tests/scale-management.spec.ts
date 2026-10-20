@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 // Exercise the production scene adapters, including the exact arrays handed to Rapier.
 test("米制地面网格、人物和相机在远处卫星与重定位后共用同一原点", async ({ page }) => {
   test.setTimeout(180_000);
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   const result = await page.evaluate(async () => {
     const THREE = await import("/node_modules/three/build/three.module.js");

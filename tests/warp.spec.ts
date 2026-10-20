@@ -7,7 +7,7 @@ test("4K 银河实际渲染，真实距离与键盘跃迁、暂停、中止和�
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   const dimensions = await page.evaluate(async () => {
     const image = new Image(); image.src = "/textures/milky-way-4k.jpg";
@@ -63,7 +63,7 @@ test("4K 银河实际渲染，真实距离与键盘跃迁、暂停、中止和�
 
 test("银河图片加载失败后重试能恢复完整模型和背景", async ({ page }) => {
   await page.route("**/textures/milky-way-4k.jpg", (route) => route.abort());
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(page.getByRole("button", { name: "自由航行", exact: true })).toBeDisabled();
   await page.unroute("**/textures/milky-way-4k.jpg");

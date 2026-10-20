@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 const number = (text: string) => Number(text.replace(/[^0-9.]/g, ""));
 async function launch(page: any) {
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute(
     "data-ready",
     "true",
@@ -116,7 +116,7 @@ test("自由航行真实渲染，推力、刹车、服务端保存和恢复正�
     page.getByRole("button", { name: "切换座舱视角" }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.screenshot({ path: info.outputPath("flight-chase.png") });
-  await page.getByRole("button", { name: "行星观测", exact: true }).click();
+  await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
   await expect(page.locator("#canvas-host")).toHaveAttribute(
     "data-mode",
     "observe",

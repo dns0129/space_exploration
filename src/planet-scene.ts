@@ -46,6 +46,8 @@ const lowTextureSources = new Set(lowTextureManifest);
 import { FlightRenderPolicy } from "./render-mode";
 import type { FlightRenderMode } from "./render-mode";
 import { surfaceMapRotation } from "./surface-map-pose";
+import { StarMapScene } from "./star-map-scene";
+import type { MapSelection, MapTarget } from "./star-map-data";
 
 export type View = "overview" | "close" | "night";
 export type SurfacePlacement = { kind: "ship" | "person"; normal: [number, number, number] };
@@ -277,6 +279,7 @@ export class SolarScene {
   private drawnCameraFov = 0;
   private readonly camera = new THREE.PerspectiveCamera(40, 1, 0.01, 200);
   private readonly controls: OrbitControls;
+  private starMap?: StarMapScene;
   private readonly surfacePicker = new THREE.Raycaster();
   private photoCapture?: { resolve: (blob: Blob) => void; reject: (error: Error) => void };
   private photoMode = false;
@@ -600,6 +603,7 @@ export class SolarScene {
     id: BodyId,
     onProgress: (percent: number) => void,
   ): Promise<boolean> {
+    this.hideStarMap();
     this.leaveFlight();
     const version = ++this.selectionVersion;
     await prepareTerrainFields([id]);
@@ -640,6 +644,53 @@ export class SolarScene {
     onProgress(100);
     if (!this.frame) this.animate(0);
     return true;
+  }
+
+  showStarMap(selection: MapSelection, labels: HTMLElement, onSelect: (target: MapTarget) => void) {
+    this.leaveFlight();
+    if (!this.galaxy) return;
+    this.starMap ??= new StarMapScene(this.renderer, this.hdr, labels, this.galaxy,
+      id => this.modelForStarMap(id), onSelect);
+    this.controls.enabled = false;
+    this.starMap.resize(this.flightWidth, this.flightHeight);
+    this.starMap.show(selection);
+    this.renderer.setPixelRatio(Math.max(0.75 * this.graphics.renderScale, this.renderBudget.ratio));
+    this.renderer.domElement.setAttribute("aria-label", "交互式星图：点击天体探索，拖动环绕，滚轮或双指缩放");
+    if (!this.frame) this.animate(0);
+  }
+
+  hideStarMap() {
+    if (this.starMap?.active) {
+      this.renderer.setPixelRatio(this.renderBudget.ratio);
+      this.renderer.domElement.dataset.renderMode = "observation";
+    }
+    this.starMap?.hide();
+    if (!this.flying) this.controls.enabled = true;
+  }
+
+  get mapView() { return this.starMap; }
+
+  private async modelForStarMap(id: BodyId): Promise<PlanetModel> {
+    let model = this.models.get(id);
+    const map = SURFACE_MAPS[id];
+    if (model && (!map || model.mapUniforms?.detailMap.value)) return model;
+    let texture: THREE.Texture | undefined;
+    if (map) {
+      let file = map.compactFile ?? map.file;
+      if (lowTextureSources.has(file)) file = `low/${file}`;
+      texture = await this.loadTexture(file, true);
+      if (this.destroyed) { texture.dispose(); throw new Error("星图已关闭"); }
+      this.textures.add(texture);
+    }
+    model = this.models.get(id);
+    if (!model) {
+      model = id === "earth" ? this.createEarthModel(await this.loadEarthTextures(() => {}))
+        : createPlanetModel(getBody(id), this.sunDirection, undefined, texture);
+      this.configureModelLighting(model);
+      this.updateModelLighting(model);
+      this.models.set(id, model);
+    } else if (texture) setSurfaceMap(model, texture, 1);
+    return model;
   }
 
   private publishSurfaceResolution(model: PlanetModel) {
@@ -1126,6 +1177,7 @@ export class SolarScene {
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    this.starMap?.resize(width, height);
     this.stationInterior?.resize(width, height);
     this.configureRenderBudget();
     if (this.flying && this.flightPaused) this.updateFlightCamera(1);
@@ -1136,9 +1188,10 @@ export class SolarScene {
     this.applyRenderBudget();
   }
   private applyRenderBudget() {
-    this.renderer.setPixelRatio(this.renderBudget.ratio);
+    this.renderer.setPixelRatio(this.starMap?.active
+      ? Math.max(0.75 * this.graphics.renderScale, this.renderBudget.ratio) : this.renderBudget.ratio);
     this.flightFrameDirty = true;
-    this.renderer.domElement.dataset.renderScale = this.renderBudget.ratio.toFixed(2);
+    this.renderer.domElement.dataset.renderScale = this.renderer.getPixelRatio().toFixed(2);
     this.renderer.domElement.dataset.maxFps = String(this.graphics.maxFps);
     this.renderer.domElement.dataset.graphicsPreset = this.graphics.preset;
     this.renderer.domElement.dataset.textureQuality = this.graphics.textures;
@@ -1403,6 +1456,11 @@ export class SolarScene {
     const frameSeconds = this.lastTime ? Math.max(0, (time - this.lastTime) / 1000) : 0;
     const delta = Math.min(frameSeconds, 0.25);
     this.lastTime = time;
+    if (this.starMap?.active) {
+      this.starMap.update(delta);
+      this.finishPhotoCapture();
+      return;
+    }
     // Adapt resolution only while the picture moves; a paused, still view is restored to full sharpness.
     const positionTolerance = Math.max(1e-14, this.camera.position.lengthSq() * 1e-8);
     const moved = this.camera.position.distanceToSquared(this.lastCameraPosition) > positionTolerance
@@ -1485,6 +1543,7 @@ export class SolarScene {
     onProgress: (percent: number) => void,
     placement?: SurfacePlacement,
   ): Promise<boolean> {
+    this.hideStarMap();
     const version = ++this.selectionVersion;
     const system = getBody(id).systemId ?? 'solar';
     await prepareTerrainFields(config.bodies.filter(body => bodySystem(body) === system).map(body => body.id));
@@ -2360,6 +2419,7 @@ export class SolarScene {
 
   dispose() {
     this.destroyed = true;
+    this.starMap?.dispose();
     this.walker?.reset();
     this.stationInterior?.dispose();
     this.starshipReflection?.dispose();

@@ -177,7 +177,7 @@ test("现有导航实际进入单黑洞星系，禁止地表放置并可跃迁�
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   const directory = await artifactDirectory(info);
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.locator("#star-system").selectOption("black-hole");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", "gargantua");

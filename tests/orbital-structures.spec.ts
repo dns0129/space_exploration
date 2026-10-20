@@ -26,7 +26,7 @@ test("小行星带与星舰可观测、导航、跃迁和恢复", async ({ page 
   await expect(page.locator("#flight-ui")).toHaveAttribute("data-exploration", "station");
   await expect(page.locator("#canvas-host canvas")).toHaveAttribute("data-station-zone", "停泊区");
   // Return to observation and launch the shuttle for the existing navigation tour.
-  await page.locator("#mode-observe").click();
+  await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
   await page.locator("#mode-flight").click();
   await expect(page.locator("#loading-overlay")).toBeHidden();
   await page.locator('button[data-body="ceres"]').click();

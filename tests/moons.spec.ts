@@ -48,7 +48,7 @@ test("近地向太空推进和减速脉冲可见，不能绕过跃迁限制", as
     version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 50 / world.unitsKm],
     velocity: [0, 0, 0], orientation: [0, 1, 0, 0], target: "mars", camera: "cockpit", assist: false, elapsed: 0,
   } })).ok()).toBe(true);
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.locator("#mode-flight").click();
   await expect(page.locator("#loading-overlay")).toBeHidden();

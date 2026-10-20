@@ -26,7 +26,7 @@ try {
     if (/^https?:/.test(url) && !url.startsWith(origin + '/')) { external.push(url); return route.abort(); }
     return route.continue();
   });
-  await page.goto(origin);
+  await page.goto(origin + '/#planet=earth');
   await page.locator('#canvas-host[data-ready="true"]').waitFor({ timeout: 60000 });
   assert.equal(requests.filter(url=>url.includes('/terrain/')).length,1);
   assert(!requests.some(url=>/\/rapier-[^/]+\.js/.test(url)));
@@ -40,7 +40,7 @@ try {
   await page.locator('#flight-save').click();
   await expect(page.locator('#flight-storage')).toHaveText('已保存 · 服务端');
   const beforeExit = await (await page.request.get(origin+'/api/flight/save')).json();
-  await page.getByRole('button',{name:'行星观测',exact:true}).click();
+  await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
   await page.locator('#canvas-host[data-mode="observe"]').waitFor();
   await expect.poll(async()=> (await (await page.request.get(origin+'/api/flight/save')).json()).savedAt).not.toBe(beforeExit.savedAt);
   const earth = world.bodies.find(body=>body.id === 'earth');

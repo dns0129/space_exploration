@@ -57,7 +57,7 @@ test("火星与月球按需加载原生 8K，手机保留完整 4K，并实际�
   await page.emulateMedia({ reducedMotion: "reduce" });
   const native = info.project.name === "desktop";
   const observed = observeSurfaceRequests(page);
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   expect(observed.requests, "进入地球不能预先下载火星或月球影像").toEqual([]);
 
@@ -85,7 +85,7 @@ test("原生 8K 下载失败时火星与月球恢复完整 4K 影像", async ({ 
   await page.emulateMedia({ reducedMotion: "reduce" });
   const observed = observeSurfaceRequests(page);
   await page.route(/\/textures\/(mars|moon)-real-8k\.jpg$/, route => route.abort());
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   for (const body of bodies) await selectSurface(page, body, false);
   expect(observed.requests).toEqual(bodies.flatMap(body => [surfaceFile(body, true), surfaceFile(body, false)]));
@@ -104,7 +104,7 @@ test("GPU 最大纹理为 4096 时直接加载火星与月球 4K 影像", async 
     };
   });
   const observed = observeSurfaceRequests(page);
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   for (const body of bodies) await selectSurface(page, body, false);
   const files = bodies.map(body => surfaceFile(body, false));

@@ -18,7 +18,7 @@ test("地表实际渲染，L 连续降落、暂停、保存恢复与起飞，桌
     version: 2, worldLayoutVersion: world.layoutVersion, position: earth.position.map((value: number, i: number) => value + outward[i] * (earth.radius + height / world.unitsKm)),
     velocity: [0, 0, 0], orientation: [0, 0, 0, 1], target: "earth", camera: "chase", assist: true, elapsed: 0,
   } })).ok()).toBe(true);
-  await page.goto("/");
+  await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "flight");

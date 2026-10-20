@@ -5,7 +5,7 @@ import { terrainHeightKm, LANDING_CLEARANCE_KM } from "../shared/surface.mjs";
 
 // Exercise the actual packaged UI, without importing any runtime module into the browser.
 export async function verifySurfaceFlight(page) {
-  await page.getByRole("button", { name: "行星观测", exact: true }).click();
+  await page.locator("#mode-observe").click().then(() => page.locator("#map-observe").click());
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "observe");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true", { timeout: 45000 });
   await expect(page.locator("#loading-overlay")).toBeHidden();

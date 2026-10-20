@@ -34,12 +34,13 @@ try {
         const page = await context.newPage(), errors = [];
         page.on('pageerror', error => errors.push(error.message));
         page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-        await page.goto(origin);
+        await page.goto(origin + '/#planet=earth');
         await page.locator('#canvas-host[data-ready="true"]').waitFor({ timeout: 45000 });
         for (const [target, altitude] of (quick ? [['earth',1100]] : [['earth',1100], ['mars',1100], ['jupiter',3000]])) {
           if (await page.locator('#canvas-host[data-mode="flight"]').count()) {
             // A baseline with a different config uses local saves; don't require a server POST.
-            await page.getByRole('button', { name: '行星观测', exact: true }).click();
+            await page.locator("#mode-observe").click();
+            if (await page.locator("#star-map").isVisible()) await page.locator("#map-observe").click();
             await page.locator('#canvas-host[data-mode="observe"][data-ready="true"]').waitFor();
           }
           const body = world.bodies.find(body => body.id === target);
