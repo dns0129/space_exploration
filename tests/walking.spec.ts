@@ -24,7 +24,9 @@ async function seedLanded(page: Page, id: string) {
 }
 
 async function launchAndRestore(page: Page, paused = false) {
-  await page.goto("/#planet=earth");
+  // Force a new document: same-hash navigation retains a paused flight scene
+  // and would make the next pause click resume it before the saved pose check.
+  await page.goto(`/?walking-check=${Date.now()}#planet=earth`);
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "flight");

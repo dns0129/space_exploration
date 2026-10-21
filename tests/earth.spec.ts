@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
+import { setObservationSettings } from "./observation-helpers";
 
 test("地球实际渲染，观察控制和图层工作正常", async ({ page }, testInfo) => {
   // Software WebGL needs more time for the denser Earth mesh and additional material layers.
@@ -18,7 +19,7 @@ test("地球实际渲染，观察控制和图层工作正常", async ({ page }, 
   await expect(page.locator("#altitude")).not.toContainText("—");
   await expect(page.getByRole("heading", { name: "地球 EARTH" })).toBeVisible();
   await expect(
-    page.getByRole("navigation", { name: "太阳系天体" }).getByRole("button"),
+    page.getByRole("navigation", { name: "太阳系天体" }).locator("button[data-body]:visible"),
   ).toHaveCount(11);
   await expect(
     page.getByRole("button", { name: "火星，切换观测" }),
@@ -37,11 +38,11 @@ test("地球实际渲染，观察控制和图层工作正常", async ({ page }, 
   expect(surfacePixels, "陆地和云层必须渲染").toBeGreaterThan(1000);
   await page.screenshot({
     path: testInfo.outputPath("earth-overview.png"),
-    fullPage: true,
+    fullPage: testInfo.project.name !== "mobile",
   });
 
   if (testInfo.project.name === "mobile")
-    await page.getByRole("button", { name: "观测设置" }).click();
+    await setObservationSettings(page, true);
   await page.getByRole("button", { name: "暂停自转" }).click();
   await expect(page.getByRole("button", { name: "继续自转" })).toHaveAttribute(
     "aria-pressed",
@@ -88,7 +89,7 @@ test("地球实际渲染，观察控制和图层工作正常", async ({ page }, 
     )
     .toBeLessThan(200);
   if (testInfo.project.name === "mobile")
-    await page.getByRole("button", { name: "观测设置" }).click();
+    await setObservationSettings(page, false);
   const nightScreenshot = PNG.sync.read(
     await page.locator("canvas").screenshot(),
   );
@@ -107,7 +108,7 @@ test("地球实际渲染，观察控制和图层工作正常", async ({ page }, 
   expect(cityPixels, "夜面必须呈现暖色城市灯光").toBeGreaterThan(20);
   await page.screenshot({
     path: testInfo.outputPath("earth-night.png"),
-    fullPage: true,
+    fullPage: testInfo.project.name !== "mobile",
   });
   await page.getByRole("button", { name: "重置视角" }).click();
   await expect(page.locator('[data-view="overview"]')).toHaveAttribute(

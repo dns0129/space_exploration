@@ -39,7 +39,7 @@ const textures = {};
 for (const file of (await readdir(join(project, "public/textures"), { recursive: true })).filter((file) => /\.(jpg|png)$/.test(file) && !retiredTextures.has(file)).sort()) {
   const bytes = await readFile(join(project, "public/textures", file));
   const type = file.endsWith(".png") ? "image/png" : "image/jpeg";
-  textures[file] = `data:${type};base64,${bytes.toString("base64")}`;
+  textures[file.replaceAll("\\", "/")] = `data:${type};base64,${bytes.toString("base64")}`;
 }
 
 const result = await build({

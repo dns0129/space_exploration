@@ -19,7 +19,7 @@ function skyPixels(image: PNG, region = { top: 0.16, bottom: 0.42 }) {
       samples++;
     }
   }
-  return { average: sum.map(value => value / samples), cloud: neutral / samples, blue: blue / samples,
+  return { average: sum.map(value => value / samples), luminance: luminance / samples, cloud: neutral / samples, blue: blue / samples,
     contrast: Math.sqrt(Math.max(0, luminanceSquared / samples - (luminance / samples) ** 2)) };
 }
 
@@ -61,9 +61,9 @@ test("低空天空与不同星球云系实际出现，穿云连续、晨昏暖�
     const orientation = new THREE.Quaternion().setFromRotationMatrix(
       new THREE.Matrix4().lookAt(new THREE.Vector3(), forward, up),
     );
-    // Only these low views specify ground clearance. Entry comparisons retain
+    // Low and planetary sky views specify ground clearance. Entry comparisons retain
     // their fixed 10.6/10.62/16.2 km radial cloud altitudes.
-    const radialAltitude = view === "sky" || view === "sunset"
+    const radialAltitude = view === "sky" || view === "sunset" || view === "planet-sky"
       ? terrainHeightKm(id, up.toArray()) + altitude : altitude;
     state = { version: 2, worldLayoutVersion: world.layoutVersion, systemId: body.systemId ?? "solar", position: new THREE.Vector3().fromArray(body.position)
       .addScaledVector(up, body.radius + radialAltitude / world.unitsKm).toArray(), velocity: [0, 0, 0],
@@ -72,10 +72,11 @@ test("低空天空与不同星球云系实际出现，穿云连续、晨昏暖�
     await page.getByRole("button", { name: "自由航行", exact: true }).click();
     await expect(page.locator("#loading-overlay")).toBeHidden();
     await page.locator("#flight-quality").selectOption("standard");
+    await page.locator("#flight-pause").click();
     await expect(page.locator("#flight-resume")).toBeEnabled();
     await page.locator("#flight-resume").click();
     await expect(page.locator("#flight-altitude")).toHaveText(`${Math.round(radialAltitude)} km 高度`);
-    const image = PNG.sync.read(await page.locator("canvas").screenshot({ style: ".flight-ui, .destination-selectors { visibility: hidden !important; }" }));
+    const image = PNG.sync.read(await page.locator("canvas").screenshot({ style: ".flight-ui, .flight-ui *, .destination-selectors, .destination-selectors * { visibility: hidden !important; }" }));
     // The upward view shows nearby cloud banks in the lower sky. Measuring only
     // the zenith misses those clouds; the 90% limit still stays above the horizon.
     // Horizontal entry comparisons retain their original region unchanged.
@@ -99,7 +100,9 @@ test("低空天空与不同星球云系实际出现，穿云连续、晨昏暖�
     .toBeGreaterThan(low.average[0] / low.average[2] + 0.15);
   for (const name of ["venus-sky", "titan-sky", "proxima-sky"]) {
     const planetary = results.get(name)!;
-    expect(planetary.average[1], `${name} 应有自身的可见天空与云光`).toBeGreaterThan(60);
+    // Perceived brightness includes the red channel of the red-dwarf sky;
+    // green alone undercounts its warm light.
+    expect(planetary.luminance, `${name} 应有自身的可见天空与云光`).toBeGreaterThan(60);
     expect(planetary.contrast, `${name} 云与天空要有可见层次`).toBeGreaterThan(3);
     expect(planetary.average[0] / Math.max(planetary.average[2], 1), `${name} 保留不同于地球的暖色天气`)
       .toBeGreaterThan(low.average[0] / low.average[2] + 0.1);

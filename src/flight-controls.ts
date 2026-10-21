@@ -69,7 +69,10 @@ export class FlightControls {
     // activation retains focus so Space/Enter can keep operating the button.
     on(window, "click", ((e: MouseEvent) => {
       if (e.detail === 0 || !(e.target instanceof Element)) return;
-      const button = e.target.closest<HTMLButtonElement>("#flight-ui button, #mode-flight");
+      // A toolbar handler can replace the clicked icon/text before bubbling
+      // reaches window. The event path retains its original button ancestor.
+      const button = e.composedPath().find(node => node instanceof HTMLButtonElement
+        && node.matches("#flight-ui button, #mode-flight")) as HTMLButtonElement | undefined;
       if (button && button === document.activeElement) button.blur();
     }) as EventListener);
     on(window, "blur", (() => this.clear()) as EventListener);

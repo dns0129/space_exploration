@@ -39,14 +39,14 @@ test("卫星有独立观测模型、信息和锁定导航，可跃迁到月球",
   expect(errors).toEqual([]);
 });
 
-test("近地向太空推进和减速脉冲可见，不能绕过跃迁限制", async ({ page }, info) => {
+test("近地太空档推进和减速脉冲可见，暂停时键盘不会启动跃迁", async ({ page }, info) => {
   test.setTimeout(120000);
   const world = await (await page.request.get("/api/world")).json();
   const earth = world.bodies.find((body: any) => body.id === "earth");
   await page.request.get("/api/flight/save");
   expect((await page.request.post("/api/flight/save", { data: {
     version: 2, worldLayoutVersion: world.layoutVersion, position: [earth.position[0], earth.position[1], earth.position[2] + earth.radius + 50 / world.unitsKm],
-    velocity: [0, 0, 0], orientation: [0, 1, 0, 0], target: "mars", camera: "cockpit", assist: false, elapsed: 0,
+    velocity: [0, 0, 0], orientation: [0, 1, 0, 0], target: "mars", camera: "cockpit", assist: false, elapsed: 0, cruiseSpeedKm: 500,
   } })).ok()).toBe(true);
   await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
@@ -54,8 +54,15 @@ test("近地向太空推进和减速脉冲可见，不能绕过跃迁限制", as
   await expect(page.locator("#loading-overlay")).toBeHidden();
   await page.getByRole("combobox", { name: "航行画质" }).selectOption("standard");
   await page.locator("#flight-resume").click();
-  await expect(page.locator("#flight-engine")).toHaveText("行星引擎 · 向太空离地");
-  await expect(page.locator("#flight-jump")).toBeDisabled();
+  // At 50 km the current engine uses the ordinary space preset, even in air.
+  await expect(page.locator("#flight-engine")).toHaveText("巡航档");
+  await expect(page.locator("#flight-jump")).toBeEnabled();
+  await page.locator("#flight-pause").click();
+  await page.keyboard.press("j");
+  await expect(page.locator("#warp-engine")).toHaveAttribute("data-phase", "ready");
+  await expect(page.locator("#flight-pause")).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#flight-pause").click();
+  await expect(page.locator("#flight-jump")).toBeEnabled();
   await page.keyboard.down("w");
   await expect.poll(async () => Number((await page.locator("#flight-speed").innerText()).replaceAll(",", ""))).toBeGreaterThan(100);
   await page.keyboard.up("w");

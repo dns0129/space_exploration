@@ -60,6 +60,7 @@ test("火星与月球按需加载原生 8K，手机保留完整 4K，并实际�
   await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
   expect(observed.requests, "进入地球不能预先下载火星或月球影像").toEqual([]);
+  await page.locator("#quality").selectOption("ultra");
 
   for (const body of bodies) {
     await selectSurface(page, body, native);
@@ -87,6 +88,7 @@ test("原生 8K 下载失败时火星与月球恢复完整 4K 影像", async ({ 
   await page.route(/\/textures\/(mars|moon)-real-8k\.jpg$/, route => route.abort());
   await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
+  await page.locator("#quality").selectOption("ultra");
   for (const body of bodies) await selectSurface(page, body, false);
   expect(observed.requests).toEqual(bodies.flatMap(body => [surfaceFile(body, true), surfaceFile(body, false)]));
   expect(observed.responses).toEqual(bodies.map(body => ({ file: surfaceFile(body, false), status: 200 })));

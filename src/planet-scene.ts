@@ -735,7 +735,6 @@ export class SolarScene {
     if (surfaceMap?.compactFile && (this.compactTextures || this.renderer.capabilities.maxTextureSize < surfaceMap.width)) {
       file = surfaceMap.compactFile;
     }
-    const originalFile = file;
     file = this.textureFile(file);
     const loader = new THREE.TextureLoader();
     let texture: THREE.Texture;
@@ -768,7 +767,9 @@ export class SolarScene {
       texture.image = canvas;
     }
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.name = originalFile;
+    // Diagnostics must identify the image actually fetched, including quality
+    // variants and a successful 4K fallback after a native 8K request fails.
+    texture.name = file;
     texture.anisotropy = surface ? this.surfaceAnisotropy : Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
     if (surface) texture.wrapS = THREE.RepeatWrapping;
     texture.needsUpdate = true;

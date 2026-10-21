@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
+import { setObservationSettings } from "./observation-helpers";
 
 test("4K 银河实际渲染，真实距离与键盘跃迁、暂停、中止和存档一致", async ({ page }, info) => {
   test.setTimeout(150000);
@@ -18,15 +19,22 @@ test("4K 银河实际渲染，真实距离与键盘跃迁、暂停、中止和�
   const earth = config.bodies.find((b: any) => b.id === "earth");
   expect(earth.radius * config.unitsKm).toBe(6371);
   expect(Math.hypot(...earth.position) * config.unitsKm).toBeCloseTo(149597870.7, 1);
-  if (info.project.name === "mobile") await page.getByRole("button", { name: "观测设置" }).click();
+  if (info.project.name === "mobile") await setObservationSettings(page, true);
   await page.getByRole("combobox", { name: "渲染画质" }).selectOption("standard");
-  const capture = async () => PNG.sync.read(await page.locator("canvas").screenshot({ style: ".control-panel, .altitude, .toast, .viewport-tools, .mobile-settings { visibility:hidden!important }" }));
+  if (await page.locator("#pause").getAttribute("aria-pressed") !== "true")
+    await page.locator("#pause").click();
+  await expect(page.locator("canvas")).toHaveAttribute("data-observation-frame-idle", "true");
+  const capture = async () => PNG.sync.read(await page.locator("canvas").screenshot({ style: ".ui-workspace,.ui-workspace *,.header,.header *,.footer,.footer *,.interaction-hint,.toast,.toast *,.mobile-settings,#return-star-map { visibility:hidden!important }" }));
   const before = await capture();
+  await info.attach("galaxy-before", { body: PNG.sync.write(before), contentType: "image/png" });
   await page.getByRole("switch", { name: "星空", exact: true }).click();
   const dark = await capture();
+  await info.attach("galaxy-after", { body: PNG.sync.write(dark), contentType: "image/png" });
   let changed = 0;
   for (let i = 0; i < before.data.length; i += 4)
-    if (Math.abs(before.data[i]-dark.data[i])+Math.abs(before.data[i+1]-dark.data[i+1])+Math.abs(before.data[i+2]-dark.data[i+2]) > 60) changed++;
+    // The night-sky exposure keeps most photographic cloud pixels dark. A
+    // 40-level RGB difference still requires a visible change across 5000 pixels.
+    if (Math.abs(before.data[i]-dark.data[i])+Math.abs(before.data[i+1]-dark.data[i+1])+Math.abs(before.data[i+2]-dark.data[i+2]) > 40) changed++;
   expect(changed, "背景开关必须移除实际银河像素").toBeGreaterThan(5000);
   await page.getByRole("switch", { name: "星空", exact: true }).click();
   await page.getByRole("button", { name: "自由航行", exact: true }).click();

@@ -168,6 +168,8 @@ Windows 可双击 `启动航行.bat`；macOS/Linux 可运行 `bash 启动航行.
 
 需要 Node.js 24 LTS 与 npm。无需数据库、API 密钥或外部素材服务。
 
+Windows 本机可直接双击根目录的 **`启动游戏.bat`**。脚本会按需安装锁定依赖，同时启动游戏与存档后端，等待服务就绪后自动在默认浏览器打开 `http://127.0.0.1:5173/`。请保留服务窗口，按 Ctrl+C 或关闭窗口即可停止；再次双击会复用已经运行的游戏服务。若端口被其他程序占用，窗口会保留具体错误。
+
 ```sh
 cd /workspace/space_exploration
 npm ci
@@ -188,6 +190,8 @@ npm run test:offline # 导出并验证断网驾驶、跃迁、本机保存与恢
 ```
 
 后端可通过 `PORT` 修改端口、`VOYAGER_HOST` 修改绑定地址、`VOYAGER_DATA_DIR` 修改存档目录。生产模式直接用 `npm start` 提供页面与 API；Vite preview 仅预览静态构建，不包含存档后端。
+
+一键启动器默认使用游戏端口 5173 与后端端口 3000，可分别通过 `VOYAGER_GAME_PORT` 和 `VOYAGER_API_PORT` 更改。自动化浏览器验证默认使用软件渲染；本机显卡回归可设置 `PLAYWRIGHT_HARDWARE=1`，并通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指向已安装的 Chrome 或 Chromium 可执行文件。省略浏览器路径时需先运行 `npx playwright install chromium` 安装测试浏览器。
 
 ## 后端接口
 

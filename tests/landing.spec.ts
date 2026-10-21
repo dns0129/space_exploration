@@ -9,9 +9,9 @@ test("地表实际渲染，L 连续降落、暂停、保存恢复与起飞，桌
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
   const world = await (await page.request.get("/api/world")).json();
   const earth = world.bodies.find((body: any) => body.id === "earth");
-  // The restored photography depicts the Pacific at the old checkpoint.
-  // Land on the sunlit, imaged Hilo forest so this checks actual ground colour.
-  const outward = terrainMapNormal("earth", [0.06888888888888892, 0.6094444444444445]);
+  // Use the broad sunlit Papua vegetation sample from the colour regression.
+  // A tiny Hilo island pixel blends into the ocean in the standard 2K preset.
+  const outward = terrainMapNormal("earth", [0.9, 0.46]);
   const height = terrainHeightKm("earth", outward) + LANDING_CLEARANCE_KM + 0.06;
   await page.request.get("/api/flight/save");
   expect((await page.request.post("/api/flight/save", { data: {

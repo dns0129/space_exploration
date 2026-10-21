@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
+import { setObservationSettings } from "./observation-helpers";
 
 const bodies = [
   ["sun", "太阳", "SUN"],
@@ -54,7 +55,7 @@ test("太阳和八颗行星均渲染独立外观，信息与图层随天体切�
     "sun",
   );
   if (testInfo.project.name === "mobile")
-    await page.getByRole("button", { name: "观测设置" }).click();
+    await setObservationSettings(page, true);
   await page
     .getByRole("combobox", { name: "渲染画质" })
     .selectOption("standard");
@@ -143,7 +144,7 @@ test("土星环、金星厚云与太阳日冕开关改变实际渲染", async ({
     "saturn",
   );
   if (testInfo.project.name === "mobile")
-    await page.getByRole("button", { name: "观测设置" }).click();
+    await setObservationSettings(page, true);
   await page
     .getByRole("combobox", { name: "渲染画质" })
     .selectOption("standard");
@@ -153,7 +154,7 @@ test("土星环、金星厚云与太阳日冕开关改变实际渲染", async ({
     PNG.sync.read(
       await page.locator("canvas").screenshot({
         style:
-          ".control-panel, .altitude, .toast, .viewport-tools, .mobile-settings { visibility: hidden !important; }",
+          ".ui-workspace, .ui-workspace *, .header, .header *, .footer, .footer *, .interaction-hint, .toast, .toast *, .mobile-settings, #return-star-map { visibility: hidden !important; }",
       }),
     );
   for (const [id, layer, minPixels] of [
@@ -165,10 +166,16 @@ test("土星环、金星厚云与太阳日冕开关改变实际渲染", async ({
     await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", id);
     // The screenshot includes the HUD; wait for its first height readout before comparing frames.
     await expect(page.locator("#altitude")).not.toContainText("—");
+    if (await page.locator("#pause").getAttribute("aria-pressed") !== "true")
+      await page.locator("#pause").click();
+    // Body changes also animate the camera and texture fades. Compare fully
+    // settled frames so the layer toggle is the only changing variable.
+    await expect(page.locator("canvas")).toHaveAttribute("data-observation-frame-idle", "true");
     const before = await captureSurface();
     const toggle = page.getByRole("switch", { name: layer, exact: true });
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(page.locator("canvas")).toHaveAttribute("data-observation-frame-idle", "true");
     const after = await captureSurface();
     expect(
       difference(before, after),
@@ -176,6 +183,7 @@ test("土星环、金星厚云与太阳日冕开关改变实际渲染", async ({
     ).toBeGreaterThan(minPixels);
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-checked", "true");
+    await expect(page.locator("canvas")).toHaveAttribute("data-observation-frame-idle", "true");
     const restored = await captureSurface();
     expect(
       difference(before, restored),

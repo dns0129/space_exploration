@@ -118,6 +118,10 @@ test("星舰停泊、舱内移动、驾驶室与观测舱、碰撞、暂停和�
   await expect(host).toHaveAttribute("data-station-camera", "first");
 
   // A held jump must land once and remain grounded until the button is released.
+  await info.attach("jump-input-context", { body: JSON.stringify(await page.evaluate(() => ({
+    active: document.activeElement?.tagName, activeId: document.activeElement?.id, hidden: document.hidden,
+    paused: document.querySelector("#flight-pause")?.getAttribute("aria-pressed"),
+  }))), contentType: "application/json" });
   const releaseJump = await hold(page, "Space", mobile);
   try {
     await expect(page.locator("#walking-panel")).toHaveAttribute("data-grounded", "false");

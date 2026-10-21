@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile, mkdir } from "node:fs/promises";
 import { resolve, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import { chromium, expect, devices } from "@playwright/test";
 import { PNG } from "pngjs";
@@ -63,8 +64,9 @@ await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({
   executablePath:
-    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || "/usr/bin/chromium",
-  args: [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
+    (existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined),
+  args: process.env.PLAYWRIGHT_HARDWARE === "1" ? [] : [
     "--use-gl=angle",
     "--use-angle=swiftshader",
     "--enable-unsafe-swiftshader",

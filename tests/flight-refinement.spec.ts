@@ -30,8 +30,17 @@ test("锁定标识居中对齐天体，转向逐帧跟随，鼠标不转向、�
   await page.keyboard.down("ArrowRight");
   const frames = await page.evaluate(async () => {
     const positions: string[] = [];
+    const canvas = document.querySelector("canvas")!;
+    let rendered = canvas.dataset.worldRenderCount;
+    const deadline = performance.now() + 10000;
     for (let i = 0; i < 12; i++) {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      // A 120/144 Hz display can issue several RAF callbacks per capped
+      // 60 FPS render. Inspect the marker once per actual rendered frame.
+      do {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        if (performance.now() > deadline) throw new Error("Flight rendering stopped");
+      } while (canvas.dataset.worldRenderCount === rendered);
+      rendered = canvas.dataset.worldRenderCount;
       positions.push((document.querySelector("#flight-marker") as HTMLElement).style.transform);
     }
     return new Set(positions).size;

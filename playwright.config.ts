@@ -16,7 +16,7 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:5173",
     launchOptions: {
       executablePath,
-      args: [
+      args: process.env.PLAYWRIGHT_HARDWARE === "1" ? [] : [
         "--use-gl=angle",
         "--use-angle=swiftshader",
         "--enable-unsafe-swiftshader",

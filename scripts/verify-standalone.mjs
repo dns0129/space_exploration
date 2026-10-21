@@ -28,7 +28,7 @@ const browser = await chromium.launch({
   executablePath:
     process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
     (existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined),
-  args: [
+  args: process.env.PLAYWRIGHT_HARDWARE === "1" ? [] : [
     "--use-gl=angle",
     "--use-angle=swiftshader",
     "--enable-unsafe-swiftshader",

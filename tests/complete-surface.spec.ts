@@ -21,13 +21,17 @@ test("近地表所有方向使用一个闭合球面，细分不产生第二层�
     const globe = surfaces[0] as THREE.Mesh<THREE.SphereGeometry>;
     expect(globe.name).toBe("complete-surface-globe");
     const vertices = globe.geometry.getAttribute("position");
+    // Ground vertices now use metres relative to a radial floating anchor.
+    // Reconstruct body-centred positions before checking the shared terrain.
+    const radiusM = body.radius * world.unitsKm * 1000;
+    const anchor = ship.environment.outward.clone().multiplyScalar(radiusM);
     const point = new THREE.Vector3();
     let near = 0, far = 0;
     for (let i = 0; i < vertices.count; i += 19) {
-      point.fromBufferAttribute(vertices, i);
+      point.fromBufferAttribute(vertices, i).add(anchor);
       const normal = point.clone().normalize();
-      const expected = body.radius + terrainHeightKm(id, normal.toArray()) / world.unitsKm;
-      expect(Math.abs(point.length() - expected) * world.unitsKm).toBeLessThan(0.01);
+      const expected = radiusM + terrainHeightKm(id, normal.toArray()) * 1000;
+      expect(Math.abs(point.length() - expected)).toBeLessThan(10);
       if (normal.dot(ship.environment.outward) > 0.9) near++;
       if (normal.dot(ship.environment.outward) < -0.5) far++;
     }
@@ -38,7 +42,7 @@ test("近地表所有方向使用一个闭合球面，细分不产生第二层�
     for (let row = 0; row <= globe.geometry.parameters.heightSegments; row++) {
       const first = new THREE.Vector3().fromBufferAttribute(vertices, row * stride);
       const last = new THREE.Vector3().fromBufferAttribute(vertices, row * stride + stride - 1);
-      expect(first.distanceTo(last) * world.unitsKm).toBeLessThan(0.01);
+      expect(first.distanceTo(last)).toBeLessThan(10);
     }
     scene.dispose();
   }

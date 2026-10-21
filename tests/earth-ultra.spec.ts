@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
+import { setObservationSettings } from "./observation-helpers";
 
 test("超清地球近观呈现原生分块细节，切换画质释放分块，航行继续使用高清图层", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop");
@@ -47,12 +48,14 @@ test("超清地球近观呈现原生分块细节，切换画质释放分块，�
   await page.route("**/api/flight/save", route => route.fulfill({ json: { state } }));
   await page.getByRole("button", { name: "自由航行", exact: true }).click();
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-mode", "flight");
-  await expect(canvas).toHaveAttribute("data-earth-maps", "8k");
+  await expect(canvas).toHaveAttribute("data-graphics-preset", "standard");
+  await expect(canvas).toHaveAttribute("data-earth-maps", "2k");
   await expect(page.locator("#flight-resume")).toBeEnabled();
   await page.locator("#flight-resume").click();
   await expect(page.locator("#flight-altitude")).toHaveText("1,100 km 高度");
   await page.locator("#flight-pause").click();
   await page.locator("#flight-quality").selectOption("ultra");
+  await expect(canvas).toHaveAttribute("data-earth-maps", "8k");
   await expect(canvas).toHaveAttribute("data-earth-detail-tiles", "4", { timeout: 60_000 });
   expect(errors).toEqual([]);
 });
@@ -67,9 +70,9 @@ test("细节下载失败保持地球可操作，紧凑设备使用 4K 回退", a
   await page.route("**/textures/earth-detail-*.jpg", route => route.abort());
   await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
-  if (info.project.name === "mobile") await page.getByRole("button", { name: "观测设置" }).click();
+  if (info.project.name === "mobile") await setObservationSettings(page, true);
   await page.locator("#quality").selectOption("ultra");
-  if (info.project.name === "mobile") await page.getByRole("button", { name: "观测设置" }).click();
+  if (info.project.name === "mobile") await setObservationSettings(page, false);
   await page.locator('.primary-button[data-view="close"]').click();
   await expect.poll(async () => Number((await page.locator("#altitude").innerText()).replace(/[^0-9]/g, ""))).toBeLessThan(6000);
   const canvas = page.locator("canvas");

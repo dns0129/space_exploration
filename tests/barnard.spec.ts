@@ -22,6 +22,11 @@ test("巴纳德星与四颗已确认行星使用独立原生高清概念图并�
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/#planet=earth");
   await expect(page.locator("#canvas-host")).toHaveAttribute("data-ready", "true");
+  // The high preset intentionally caps textures at 4K; request ultra to test
+  // the native 8K assets, while compact devices retain their 4K ceiling.
+  await page.locator("#quality").selectOption("ultra");
+  const compactSky = info.project.name === "mobile"
+    || await page.locator("canvas").getAttribute("data-software-renderer") === "true";
   await page.locator("#star-system").selectOption("barnard");
   await expect(page.locator("button[data-body]:visible")).toHaveCount(5);
   await expect(page.locator(".satellite-navigation")).toBeHidden();
@@ -31,7 +36,7 @@ test("巴纳德星与四颗已确认行星使用独立原生高清概念图并�
     await page.locator(`button[data-body="${id}"]`).click();
     await expect(page.locator("#canvas-host")).toHaveAttribute("data-body", id);
     await expect(page.locator("canvas")).toHaveAttribute("data-system", "barnard");
-    await expect(page.locator("canvas")).toHaveAttribute("data-background", "milky-way-4k.jpg");
+    await expect(page.locator("canvas")).toHaveAttribute("data-background", compactSky ? "milky-way-4k.jpg" : "milky-way-8k.jpg");
     await expect(page.locator("h1")).toContainText(body.name);
     await expect(page.locator("#render-status")).toContainText("8K / 4K");
     await expect(page.locator("#render-status")).toContainText("概念");

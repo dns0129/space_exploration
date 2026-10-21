@@ -76,7 +76,9 @@ test("新版引擎：真实地形十公里边界切换米秒低空滑块，两�
   expect(groundSave.lowFlightSpeedMps).toBe(lowSpeed);
   expect(Math.hypot(...groundSave.velocity)).toBe(0);
   for (const [altitude, mode] of [[10.01, "space"], [9.99, "ground"]] as const) {
-    await seedFlight(page, { ...groundSave, position: earthPosition(world, altitude) });
+    // This fixture deliberately moves the ship: discard the old body-fixed
+    // radial rather than submit two contradictory coordinate representations.
+    await seedFlight(page, { ...groundSave, referenceFrame: { kind: "system" }, position: earthPosition(world, altitude) });
     // A fresh page loads the new server snapshot; Restore uses the UI's cache.
     await launchPaused(page);
     await expect(panel).toHaveAttribute("data-mode", mode);

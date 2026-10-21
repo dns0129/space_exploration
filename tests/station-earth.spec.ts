@@ -68,6 +68,7 @@ test("空间站窗外复用轨道地球、云层、夜景与大气，并保持�
     const base = { ...state.pad, target: body.id, systemId: body.systemId, stationVisit: undefined,
       landedBody: undefined, referenceFrame: { kind: "system" }, velocity: [0, 0, 0],
       orientation: [-Math.SQRT1_2, 0, 0, Math.SQRT1_2] };
+    await scene.prepareFlightRestore(base);
     const orbit = scene.restoreFlight({ ...base,
       position: [body.position[0], body.position[1], body.position[2] - body.radius - 1100 / config.unitsKm] });
     const proximaSky = scene.galaxySky.mesh.material.uniforms.skyMap.value === scene.backgrounds.get(body.systemId);
@@ -103,7 +104,8 @@ test("空间站窗外复用轨道地球、云层、夜景与大气，并保持�
       skyShared: scene.galaxySky.mesh.parent === scene.spaceScene && scene.galaxySky.mesh.visible,
       passes: state.passes,
       expectedPasses: [{ type: "render", scene: scene.spaceScene.uuid, camera: scene.camera.uuid },
-        { type: "clearDepth" }, { type: "render", scene: scene.stationInterior.scene.uuid, camera: scene.stationInterior.camera.uuid }],
+        { type: "clearDepth" }, { type: "render", scene: scene.stationInterior.scene.uuid, camera: scene.stationInterior.camera.uuid },
+        { type: "render", scene: scene.hdr.scene.uuid, camera: scene.hdr.camera.uuid }],
       pose: { surface: earth.surface.quaternion.toArray(), clouds: earth.layers.clouds.quaternion.toArray(),
         sun: earth.surface.material.uniforms.sunDirection.value.toArray(),
         cloudSun: earth.layers.clouds.material.uniforms.sunDirection.value.toArray(),
@@ -113,9 +115,11 @@ test("空间站窗外复用轨道地球、云层、夜景与大气，并保持�
   expect(shared.sameEarth).toBe(true);
   expect(shared.detailCountUnchanged).toBe(true);
   expect(shared.sameResources).toEqual(Array(10).fill(true));
+  // The selected standard preset caps every shared image at 2K. The explicit
+  // ultra-upgrade assertion below independently verifies 8K residency.
   for (const [width, height] of shared.maps) {
-    expect(width).toBeGreaterThanOrEqual(4096);
-    expect(height).toBeGreaterThanOrEqual(2048);
+    expect(width).toBeGreaterThanOrEqual(2048);
+    expect(height).toBeGreaterThanOrEqual(1024);
   }
   expect(shared.cloudTextureShared).toBe(true);
   expect(shared.cloudsRendered).toBe(true);
@@ -145,8 +149,6 @@ test("空间站窗外复用轨道地球、云层、夜景与大气，并保持�
     const size = 256, target = new THREE.WebGLRenderTarget(size, size);
     target.texture.colorSpace = THREE.SRGBColorSpace;
     const windowHeight = 384, windowWidth = Math.max(96, Math.round(windowHeight * scene.camera.aspect));
-    const windowTarget = new THREE.WebGLRenderTarget(windowWidth, windowHeight);
-    windowTarget.texture.colorSpace = THREE.SRGBColorSpace;
     const black = new THREE.DataTexture(new Uint8Array(4), 2, 2, THREE.RedFormat);
     black.needsUpdate = true;
     const shots: { name: string; image: string }[] = [];
@@ -165,10 +167,17 @@ test("空间站窗外复用轨道地球、云层、夜景与大气，并保持�
       shots.push({ name, image: output.toDataURL("image/png").split(",")[1] });
     };
     const captureWindow = (name: string) => {
-      renderer.setRenderTarget(windowTarget);
+      // HDR owns its render targets and presents to the canvas. Sample that
+      // actual composed image instead of an unused external target.
       scene.renderFlightWorld();
+      const output = document.createElement("canvas");
+      output.width = windowWidth; output.height = windowHeight;
+      const context = output.getContext("2d")!;
+      context.drawImage(renderer.domElement, 0, 0, windowWidth, windowHeight);
+      const rgba = context.getImageData(0, 0, windowWidth, windowHeight).data;
       const data = new Uint8Array(windowWidth * windowHeight * 4);
-      renderer.readRenderTargetPixels(windowTarget, 0, 0, windowWidth, windowHeight, data);
+      for (let y = 0; y < windowHeight; y++)
+        data.set(rgba.subarray(y * windowWidth * 4, (y + 1) * windowWidth * 4), (windowHeight - y - 1) * windowWidth * 4);
       shot(name, data, windowWidth, windowHeight);
       return data;
     };
@@ -231,7 +240,7 @@ test("空间站窗外复用轨道地球、云层、夜景与大气，并保持�
       earth.surface.material.uniforms.nightMap.value = original.night;
       renderer.setRenderTarget(original.target); renderer.autoClear = original.autoClear;
       renderer.setClearColor(original.clear, original.alpha);
-      target.dispose(); windowTarget.dispose(); black.dispose(); scene.flightFrameDirty = true;
+      target.dispose(); black.dispose(); scene.flightFrameDirty = true;
     }
   });
   for (const shot of pixels.shots) await writeFile(info.outputPath(`${shot.name}.png`), Buffer.from(shot.image, "base64"));

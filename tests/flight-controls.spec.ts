@@ -5,13 +5,13 @@ test("键盘激活按钮不会刹车，焦点转移后的按键仍能释放", as
   // without loading a GPU scene; these events must work on both devices.
   await page.route("**/__flight-controls", route => route.fulfill({
     contentType: "text/html",
-    body: `<section id="flight-ui"><button id="action">操作</button></section><input id="speed" type="range"><canvas tabindex="0"></canvas>
+    body: `<section id="flight-ui"><button id="action"><span>操作</span></button></section><input id="speed" type="range"><canvas tabindex="0"></canvas>
       <script type="module">
         import { FlightControls } from "/src/flight-controls.ts";
         window.controls = new FlightControls(document.querySelector("canvas"));
         window.clicks = 0;
         const button = document.querySelector("button");
-        button.onclick = () => window.clicks++;
+        button.onclick = () => { window.clicks++; button.innerHTML = "<span>操作</span>"; };
         button.addEventListener("keyup", event => event.stopPropagation());
       </script>`,
   }));
@@ -39,7 +39,7 @@ test("键盘激活按钮不会刹车，焦点转移后的按键仍能释放", as
   await page.keyboard.up("Space");
   expect((await input()).brake).toBe(false);
   // Pointer clicks return to gameplay: the next Space is a brake/jump input.
-  await button.click();
+  await button.locator("span").click();
   expect(await button.evaluate(element => element === document.activeElement)).toBe(false);
   const clicks = await page.evaluate(() => (window as any).clicks);
   await page.keyboard.down("Space");

@@ -21,7 +21,7 @@ await writeFile(join(root,'启动航行.sh'), '#!/usr/bin/env bash\nset -euo pip
 await writeFile(join(root,'中文打开说明.txt'), '远航 VOYAGER · 资源目录版\n\n安装 Node.js 24 LTS 后，在解压目录双击“启动航行.bat”（Windows），或执行 bash 启动航行.sh（macOS/Linux）。浏览器访问 http://127.0.0.1:3000/。\n请通过启动器打开，不直接双击 game/index.html。无需 npm 安装或联网。\n\n完整素材随包提供，地形、物理引擎和贴图按使用场景读取，避免一次解析巨大的单文件 HTML。顶部齿轮提供即时画质设置，存档在 data/，备用存档在当前浏览器。源图片作者与许可见 ASSETS.md 与 THIRD_PARTY_NOTICES.md。\n');
 const entries = [];
 for (const file of (await readdir(root, { recursive: true })).sort()) if (/\.[^/]+$/.test(file))
-  entries.push([file,await readFile(join(root,file))]);
+  entries.push([file.replaceAll('\\','/'),await readFile(join(root,file))]);
 const zip = archive(entries);
 await mkdir(join(project,'dist-standalone'), { recursive: true });
 await writeFile(join(project,'dist-standalone/voyager-directory.zip'),zip);
