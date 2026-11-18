@@ -66,7 +66,11 @@ export class FlightStore {
   async read(): Promise<FlightState | null> {
     await this.writes;
     let readError = this.serverUnconfirmed;
-    if (!navigator.onLine) this.online = false;
+    if (!navigator.onLine && this.online) {
+      readError = true;
+      this.serverUnconfirmed = true;
+      this.online = false;
+    }
     // A successful local fallback is newer than the last acknowledged server
     // checkpoint. Reconnecting must not discard it during a graphics-heavy reload.
     try {
@@ -91,6 +95,7 @@ export class FlightStore {
         if (saved.state !== null) throw new Error("服务端存档无效");
       } catch {
         readError = true;
+        this.serverUnconfirmed = true;
         this.online = false;
       }
     const raw = localStorage.getItem(key);

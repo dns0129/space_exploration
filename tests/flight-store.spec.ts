@@ -137,3 +137,18 @@ test("未恢复的检查点能跨过自动保存周期和退出，主动恢复�
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("voyager-flight-v1")!).elapsed)).toBeGreaterThan(saved.elapsed);
   expect((await read()).target).toBe(saved.target);
 });
+
+test("已连接后断网且没有本机副本时，重复读取均保留服务端存档", async ({ page, context }) => {
+  await page.goto("/api/world");
+  const store = await page.evaluateHandle(async () => {
+    const { FlightStore } = await import("/src/flight-store.ts");
+    const storage = new FlightStore();
+    await storage.connect();
+    return storage;
+  });
+  expect(await store.evaluate(s => s.online)).toBe(true);
+  await context.setOffline(true);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await expect(store.evaluate(s => s.read())).rejects.toThrow("无法读取服务端存档");
+  }
+});

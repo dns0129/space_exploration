@@ -255,8 +255,10 @@ export class FlightInterface {
       this.allowAutoSave(!saved);
       $<HTMLButtonElement>("#flight-resume").disabled = !saved;
     }).catch(() => {
-      if (this.generation === version && !this.autoSaveAllowed)
+      if (this.generation === version && !this.autoSaveAllowed) {
         $("#flight-storage").textContent = "未能读取存档";
+        $(".flight-save-info small").textContent = "重新进入可重试，手动保存将建立新档";
+      }
     });
     return true;
   }
