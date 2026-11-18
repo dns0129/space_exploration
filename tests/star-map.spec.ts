@@ -23,12 +23,12 @@ test("星图逐层探索、真实卫星、2D/3D 和近观往返", async ({ page 
   await expect(page.locator('#star-map-labels [data-loading="true"]')).toHaveCount(0, { timeout: 60000 });
   for (const id of ["io", "europa", "ganymede", "callisto"])
     await expect(page.locator(`#star-map-labels [data-map-body="${id}"]`)).toBeVisible();
-  await page.locator('[data-map-projection="2d"]').click();
+  await page.getByRole("button", { name: "2D", exact: true }).click();
   await expect(canvas).toHaveAttribute("data-map-projection", "2d");
   await expect(canvas).toHaveAttribute("data-map-moving", "false");
   const topPosition = await page.locator('#star-map-labels [data-map-body="europa"]').getAttribute("style");
   await page.screenshot({ path: `test-results/star-map/${info.project.name}-orbit-2d.png` });
-  await page.locator('[data-map-projection="3d"]').click();
+  await page.getByRole("button", { name: "3D", exact: true }).click();
   await expect(canvas).toHaveAttribute("data-map-projection", "3d");
   await expect.poll(() => page.locator('#star-map-labels [data-map-body="europa"]').getAttribute("style")).not.toBe(topPosition);
   await page.locator('#map-dossier [data-map-pick="io"]').click();
@@ -90,10 +90,10 @@ test("连续切换维度时保留画布并平滑抵达最终视角", async ({ pa
   const canvas = page.locator("#canvas-host canvas");
   await expect(page.locator("#star-map")).toBeVisible();
   await expect(canvas).toHaveAttribute("data-map-moving", "false");
-  await page.locator('[data-map-projection="2d"]').click();
+  await page.getByRole("button", { name: "2D", exact: true }).click();
   await expect(canvas).toHaveAttribute("data-map-moving", "true");
-  await page.locator('[data-map-projection="3d"]').click();
-  await page.locator('[data-map-projection="2d"]').click();
+  await page.getByRole("button", { name: "3D", exact: true }).click();
+  await page.getByRole("button", { name: "2D", exact: true }).click();
   await expect(canvas).toHaveAttribute("data-map-projection", "2d");
   await expect(canvas).toHaveAttribute("data-map-moving", "false");
   await expect(page.locator('#star-map-labels [data-loading="true"]')).toHaveCount(0, { timeout: 60000 });

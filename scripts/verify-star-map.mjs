@@ -7,9 +7,9 @@ export async function verifyStarMap(page) {
   await page.locator('[data-map-system="solar"]').click();
   await page.locator('#map-dossier [data-map-pick="jupiter"]').click();
   await expect(page.locator(".map-object-list > button")).toHaveCount(4);
-  await page.locator('[data-map-projection="2d"]').click();
+  await page.getByRole("button", { name: "2D", exact: true }).click();
   await expect(page.locator("#canvas-host canvas")).toHaveAttribute("data-map-projection", "2d");
-  await page.locator('[data-map-projection="3d"]').click();
+  await page.getByRole("button", { name: "3D", exact: true }).click();
   await expect(page.locator("#canvas-host canvas")).toHaveAttribute("data-map-projection", "3d");
   await page.locator('#map-dossier [data-map-pick="io"]').click();
   await expect(page.locator("#map-observe")).toContainText("木卫一");
