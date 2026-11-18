@@ -111,3 +111,29 @@ test("网络没有响应时仍按原期限返回有效本机存档并保留后�
   expect(result.saveMs).toBeGreaterThanOrEqual(3900);
   expect(result.saveMs).toBeLessThan(6500);
 });
+
+test("未恢复的检查点能跨过自动保存周期和退出，主动恢复后重新自动保存", async ({ page }) => {
+  test.setTimeout(120000);
+  const saved = await seedCheckpoint(page);
+  await page.setViewportSize({ width: 840, height: 620 });
+  await page.evaluate(s => localStorage.setItem("voyager-flight-v1", JSON.stringify(s)), saved);
+  await page.goto("/?mode=flight#planet=mars");
+  await expect(page.locator("#flight-resume")).toBeEnabled();
+  let writes = 0;
+  page.on("request", req => {
+    if (req.method() === "POST" && req.url().endsWith("/api/flight/save")) writes++;
+  });
+  await expect.poll(() => page.locator("#flight-time").textContent(), { timeout: 85000 }).toMatch(/00:(2[1-9]|[3-5]\d)/);
+  await page.locator("#mode-observe").click();
+  await expect(page.locator("#star-map")).toBeVisible();
+  expect(writes).toBe(0);
+  const read = async () => (await (await page.request.get("/api/flight/save")).json()).state;
+  expect(await read()).toEqual(saved);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("voyager-flight-v1")!))).toEqual(saved);
+  await page.getByRole("button", { name: "自由航行", exact: true }).click();
+  await page.locator("#flight-resume").click();
+  await expect(page.locator("#flight-target")).toHaveText("地球");
+  await page.locator("#mode-observe").click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("voyager-flight-v1")!).elapsed)).toBeGreaterThan(saved.elapsed);
+  expect((await read()).target).toBe(saved.target);
+});

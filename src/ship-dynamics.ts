@@ -57,6 +57,7 @@ export class ShipDynamics {
   collision: BodyId | null = null;
   landedBody: BodyId | null = null;
   landingPhase: "manual" | "descending" | "landed" | "ascending" = "manual";
+  private takeoffLiftHeld = false;
   private landingBody: BodyId | null = null;
   readonly config: WorldConfig;
   readonly scale: SpatialScale;
@@ -329,14 +330,18 @@ export class ShipDynamics {
       this.warpProgress = Math.min(1, this.warpClock / this.config.warp.cooldownSeconds);
       if (this.warpProgress >= 1) this.resetWarp();
     }
+    if (input.lift <= 0 || this.landingPhase !== "ascending") this.takeoffLiftHeld = false;
     if (this.landingPhase === "landed") {
       this.elapsed += dt;
       this.velocity.set(0, 0, 0);
-      if (input.lift > 0) this.takeOff();
+      if (input.lift > 0) {
+        this.takeOff();
+        this.takeoffLiftHeld = true;
+      }
       return;
     }
     if (this.landingPhase === "descending" || this.landingPhase === "ascending") {
-      if (input.brake || input.throttle || input.strafe || input.lift || input.yaw || input.pitch || input.roll || input.mouseX || input.mouseY)
+      if (input.brake || input.throttle || input.strafe || (input.lift && !this.takeoffLiftHeld) || input.yaw || input.pitch || input.roll || input.mouseX || input.mouseY)
         this.cancelLanding();
       else { this.stepLanding(dt); return; }
     }
@@ -886,6 +891,7 @@ export class ShipDynamics {
     if (!this.landedBody) return "请先在地表着陆";
     this.landingBody = this.landedBody;
     this.landedBody = null;
+    this.takeoffLiftHeld = false;
     this.landingPhase = "ascending";
     this.collision = null;
     this.velocity.set(0, 0, 0);

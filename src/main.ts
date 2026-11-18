@@ -668,6 +668,7 @@ $("#canvas-host").addEventListener("dblclick", () => {
   if (state.photoMode) setPhotoMode(false);
 });
 document.addEventListener("keydown", (event) => {
+  if (event.defaultPrevented || document.querySelector("dialog[open]")) return;
   if (!event.ctrlKey && !event.metaKey && !event.altKey) {
     if (event.code === "Escape" && (state.photoMode || state.placement)) {
       event.preventDefault();
@@ -705,7 +706,7 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  if (starMap?.active && event.code === "Escape" && !$<HTMLDialogElement>("#help-dialog").open) {
+  if (starMap?.active && event.code === "Escape") {
     event.preventDefault();
     starMap.back();
     return;

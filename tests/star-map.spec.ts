@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
+import { readFile } from "node:fs/promises";
 
 test("星图逐层探索、真实卫星、2D/3D 和近观往返", async ({ page }, info) => {
   test.setTimeout(180_000);
@@ -99,4 +100,29 @@ test("连续切换维度时保留画布并平滑抵达最终视角", async ({ pa
   await page.locator("#map-motion").click();
   await expect(page.locator("#map-motion")).toHaveAttribute("aria-pressed", "true");
   expect(await canvas.count()).toBe(1);
+});
+
+test("暂停的卫星星图可拍照，关闭画质面板保留轨道层级", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/#map=solar&orbit=jupiter");
+  await expect(page.locator("#star-map")).toHaveAttribute("data-parent", "jupiter");
+  await expect(page.locator('#star-map-labels [data-loading="true"]')).toHaveCount(0);
+  await page.locator(".header-tools [data-open-graphics]").click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#graphics-dialog")).toBeHidden();
+  await expect(page.locator("#star-map")).toHaveAttribute("data-parent", "jupiter");
+  await page.keyboard.press("p");
+  const canvas = page.locator("#canvas-host canvas");
+  const screen = PNG.sync.read(await canvas.screenshot());
+  const download = page.waitForEvent("download");
+  await page.keyboard.press("Enter");
+  const photo = PNG.sync.read(await readFile((await (await download).path())!));
+  const litFraction = (image: PNG) => {
+    let count = 0;
+    for (let i = 0; i < image.data.length; i += 4)
+      if (image.data[i] + image.data[i + 1] + image.data[i + 2] > 20) count++;
+    return count / (image.width * image.height);
+  };
+  expect(litFraction(photo)).toBeGreaterThan(0.002);
+  expect(Math.abs(litFraction(photo) - litFraction(screen))).toBeLessThan(0.05);
 });

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createVoyagerServer } from "../server/server.mjs";
-const server = createVoyagerServer();
+const server = createVoyagerServer({ dataDir: process.env.VOYAGER_DATA_DIR });
 const port = Number(process.env.VOYAGER_API_PORT ?? 3000);
 server.on("error", (error) => {
   console.error(`Backend startup failed: ${error.message}`);
@@ -12,7 +12,7 @@ server.listen(port, "127.0.0.1", () => {
     [
       "node_modules/vite/bin/vite.js",
       "--host",
-      "0.0.0.0",
+      "127.0.0.1",
       ...process.argv.slice(2),
     ],
     {

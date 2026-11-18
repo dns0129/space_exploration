@@ -20,13 +20,14 @@ export class FlightInterface {
   private store = new FlightStore();
   private saved: FlightState | null = null;
   private paused = false;
+  private pauseRevision = 0;
   private warpPhase: FlightStats["warpPhase"] = "ready";
   private landingPhase: FlightStats["landingPhase"] = "manual";
   private walking = false;
   private propulsionLowFlight = false;
   private generation = 0;
   private saving = false;
-  private saveRevision = 0;
+  private autoSaveAllowed = false;
   private lastAutoElapsed = 0;
   private timer?: ReturnType<typeof setInterval>;
   private marker!: HTMLElement;
@@ -89,6 +90,7 @@ export class FlightInterface {
       if (this.saved && this.scene?.restoreFlight(this.saved)) {
         this.shotPreview = false;
         this.shotReturn = undefined;
+        this.allowAutoSave(true);
         this.lastAutoElapsed = this.saved.elapsed;
         this.changed(true, this.saved.target);
         this.sync();
@@ -233,6 +235,7 @@ export class FlightInterface {
     this.pause(false);
     scene.setQuality($<HTMLSelectElement>("#flight-quality").value as RenderQuality);
     this.saved = null;
+    this.allowAutoSave(false);
     $("#flight-resume").setAttribute("disabled", "");
     this.changed(true, id);
     $("#flight-ui").hidden = false;
@@ -241,22 +244,26 @@ export class FlightInterface {
       ? "服务端存档"
       : "本机存档";
     this.timer = setInterval(() => {
+      if (!this.autoSaveAllowed || this.shotPreview) return;
       const elapsed = this.scene?.flightState()?.elapsed ?? 0;
       if (this.active && !this.paused && this.warpPhase === "ready" && elapsed - this.lastAutoElapsed >= 20)
         void this.save(true);
     }, 1000);
-    const revision = this.saveRevision;
     void this.store.read().then((saved) => {
-      if (this.generation !== version || revision !== this.saveRevision) return;
+      if (this.generation !== version || this.autoSaveAllowed) return;
       this.saved = saved;
+      this.allowAutoSave(!saved);
       $<HTMLButtonElement>("#flight-resume").disabled = !saved;
+    }).catch(() => {
+      if (this.generation === version && !this.autoSaveAllowed)
+        $("#flight-storage").textContent = "未能读取存档";
     });
     return true;
   }
   stop() {
     const wasActive = this.active;
     const target = this.scene?.flightState()?.target;
-    if (this.active && !this.shotPreview) {
+    if (this.active && this.autoSaveAllowed && !this.shotPreview) {
       const state = this.scene?.flightState();
       if (state) void this.store.save(state).catch(() => {});
     }
@@ -301,14 +308,15 @@ export class FlightInterface {
     if (this.scene?.walking) { this.notify("人物正在舱外探索，请先返回飞船再启动跃迁"); return; }
     if (this.jumping) return;
     const generation = this.generation;
+    const pauseRevision = this.pauseRevision;
     this.jumping = true;
     let error: string | null | undefined;
     try { error = await this.scene?.jumpFlight(); }
     finally { this.jumping = false; }
     if (generation !== this.generation) return;
     if (error) { this.notify(error); return; }
-    this.pause(false);
-    this.notify("跃迁引擎开始蓄能，可随时暂停或中止");
+    if (this.pauseRevision === pauseRevision && !document.hidden) this.pause(false);
+    this.notify(this.paused ? "跃迁准备完成，继续航行后蓄能" : "跃迁引擎开始蓄能，可随时暂停或中止");
   }
   private land() {
     if (this.scene?.walking) { this.explore(); return; }
@@ -430,6 +438,7 @@ export class FlightInterface {
   }
   pause(paused: boolean) {
     if (!this.active) return;
+    ++this.pauseRevision;
     this.paused = paused;
     this.scene?.setFlightPaused(paused);
     $("#flight-pause").textContent = this.scene?.walking ? paused ? "继续探索" : "暂停探索" : paused ? "继续航行" : "暂停航行";
@@ -458,11 +467,15 @@ export class FlightInterface {
       this.sync();
     }
   }
+  private allowAutoSave(allowed: boolean) {
+    this.autoSaveAllowed = allowed;
+    $(".flight-save-info small").textContent = allowed ? "每 20 秒自动保存"
+      : this.saved ? "恢复旧档或手动保存后开启自动保存" : "读取存档后开启自动保存";
+  }
   private async save(automatic: boolean) {
     const state = this.scene?.flightState();
     if (!state || !this.active || this.saving) return;
     this.saving = true;
-    ++this.saveRevision;
     const generation = this.generation;
     $<HTMLButtonElement>("#flight-save").disabled = true;
     $("#flight-storage").textContent = "正在保存…";
@@ -470,6 +483,7 @@ export class FlightInterface {
       const source = await this.store.save(state);
       if (generation !== this.generation) return;
       this.saved = state;
+      this.allowAutoSave(true);
       this.lastAutoElapsed = state.elapsed;
       $<HTMLButtonElement>("#flight-resume").disabled = false;
       $("#flight-storage").textContent =

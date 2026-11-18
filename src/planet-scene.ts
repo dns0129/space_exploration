@@ -391,6 +391,7 @@ export class SolarScene {
       const oldGalaxy = this.galaxy;
       this.galaxy = galaxy; this.galaxyFile = galaxyFile; this.textures.add(galaxy);
       for (const system of STAR_SYSTEMS) this.backgrounds.set(system.id as SystemId, galaxy);
+      this.starMap?.setSky(galaxy);
       this.galaxySky.setTexture(galaxy); this.surfaceGalaxySky.setTexture(galaxy);
       if (oldGalaxy) this.releaseEarthMap(oldGalaxy);
       if (earth) {
@@ -400,7 +401,7 @@ export class SolarScene {
         this.renderer.domElement.dataset.earthMaps = earth[0].image.width >= 4096 ? '4k' : '2k';
       }
       this.surfaceMapBody = null;
-      if (this.currentModel) this.touchSurfaceMap(this.currentModel.body.id);
+      if (!this.starMap?.active && this.currentModel) this.touchSurfaceMap(this.currentModel.body.id);
       if (this.dynamics) this.touchSurfaceMap(this.dynamics.target);
       this.useSystemBackground(this.backgroundSystem);
       this.flightFrameDirty = true;
@@ -409,7 +410,11 @@ export class SolarScene {
       loaded.forEach(map => this.releaseEarthMap(map));
       if (revision === this.textureRevision) this.renderer.domElement.dataset.textureError = 'true';
     } finally {
-      if (revision === this.textureRevision) { this.textureReloading = false; this.renderer.domElement.dataset.textureLoading = 'false'; }
+      if (revision === this.textureRevision) {
+        this.textureReloading = false;
+        this.starMap?.refreshMaterials();
+        this.renderer.domElement.dataset.textureLoading = 'false';
+      }
     }
   }
   private minimumRenderRatio = 0.5;
@@ -670,26 +675,35 @@ export class SolarScene {
 
   get mapView() { return this.starMap; }
 
-  private async modelForStarMap(id: BodyId): Promise<PlanetModel> {
-    let model = this.models.get(id);
+  private atlasMap(id: BodyId) {
     const map = SURFACE_MAPS[id];
-    if (model && (!map || model.mapUniforms?.detailMap.value)) return model;
-    let texture: THREE.Texture | undefined;
-    if (map) {
-      let file = map.compactFile ?? map.file;
-      if (lowTextureSources.has(file)) file = `low/${file}`;
-      texture = await this.loadTexture(file, true);
-      if (this.destroyed) { texture.dispose(); throw new Error("星图已关闭"); }
-      this.textures.add(texture);
-    }
-    model = this.models.get(id);
+    if (!map) return;
+    const compact = map.compactFile ?? map.file;
+    const file = lowTextureSources.has(compact) ? `low/${compact}` : compact;
+    return { file, key: this.textureFile(map.file) === file ? map.file : `atlas/${file}` };
+  }
+
+  private async modelForStarMap(id: BodyId): Promise<PlanetModel> {
+    const atlas = this.atlasMap(id);
+    const previous = atlas && this.lazyMaps.get(atlas.key);
+    if (previous && !previous.texture && !previous.loading) previous.failedAt = undefined;
+    const entry = atlas && this.cacheSurfaceMap(atlas.key, atlas.file);
+    await entry?.loading;
+    let model = this.models.get(id);
     if (!model) {
-      model = id === "earth" ? this.createEarthModel(await this.loadEarthTextures(() => {}))
-        : createPlanetModel(getBody(id), this.sunDirection, undefined, texture);
+      const earth = id === "earth" ? await this.loadEarthTextures(() => {}) : undefined;
+      if (this.destroyed) throw new Error("星图已关闭");
+      model = this.models.get(id) ?? (earth ? this.createEarthModel(earth)
+        : createPlanetModel(getBody(id), this.sunDirection));
       this.configureModelLighting(model);
       this.updateModelLighting(model);
       this.models.set(id, model);
-    } else if (texture) setSurfaceMap(model, texture, 1);
+    }
+    if (atlas && this.starMap?.hasBody(id) && this.lazyMaps.get(atlas.key) === entry) {
+      if (!entry?.texture) throw new Error("星图材质未加载");
+      setSurfaceMap(model, entry.texture, 1);
+      this.releaseSurfaceMaps();
+    }
     return model;
   }
 
@@ -778,9 +792,10 @@ export class SolarScene {
 
   /** Only the current globe's original base image may finish loading locally. */
   private async waitForSpaceWork(file?: string) {
+    const source = file?.replace(/^low\//, "");
     while (!this.destroyed && this.flying && !this.inStation && this.renderPolicy.mode === "surface") {
       const map = SURFACE_MAPS[this.dynamics!.environment.body.id];
-      if (this.textureReloading || (file && (file === map?.file || file === map?.compactFile))) return;
+      if (this.textureReloading || (source && (source === map?.file || source === map?.compactFile))) return;
       await new Promise<void>(resolve => this.spaceWorkWaiters.add(resolve));
     }
   }
@@ -800,24 +815,29 @@ export class SolarScene {
     if (this.flying && this.renderPolicy.mode === "surface" && id !== this.dynamics!.environment.body.id) return;
     const surfaceMap = SURFACE_MAPS[id];
     if (!surfaceMap) return;
+    this.cacheSurfaceMap(surfaceMap.file, surfaceMap.file);
+  }
+
+  private cacheSurfaceMap(key: string, file: string) {
     const now = performance.now();
-    const file = surfaceMap.file;
-    let entry = this.lazyMaps.get(file);
-    if (!entry) this.lazyMaps.set(file, entry = { used: now });
+    let entry = this.lazyMaps.get(key);
+    if (!entry) this.lazyMaps.set(key, entry = { used: now });
     entry.used = now;
-    if (entry.texture || entry.loading || (entry.failedAt && now - entry.failedAt < 20000)) return;
+    if (entry.texture || entry.loading || (entry.failedAt && now - entry.failedAt < 20000)) return entry;
     const loading = entry;
-    loading.loading = this.loadTexture(file, true).then((texture) => {
-      if (this.destroyed || this.lazyMaps.get(file) !== loading) { texture.dispose(); return; }
+    loading.loading = this.loadTexture(file, true).then(texture => {
+      if (this.destroyed || this.lazyMaps.get(key) !== loading) { texture.dispose(); return; }
       loading.texture = texture;
       this.textures.add(texture);
-      this.pendingSurfaceMaps.add(file);
+      if (key.startsWith("atlas/")) { this.releaseSurfaceMaps(); return; }
+      this.pendingSurfaceMaps.add(key);
       this.flightFrameDirty = true;
       if (!this.flying || this.renderPolicy.mode === "space") this.applyPendingSurfaceMaps();
-    }).catch((error) => {
+    }).catch(() => {
       loading.failedAt = performance.now();
-      console.warn(`Surface map ${file} unavailable; keeping the procedural surface.`, error);
+      console.warn(`Surface map ${file} unavailable; keeping the procedural surface.`);
     }).finally(() => { loading.loading = undefined; });
+    return entry;
   }
 
   private applyPendingSurfaceMaps() {
@@ -863,17 +883,19 @@ export class SolarScene {
     const now = performance.now(), budget = textureBudgetBytes(this.graphics, this.compactTextures);
     let used = [...this.textures].reduce((sum, texture) => sum + this.textureBytes(texture), 0);
     const active = this.flying ? this.dynamics?.environment.body.id : this.currentModel?.body.id;
-    const pinned = new Set([SURFACE_MAPS[active!]?.file, SURFACE_MAPS[this.dynamics?.target!]?.file]);
+    const pinned = this.starMap?.active
+      ? new Set(this.starMap.visibleBodies().map(id => this.atlasMap(id)?.key))
+      : new Set([SURFACE_MAPS[active!]?.file, SURFACE_MAPS[this.dynamics?.target!]?.file]);
     const resident = [...this.lazyMaps].filter(([, entry]) => entry.texture).sort((a,b) => a[1].used - b[1].used);
     for (const [file, entry] of resident) {
       if (pinned.has(file) || (used <= budget && now - entry.used < 60000)) continue;
-      for (const model of this.allModels()) if (model.surfaceMap?.file === file) {
+      for (const model of this.allModels()) if (model.mapUniforms?.detailMap.value === entry.texture) {
         setSurfaceMap(model, null, 0); this.mapFades.delete(model);
       }
       used -= this.textureBytes(entry.texture!);
       this.releaseEarthMap(entry.texture!); entry.texture = undefined;
-      // Avoid repeatedly reloading a small visible body when the byte budget is full.
-      entry.failedAt = now;
+      // A returning atlas node must be able to acquire its image immediately.
+      entry.failedAt = file.startsWith('atlas/') || this.starMap?.active ? undefined : now;
     }
     const canvas = this.renderer.domElement;
     canvas.dataset.textureMemoryMiB = (used / 1048576).toFixed(1);
@@ -1027,7 +1049,7 @@ export class SolarScene {
       const { x, y, z, w } = blend;
       const current = earth === model && active;
       detail.update(current ? earth.surface : undefined, this.camera,
-        current && capable && this.earthUpgraded && this.graphics.textures === "ultra", delta, time);
+        current && !this.textureReloading && !this.compactTextures && this.renderer.capabilities.maxTextureSize >= 2064 && this.graphics.textures === "ultra", delta, time);
       // A paused view still redraws resident detail as it arrives and fades in.
       if (blend.x !== x || blend.y !== y || blend.z !== z || blend.w !== w) this.flightFrameDirty = true;
     }
@@ -1458,7 +1480,7 @@ export class SolarScene {
     const delta = Math.min(frameSeconds, 0.25);
     this.lastTime = time;
     if (this.starMap?.active) {
-      this.starMap.update(delta);
+      this.starMap.update(delta, !!this.photoCapture);
       this.finishPhotoCapture();
       return;
     }

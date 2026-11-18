@@ -159,42 +159,59 @@ export class StarMapScene {
     node.label.setAttribute("aria-label", target.group ? `进入${MAP_SYSTEMS.find(system => system.id === target.group)!.name}`
       : isMapStar(body) || this.selection.parent ? `查看${getBody(body).name}` : `进入${getBody(body).name}轨道`);
     node.label.dataset.central = String(orbit === 0 && !target.group);
-    if (!node.visual && !node.loading) {
-      const current = node;
-      node.loading = this.modelFor(body).then(model => {
-        if (this.destroyed) return;
-        const visual = model.group.clone(true);
-        visual.traverse(object => {
-          if (!(object instanceof THREE.Mesh)) return;
-          if (object.geometry instanceof THREE.SphereGeometry) {
-            const radius = object.geometry.parameters.radius;
-            object.geometry = this.sphere;
-            object.scale.multiplyScalar(radius);
-          }
-          const clone = (material: THREE.Material) => {
-            const copy = material.clone();
-            if (copy instanceof THREE.ShaderMaterial && material instanceof THREE.ShaderMaterial) {
-              // Uniform cloning must not duplicate GPU textures for every map occurrence.
-              for (const [name, uniform] of Object.entries(material.uniforms))
-                if (uniform.value instanceof THREE.Texture) copy.uniforms[name].value = uniform.value;
-              current.materials.push([copy, material]);
-            }
-            return copy;
-          };
-          object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
-        });
-        current.visual = visual;
-        current.root.add(visual);
-        this.dirty = true;
-        delete current.label.dataset.loading;
-      }).catch(() => {
-        if (!this.destroyed) {
-          current.label.dataset.loading = "error";
-          current.label.querySelector("small")!.textContent = "材质未加载 · 可点击重试";
+    this.bindModel(node);
+  }
+
+  hasBody(id: BodyId) {
+    return this.active && [...this.nodes.values()].some(node => node.live && node.body === id);
+  }
+
+  visibleBodies() { return [...this.nodes.values()].filter(node => node.live).map(node => node.body); }
+
+  setSky(texture: THREE.Texture) { this.sky.setTexture(texture); this.dirty = true; }
+
+  refreshMaterials() {
+    if (this.active) for (const node of this.nodes.values()) if (node.live) this.bindModel(node);
+  }
+
+  private bindModel(current: Node) {
+    const binding = this.modelFor(current.body).then(model => {
+      if (this.destroyed || current.loading !== binding) return;
+      this.dirty = true;
+      delete current.label.dataset.loading;
+      if (current.visual) return;
+      const visual = model.group.clone(true);
+      visual.traverse(object => {
+        if (!(object instanceof THREE.Mesh)) return;
+        if (object.geometry instanceof THREE.SphereGeometry) {
+          const radius = object.geometry.parameters.radius;
+          object.geometry = this.sphere;
+          object.scale.multiplyScalar(radius);
         }
-      }).finally(() => { current.loading = undefined; });
-      node.label.dataset.loading = "true";
-    }
+        const clone = (material: THREE.Material) => {
+          const copy = material.clone();
+          if (copy instanceof THREE.ShaderMaterial && material instanceof THREE.ShaderMaterial) {
+            // Uniform cloning must not duplicate GPU textures for every map occurrence.
+            for (const [name, uniform] of Object.entries(material.uniforms))
+              if (name !== "planetCenter" && name !== "bodyRadius" && name !== "uTime") copy.uniforms[name] = uniform;
+            current.materials.push([copy, material]);
+          }
+          return copy;
+        };
+        object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
+      });
+      current.visual = visual;
+      current.root.add(visual);
+      this.dirty = true;
+      delete current.label.dataset.loading;
+    }).catch(() => {
+      if (!this.destroyed && current.loading === binding) {
+        current.label.dataset.loading = "error";
+        current.label.querySelector("small")!.textContent = "材质未加载 · 可点击重试";
+      }
+    }).finally(() => { if (current.loading === binding) current.loading = undefined; });
+    current.loading = binding;
+    current.label.dataset.loading = "true";
   }
 
   private ring(radius: number) {
@@ -240,7 +257,7 @@ export class StarMapScene {
 
   hide() { this.active = false; this.controls.enabled = false; this.pointer = undefined; }
 
-  update(delta: number) {
+  update(delta: number, capture = false) {
     const step = this.reducedMotion.matches ? 1 : 1 - Math.exp(-delta * 6);
     this.rings.scale.lerp(this.point.setScalar(1), step);
     if (this.moving) {
@@ -254,7 +271,7 @@ export class StarMapScene {
       || 1 - Math.abs(this.camera.quaternion.dot(this.lastQuaternion)) > 1e-10;
     this.lastPosition.copy(this.camera.position);
     this.lastQuaternion.copy(this.camera.quaternion);
-    if (this.paused && !this.moving && !this.dirty && !moved) return;
+    if (this.paused && !this.moving && !this.dirty && !moved && !capture) return;
     this.dirty = false;
     for (const node of this.nodes.values()) {
       node.currentRadius = THREE.MathUtils.lerp(node.currentRadius, node.live ? node.radius : 0, step);
@@ -268,11 +285,8 @@ export class StarMapScene {
       node.root.position.lerp(node.position, step);
       node.root.scale.setScalar(node.currentRadius);
       if (node.visual && !this.paused) node.visual.rotation.y += delta * 0.025;
-      for (const [material, source] of node.materials) {
+      for (const [material] of node.materials) {
         const uniforms = material.uniforms;
-        // Quality/layer updates replace source maps; map views keep the same live imagery.
-        for (const [name, uniform] of Object.entries(source.uniforms))
-          if (name !== "planetCenter" && name !== "bodyRadius" && name !== "uTime") uniforms[name].value = uniform.value;
         if (uniforms.planetCenter) uniforms.planetCenter.value.copy(node.root.position);
         if (uniforms.bodyRadius) uniforms.bodyRadius.value = node.currentRadius;
         if (!this.paused && uniforms.uTime) uniforms.uTime.value += delta;

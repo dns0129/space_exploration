@@ -39,10 +39,15 @@ async function fetchWithDeadline<T>(
 
 export class FlightStore {
   online = false;
+  private serverUnconfirmed = false;
+  private writes: Promise<void> = Promise.resolve();
   async connect(): Promise<WorldConfig> {
     this.online = false;
-    if (import.meta.env.VITE_PUBLIC_SITE === "true" || !["http:", "https:"].includes(location.protocol) || !navigator.onLine)
+    this.serverUnconfirmed = false;
+    if (import.meta.env.VITE_PUBLIC_SITE === "true" || !["http:", "https:"].includes(location.protocol))
       return world;
+    this.serverUnconfirmed = true;
+    if (!navigator.onLine) return world;
     try {
       const config = await fetchWithDeadline(
         "/api/world", 2500,
@@ -50,6 +55,7 @@ export class FlightStore {
       );
       if (JSON.stringify(config) === JSON.stringify(world)) {
         this.online = true;
+        this.serverUnconfirmed = false;
         return config;
       }
     } catch {
@@ -58,6 +64,8 @@ export class FlightStore {
     return world;
   }
   async read(): Promise<FlightState | null> {
+    await this.writes;
+    let readError = this.serverUnconfirmed;
     if (!navigator.onLine) this.online = false;
     // A successful local fallback is newer than the last acknowledged server
     // checkpoint. Reconnecting must not discard it during a graphics-heavy reload.
@@ -76,21 +84,32 @@ export class FlightStore {
           "/api/flight/save", 2500,
           (response) => response.ok ? response.json() : null,
         );
-        await prepareSavedTerrain(saved?.state);
+        if (!saved || !("state" in saved)) throw new Error("无法读取服务端存档");
+        await prepareSavedTerrain(saved.state);
         const state = validateFlightState(saved?.state);
         if (state) return state;
+        if (saved.state !== null) throw new Error("服务端存档无效");
       } catch {
+        readError = true;
         this.online = false;
       }
-    try {
-      const value = JSON.parse(localStorage.getItem(key) ?? "null");
+    const raw = localStorage.getItem(key);
+    if (raw !== null) {
+      const value = JSON.parse(raw);
       await prepareSavedTerrain(value);
-      return validateFlightState(value);
-    } catch {
-      return null;
+      const state = validateFlightState(value);
+      if (state) return state;
+      throw new Error("无法读取本机存档");
     }
+    if (readError) throw new Error("无法读取服务端存档");
+    return null;
   }
-  async save(state: FlightState): Promise<"server" | "local"> {
+  save(state: FlightState): Promise<"server" | "local"> {
+    const writing = this.writes.then(() => this.write(state));
+    this.writes = writing.then(() => {}, () => {});
+    return writing;
+  }
+  private async write(state: FlightState): Promise<"server" | "local"> {
     if (!navigator.onLine) this.online = false;
     await prepareSavedTerrain(state);
     const safe = validateFlightState(state);

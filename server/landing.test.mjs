@@ -402,3 +402,17 @@ test("Earth has continuous kilometre-scale mountain ranges and collision follows
   assert.equal(ship.landingPhase, "landed");
   assert(Math.abs(ship.environment.groundAltitudeKm) < 0.00001);
 });
+
+test("held lift starts and sustains assisted takeoff across physics substeps", () => {
+  for (const dt of [1 / 60, 1 / 30, 0.2]) {
+    const ship = new ShipDynamics();
+    ship.placeOnSurface("earth", [0, 0, -1]);
+    const lift = { ...emptyInput(), lift: 1 };
+    for (let frame = 0; frame < Math.ceil(2 / dt); frame++) ship.step(dt, lift);
+    assert.equal(ship.landingPhase, "ascending");
+    assert(ship.environment.groundAltitudeKm > 0.01);
+    ship.step(dt, emptyInput());
+    ship.step(dt, lift);
+    assert.equal(ship.landingPhase, "manual");
+  }
+});
