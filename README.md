@@ -232,7 +232,8 @@ npm run test:offline # 导出并验证断网驾驶、跃迁、本机保存与恢
 
 云浏览器策略阻止 `file://` 导航；离线验证在普通浏览器来源中载入导出的完整 HTML，再断网测试，不绕过文件策略，也未验证在云浏览器中双击文件的系统行为。
 
-- `src/planet-scene.ts`、`src/render-mode.ts`：共用画布与渲染器，独立的太空和星球内场景，每帧只绘制一个世界场景；带高度滞回的模式切换及按需天体资源管理。
+- `src/planet-scene.ts`、`src/render-mode.ts`：协调观测、星图和航行渲染，太空与地表通过高度滞回切换。各航行渲染层共用当前物理步结束后的环境数据。
+- `src/scene-textures.ts`：统一处理天体、银河和地球图层的解码、设备回退、缓存预算与回收。
 - `site.html`、`src/site.ts`、`src/site.css`：网站首页、目的地导航与驾驶入口。
 - `src/site-version.ts`：已打开页面的新部署提示和刷新。
 - `src/planet-models.ts`：天体着色器，支持航行世界中的位置与尺寸。

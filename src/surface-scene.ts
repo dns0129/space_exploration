@@ -116,8 +116,7 @@ export class SurfaceScene {
     this.group.add(this.light, this.light.target, this.secondaryLight, this.secondaryLight.target, this.ambient);
     this.group.visible = false;
   }
-  usesAtmosphere(ship: ShipDynamics) {
-    const env = ship.environment;
+  usesAtmosphere(ship: ShipDynamics, env = ship.environment) {
     return !!env.body.atmosphereKm && env.altitudeKm < env.body.atmosphereKm * 4 && !ship.warping;
   }
   configureLighting(quality: LightingQuality) {
@@ -144,12 +143,12 @@ export class SurfaceScene {
     this.terrainUniforms.groundMapTint.value.copy(mapTint);
   }
   /** Space transitions only update the inexpensive sky, never local geometry. */
-  updateSky(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight, local = false, walker?: WalkingDynamics) {
-    const env = ship.environment;
+  updateSky(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight,
+    env: ShipDynamics["environment"], local = false, walker?: WalkingDynamics) {
     const center = new THREE.Vector3().fromArray(env.body.position);
     const sun = sunlight.position.clone().normalize();
     const day = THREE.MathUtils.smoothstep(env.outward.dot(sun), -0.18, 0.12);
-    this.sky.visible = (this.usesAtmosphere(ship) || local && env.profile.solid) && !ship.warping;
+    this.sky.visible = (this.usesAtmosphere(ship, env) || local && env.profile.solid) && !ship.warping;
     const scale = new SpatialScale(ship.config.unitsKm);
     const cameraRadial = ship.localFrame.bodyId === env.body.id ? ship.bodyRadialM
       : new THREE.Vector3().fromArray(scale.universeDeltaToMetres(ship.position.toArray(), center.toArray()));
@@ -189,9 +188,9 @@ export class SurfaceScene {
     uniforms.cloudColor.value.set(weather.tint);
     uniforms.time.value = ship.elapsed;
   }
-  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight, walker?: WalkingDynamics) {
-    this.updateSky(ship, camera, sunlight, true, walker);
-    const env = ship.environment;
+  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sunlight: THREE.PointLight,
+    walker?: WalkingDynamics, env = ship.environment) {
+    this.updateSky(ship, camera, sunlight, env, true, walker);
     const center = new THREE.Vector3().fromArray(env.body.position);
     const sun = sunlight.position.clone().normalize();
     const day = THREE.MathUtils.smoothstep(env.outward.dot(sun), -0.18, 0.12);
@@ -207,7 +206,7 @@ export class SurfaceScene {
     if (!this.horizon || this.horizonBodyId !== env.body.id
       || this.anchor.distanceTo(surfacePoint) > (walking ? 32 : 2000)) {
       this.anchor.copy(surfacePoint);
-      this.rebuildHorizon(ship, walking ? walker!.outward : env.outward);
+      this.rebuildHorizon(ship, env, walking ? walker!.outward : env.outward);
       this.collisionRevision = -1;
     }
     this.group.position.copy(shipLocal).add(this.anchor).sub(shipRadialM);
@@ -240,7 +239,7 @@ export class SurfaceScene {
     this.ambient.intensity = (barnard ? 0.01 : 0.015) + day * (env.body.atmosphereKm ? 0.12 : 0.025);
     this.ambient.position.copy(env.outward);
   }
-  private rebuildHorizon(ship: ShipDynamics, outward: THREE.Vector3) {
+  private rebuildHorizon(ship: ShipDynamics, env: ShipDynamics["environment"], outward: THREE.Vector3) {
     this.echoTerrain?.dispose();
     this.echoTerrain = undefined;
     if (this.horizon) {
@@ -248,7 +247,6 @@ export class SurfaceScene {
       this.horizon.geometry.dispose();
       (this.horizon.material as THREE.Material).dispose();
     }
-    const env = ship.environment;
     this.horizonBodyId = env.body.id;
     // Closed globe with dense rings near the pilot and coarser rings on the
     // far hemisphere. This changes geometry density, never surface material.

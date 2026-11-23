@@ -94,7 +94,7 @@ export class ExplorerView {
   }
 
   update(walker: WalkingDynamics, ship: ShipDynamics, camera: THREE.PerspectiveCamera,
-      view: "first" | "third", dt: number, paused: boolean, immediate = false) {
+      view: "first" | "third", dt: number, paused: boolean, immediate = false, outward?: THREE.Vector3) {
     this.group.visible = walker.active;
     if (!walker.active) return;
     const up = walker.outward;
@@ -118,7 +118,7 @@ export class ExplorerView {
     const step = walker.grounded ? Math.sin(this.stride) * Math.min(0.65, walker.speedMps * 0.1) : 0.18;
     this.legs.forEach((leg, i) => { leg.rotation.x = (i ? -1 : 1) * step; });
     this.arms.forEach((arm, i) => { arm.rotation.x = walker.grounded ? (i ? 1 : -1) * step * 0.7 : -0.45; });
-    const shipUp = ship.environment.outward;
+    const shipUp = outward ?? ship.environment.outward;
     const ground = this.ground.copy(shipLocal).addScaledVector(shipUp, -LANDING_CLEARANCE_KM * METRES_PER_KILOMETRE);
     // Flight uses a deliberately enlarged hull. This deployable 24 m lander represents the surface airlock.
     const landerScale = 24 / this.lander.hullLength;

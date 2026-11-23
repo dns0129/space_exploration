@@ -50,7 +50,8 @@ export class FlightLight {
     this.mesh.visible = false;
   }
 
-  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sun: THREE.PointLight, ownedVesselId?: string) {
+  update(ship: ShipDynamics, camera: THREE.PerspectiveCamera, sun: THREE.PointLight,
+    ownedVesselId?: string, environment?: ShipDynamics["environment"]) {
     camera.updateMatrixWorld();
     if (!ship.activeBodies.some(body => body.kind === "star")) {
       this.illumination = 0;
@@ -65,7 +66,7 @@ export class FlightLight {
     const visible = visibility > 0 && this.projected.z < 0 && !ship.warping;
     this.projected.copy(sun.position).project(camera);
     const onScreen = 1-THREE.MathUtils.smoothstep(Math.max(Math.abs(this.projected.x),Math.abs(this.projected.y)),0.85,1.35);
-    const env = ship.environment;
+    const env = environment ?? ship.environment;
     const day = THREE.MathUtils.smoothstep(env.outward.dot(this.ray),-0.1,0.3);
     const atmosphere = env.body.atmosphereKm
       ? 1-THREE.MathUtils.smoothstep(env.altitudeKm,0,env.body.atmosphereKm) : 0;

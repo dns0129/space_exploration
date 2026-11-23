@@ -42,6 +42,7 @@ for (const file of (await readdir(join(project, "public/textures"), { recursive:
   textures[file.replaceAll("\\", "/")] = `data:${type};base64,${bytes.toString("base64")}`;
 }
 
+let embeddedTextureLoader = false;
 const result = await build({
   configFile: false,
   root: project,
@@ -57,10 +58,11 @@ const result = await build({
           code: code.replace(rasterDeclaration[0], 'const rasterDefinitions = JSON.parse(document.getElementById("canonical-height-data").textContent);'),
           map: null,
         };
-        if (!id.endsWith("/src/planet-scene.ts")) return;
+        if (!id.endsWith("/src/scene-textures.ts")) return;
         const location = "`${import.meta.env.BASE_URL}textures/${file}`";
         if (!code.includes(location))
           throw new Error("Texture loader changed; update the export adapter.");
+        embeddedTextureLoader = true;
         return {
           code: `const inlineTextureAssets = ${JSON.stringify(textures)};\ninlineTextureAssets["earth-terrain-8k.png"] = inlineTextureAssets["earth-terrain-4k.png"];\n` + code.replaceAll(location, "inlineTextureAssets[file]"),
           map: null,
@@ -76,6 +78,7 @@ const result = await build({
   },
 });
 
+if (!embeddedTextureLoader) throw new Error("The standalone build did not embed the texture loader.");
 if (Array.isArray(result)) throw new Error("Expected one application output.");
 const chunks = result.output.filter((item) => item.type === "chunk");
 if (
