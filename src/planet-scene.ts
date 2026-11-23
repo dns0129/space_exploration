@@ -1633,7 +1633,7 @@ export class SolarScene {
     this.flightControls.setWalking(walker.active);
     this.renderer.domElement.setAttribute(
       "aria-label",
-      "自由驾驶飞船：W/S 推力，方向键或触屏拖动转向，空格刹车",
+      "自由驾驶飞船：W/S 推力，鼠标指向、方向键或触屏拖动转向，空格刹车",
     );
     this.updateFlightCamera(1);
     const scene = this.renderPolicy.mode === "surface" ? this.surfaceWorldScene : this.spaceScene;
@@ -2086,7 +2086,7 @@ export class SolarScene {
       this.renderer.domElement.dataset.stationZone = interior.zone;
       this.renderer.domElement.dataset.stationPositionM = JSON.stringify(interior.positionM.toArray());
       this.renderer.domElement.dataset.stationCamera = interior.cameraView;
-      this.renderer.domElement.setAttribute("aria-label", this.pilotingStarship ? "星舰驾驶：WASD 推力与平移，R/F 升降，Q/E 翻滚，方向键转向，空格刹车，X 离开驾驶座" : "星舰舱内探索：WASD 行走，Shift 奔跑，空格跳跃，驾驶台附近按 E 接管");
+      this.renderer.domElement.setAttribute("aria-label", this.pilotingStarship ? "星舰驾驶：WASD 推力与平移，R/F 升降，Q/E 翻滚，鼠标指向或方向键转向，空格刹车，X 离开驾驶座" : "星舰舱内探索：WASD 行走，Shift 奔跑，空格跳跃，驾驶台附近按 E 接管");
       return;
     }
     delete this.renderer.domElement.dataset.stationZone;
@@ -2228,7 +2228,7 @@ export class SolarScene {
     this.renderer.domElement.dataset.exploration = this.pilotingStarship ? "starship" : this.walking ? "walking" : "ship";
     this.renderer.domElement.setAttribute("aria-label", this.walking
       ? "地表探索：WASD 行走，Shift 奔跑，空格跳跃，方向键或拖动看向，E 返回飞船"
-      : "自由驾驶飞船：W/S 推力，方向键或触屏拖动转向，空格刹车");
+      : "自由驾驶飞船：W/S 推力，鼠标指向、方向键或触屏拖动转向，空格刹车");
     if (mode === "surface") this.surfaceScene.update(ship, this.localRenderCamera, this.flightSun, this.walking ? this.walker : undefined);
     else this.surfaceScene.updateSky(ship, this.camera, this.flightSun);
     this.flightLight.update(ship, this.camera, this.flightSun, this.aboardStarship ? "earth-station" : undefined);

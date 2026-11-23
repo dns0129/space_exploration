@@ -1186,7 +1186,7 @@ test("physical hull length is 10 km, small beside Earth's diameter", () => {
 });
 
 test("render budget lowers sustained slow resolution and recovers slowly within its ceiling", () => {
-  const budget=new RenderBudget(); budget.configure(true,3,1920,1080);
+  const budget=new RenderBudget(); budget.configure(true,3,1920,1080, 0.5, { renderScale: 1, maxFps: 60, adaptive: true, preset: "high" });
   assert(budget.ratio<=1.5); assert(1920*1080*budget.ratio**2<=2100000.01);
   const initial=budget.ratio;
   for(let i=0;i<240;i++)budget.sample(1/30);
@@ -1197,7 +1197,7 @@ test("render budget lowers sustained slow resolution and recovers slowly within 
   for(let i=0;i<3000;i++)budget.sample(1/60);
   assert(budget.ratio>low);assert(budget.ratio<=initial);
   const previous=budget.ratio;budget.sample(0);budget.sample(5);assert.equal(budget.ratio,previous);
-  const jitter=new RenderBudget();jitter.configure(true,1,1440,960);
+  const jitter=new RenderBudget();jitter.configure(true,1,1440,960, 0.5, { renderScale: 1, maxFps: 60, adaptive: true, preset: "high" });
   const sharp=jitter.ratio;
   for(let i=0;i<600;i++)jitter.sample(i%15===0?1/30:1/60);
   assert(jitter.ratio<sharp,"regular missed frames must reduce resolution even with a decent average FPS");
@@ -1205,7 +1205,7 @@ test("render budget lowers sustained slow resolution and recovers slowly within 
 
 test("ultra quality preserves a 4K viewport and restores still-image detail after load", () => {
   const budget = new RenderBudget();
-  budget.configure("ultra", 2, 3840, 2160);
+  budget.configure("ultra", 2, 3840, 2160, 0.5, { renderScale: 1, maxFps: 60, adaptive: true, preset: "ultra" });
   assert(budget.ratio >= 1, "4K screens should render at their native resolution");
   assert(3840 * 2160 * budget.ratio ** 2 <= 8_300_000.01);
   for (let i = 0; i < 240; i++) budget.sample(1 / 30);

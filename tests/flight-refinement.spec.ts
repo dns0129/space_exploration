@@ -11,7 +11,7 @@ async function launch(page: any) {
   await page.getByRole("combobox", { name: "航行画质" }).selectOption("standard");
 }
 
-test("锁定标识居中对齐天体，转向逐帧跟随，鼠标不转向、触屏持续操纵后释放", async ({ page }, info) => {
+test("锁定标识居中对齐天体，转向逐帧跟随，鼠标指向转向、触屏持续操纵后释放", async ({ page }, info) => {
   test.setTimeout(120000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -57,26 +57,18 @@ test("锁定标识居中对齐天体，转向逐帧跟随，鼠标不转向、�
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await cdp.detach();
   } else {
-    await page.mouse.move(box.x + box.width * 0.72, box.y + box.height / 2);
-    await expect(page.locator("#flight-aim")).toBeHidden();
     await page.locator("#flight-align").click();
+    await page.mouse.move(box.x + box.width * 0.65, box.y + box.height / 2);
+    await expect(page.locator("#flight-aim")).toBeVisible();
     await expect.poll(async () => {
-      const marker = await page.locator("#flight-marker").boundingBox();
-      return Math.abs(marker!.x + marker!.width / 2 - box.x - box.width / 2);
-    }).toBeLessThan(2);
-    await page.mouse.down();
-    await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.8);
-    await page.mouse.up();
+      const marker = (await page.locator("#flight-marker").boundingBox())!;
+      return marker.x + marker.width / 2 - box.x - box.width / 2;
+    }).toBeLessThan(-10);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await expect(page.locator("#flight-aim")).toBeHidden();
-    const transforms = await page.evaluate(async () => {
-      const values: string[] = [];
-      for (let i = 0; i < 8; i++) {
-        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-        values.push((document.querySelector("#flight-marker") as HTMLElement).style.transform);
-      }
-      return values;
-    });
-    expect(new Set(transforms).size).toBe(1);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.4);
+    await expect(page.locator("#flight-aim")).toBeVisible();
+    await page.locator("#flight-align").hover();
   }
   await expect(page.locator("#flight-aim")).toBeHidden();
   await page.locator("#flight-align").click();

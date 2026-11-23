@@ -12,13 +12,13 @@ export class RenderBudget {
   private minimumRatio = 0.5;
   private holdSeconds = 0;
   private targetMs = 16.7;
-  private adaptive = true;
+  private adaptive = false;
   configure(quality: boolean | "standard" | "high" | "ultra", deviceRatio: number, width: number, height: number, minimumRatio = 0.5,
     options?: { renderScale: number; maxFps: number; adaptive: boolean; preset: string }) {
     this.maximumEffectLevel = quality === "standard" || quality === false ? 0 : quality === "ultra" ? 2 : 1;
     this.effectLevel = this.maximumEffectLevel;
     if (options?.preset === 'custom') this.effectLevel = this.maximumEffectLevel = 2;
-    this.adaptive = options?.adaptive ?? true;
+    this.adaptive = options?.adaptive ?? false;
     this.targetMs = 1000 / Math.min(options?.maxFps || 60, 60);
     this.minimumRatio = minimumRatio;
     const ultra = quality === "ultra", high = quality === true || quality === "high" || ultra;

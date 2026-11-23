@@ -18,7 +18,7 @@ export class GraphicsControls {
       <label class="graphics-field"><span>垂直同步</span><select aria-label="垂直同步" disabled><option>浏览器自动同步</option></select><small>网页无法关闭垂直同步；帧率上限可单独调整。</small></label>
       ${select('antialias','抗锯齿',[['0','关闭'],['2','MSAA 2×'],['4','MSAA 4×'],['8','MSAA 8×']])}
       <label class="graphics-field" for="graphics-renderScale"><span>渲染比例 <output id="graphics-scale-value">100%</output></span><input id="graphics-renderScale" data-graphics="renderScale" type="range" min="50" max="150" step="5"><small>只改变 3D 画面，界面文字保持清晰。</small></label>
-      <label class="graphics-field graphics-check"><span>自动平衡画质</span><input id="graphics-adaptive" data-graphics="adaptive" type="checkbox"><small>持续掉帧时降低特效与分辨率，恢复后逐步提高。</small></label>
+      <label class="graphics-field graphics-check"><span>自动平衡画质</span><input id="graphics-adaptive" data-graphics="adaptive" type="checkbox"><small>默认关闭，保持所选画质。开启后按帧率调整特效与分辨率。</small></label>
       ${select('textures','纹理质量',[['low','低 · 最高 2K'],['medium','中 · 最高 4K'],['high','高 · 最高 8K'],['ultra','超清 · 8K / 地球 16K 分块']])}
       ${select('anisotropy','各向异性过滤',[['1','关闭'],['4','4×'],['8','8×'],['16','16×']])}
       ${select('shadows','阴影质量',[['off','关闭'],...level])}

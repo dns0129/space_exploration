@@ -50,7 +50,7 @@ export class FlightInterface {
     document.querySelector(".main")!.insertAdjacentHTML(
       "beforeend",
       `<section id="flight-ui" class="flight-ui" aria-label="飞船驾驶台" hidden>
-  <div class="flight-title"><span class="eyebrow">REAL SCALE / 星际航行</span><h2>VOYAGER <b>01</b></h2><span id="flight-system" class="flight-system">当前位置 · 太阳系</span><span id="flight-status">手动驾驶 · 引擎待命</span></div>
+  <div class="flight-title"><h2>VOYAGER <b>01</b></h2><span id="flight-system" class="flight-system">当前位置 · 太阳系</span><span id="flight-status">手动驾驶 · 引擎待命</span></div>
   <div class="flight-toolbar"><button data-open-graphics>画质设置</button><button id="starship-helm" hidden>接管星舰（E）</button><button id="flight-camera" aria-pressed="false">切换外部视角 <kbd>C</kbd></button><button id="flight-assist" aria-pressed="true">驾驶辅助：开</button><button id="flight-pause" aria-pressed="false">暂停航行</button><button id="flight-save">保存航行</button><button id="flight-resume" disabled>恢复存档</button><select id="flight-quality" aria-label="航行画质"><option value="ultra">超清</option><option value="high">高清</option><option value="standard">标准</option></select></div>
   <aside class="flight-navigation"><details id="flight-navigation" open><summary id="flight-navigation-summary" aria-label="展开或收起导航目标"><span><small id="flight-target-label">导航目标</small><b id="flight-target">地球</b></span><small id="flight-distance-summary">— km</small></summary><section class="flight-navigation-body"><p><strong id="flight-distance">—</strong><small id="flight-distance-unit"> km</small></p><small id="flight-distance-au"></small><div class="flight-navigation-actions"><button id="flight-align">对准目标</button><button id="flight-jump">跃迁 <kbd>J</kbd></button></div></section></details><button id="flight-land">自动着陆（L）</button></aside>
   <aside id="flight-propulsion" class="flight-propulsion" data-mode="space" data-band="cruise" aria-label="引擎航速"><label for="flight-engine-slider" class="flight-propulsion-reading"><strong id="flight-engine-band">巡航档</strong><span><small>目标</small> <output id="flight-target-speed">100</output><small id="flight-target-speed-unit"> km/s</small></span></label><input id="flight-engine-slider" type="range" min="0" max="500" step="0.1" value="100" aria-label="目标航速"><div id="flight-engine-bands" class="flight-engine-bands" aria-label="航速档位">${PROPULSION_BANDS.map(band => `<button type="button" data-engine-band="${band.id}" title="${band.name} · ${band.minKm.toLocaleString("zh-CN")}–${band.maxKm.toLocaleString("zh-CN")} km/s">${({ maneuver: "1–<wbr>100", cruise: "100–<wbr>1千", transfer: "1千–<wbr>1万", planetary: "1–<wbr>5万", interstellar: "5–<wbr>15万" })[band.id]}</button>`).join("")}</div><small id="flight-engine-hint">W 推进 · 空格刹车</small></aside>
@@ -62,7 +62,7 @@ export class FlightInterface {
   <div class="flight-crosshair" aria-hidden="true"><i></i><b></b></div><div class="flight-aim" id="flight-aim" aria-hidden="true" hidden></div><div class="flight-marker" id="flight-marker" aria-hidden="true"><i></i><span>地球</span></div>
   <div class="cockpit-frame" aria-hidden="true"><i class="cockpit-left"></i><i class="cockpit-right"></i><i class="cockpit-dashboard"></i></div>
   <div class="flight-instruments"><div><span id="flight-speed-label">当前航速</span><strong id="flight-speed">0</strong><small id="flight-speed-unit">km/s</small><small id="flight-engine" data-engine="cruise">巡航档</small><small id="flight-engine-range">100–1,000 km/s</small></div><div><span>最近天体 / NEAREST</span><strong id="flight-nearest">地球</strong><small id="flight-altitude">— km 高度</small></div><div><span>航向 / HEADING</span><strong id="flight-heading">000°</strong><small id="flight-time">00:00</small></div><div class="flight-save-info"><span>航行存档 / SAVE</span><strong id="flight-storage">准备存档</strong><small>每 20 秒自动保存</small></div></div>
-  <p class="flight-key-guide" id="flight-key-guide"><kbd>W S</kbd> 前进/减速 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>↑ ↓ ← →</kbd> 转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车</p>
+  <p class="flight-key-guide" id="flight-key-guide"><kbd>W S</kbd> 前进/减速 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>鼠标 / 方向键</kbd> 转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车</p>
   <div class="flight-touch" aria-label="触屏驾驶控制"><div class="flight-thrust-pad"><button data-flight-input="KeyR" data-control-mode="flight" aria-label="飞船上升">升</button><button data-flight-input="KeyW" aria-label="飞船前进">前进</button><button data-flight-input="KeyF" data-control-mode="flight" aria-label="飞船下降">降</button><button data-flight-input="KeyA" aria-label="飞船左移">左移</button><button data-flight-input="Space" aria-label="飞船刹车">刹车</button><button data-flight-input="KeyD" aria-label="飞船右移">右移</button><button data-flight-input="KeyQ" data-control-mode="flight" aria-label="飞船左翻滚">↶</button><button data-flight-input="KeyS" aria-label="飞船减速或倒车">减速</button><button data-flight-input="KeyE" data-control-mode="flight" aria-label="飞船右翻滚">↷</button></div><div class="flight-steer-pad"><button data-flight-input="ArrowUp" aria-label="飞船抬头">↑</button><button data-flight-input="ArrowLeft" aria-label="飞船左转">←</button><button data-flight-input="ShiftLeft" aria-label="飞船加速">加速</button><button data-flight-input="ArrowRight" aria-label="飞船右转">→</button><button data-flight-input="ArrowDown" aria-label="飞船低头">↓</button></div></div>
  </section>`,
     );
@@ -350,7 +350,7 @@ export class FlightInterface {
     if (generation !== this.generation || scene !== this.scene) return;
     if (error) { this.notify(error); return; }
     this.sync();
-    this.notify(stationReturn ? this.scene.pilotingStarship ? "已接管星舰 · W/S 推力，方向键转向，R/F 升降，Q/E 翻滚，C 外部视角，X 离开驾驶座" : "已离开驾驶座 · 可在舰内自由走动，星舰继续由驾驶辅助控制" : returning ? "已返回飞船，按 L 起飞" : "已离开飞船 · WASD 行走，空格跳跃，Shift 奔跑；靠近飞船按 E 返回");
+    this.notify(stationReturn ? this.scene.pilotingStarship ? "已接管星舰 · W/S 推力，鼠标指向或方向键转向，R/F 升降，Q/E 翻滚，C 外部视角，X 离开驾驶座" : "已离开驾驶座 · 可在舰内自由走动，星舰继续由驾驶辅助控制" : returning ? "已返回飞船，按 L 起飞" : "已离开飞船 · WASD 行走，空格跳跃，Shift 奔跑；靠近飞船按 E 返回");
   }
   private sync() {
     const state = this.scene?.flightState();
@@ -378,7 +378,7 @@ export class FlightInterface {
     $("#flight-speed-label").textContent = this.walking ? "移动速度" : "当前航速";
     $("#flight-key-guide").innerHTML = this.walking
       ? "<kbd>W S A D</kbd> 行走 <kbd>鼠标拖动 / 方向键</kbd> 看向 <kbd>Shift</kbd> 奔跑 <kbd>空格</kbd> 跳跃 <kbd>E</kbd> 接管 / 返舱 <kbd>C</kbd> 第一/第三人称 <kbd>H</kbd> 帮助"
-      : "<kbd>W S</kbd> 前进/减速 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>↑ ↓ ← →</kbd> 转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车 <kbd>X</kbd> 离开星舰驾驶座 / <kbd>E</kbd> 着陆后离舱";
+      : "<kbd>W S</kbd> 前进/减速 <kbd>A D</kbd> 平移 <kbd>R F</kbd> 升降 <kbd>Q E</kbd> 翻滚 <kbd>鼠标 / 方向键</kbd> 转向 <kbd>Shift</kbd> 加速 <kbd>空格</kbd> 刹车 <kbd>X</kbd> 离开星舰驾驶座 / <kbd>E</kbd> 着陆后离舱";
     const touchLabels: Record<string, [string, string, string]> = {
       KeyW: ["前进", "向前行走", "飞船前进"], KeyS: [this.walking ? "后退" : "减速", "向后行走", "飞船减速或倒车"],
       KeyA: ["左移", "向左行走", "飞船左移"], KeyD: ["右移", "向右行走", "飞船右移"],
@@ -683,6 +683,6 @@ export class FlightInterface {
     this.deceleration.style.opacity = this.walking ? "0" : stats.deceleration.toFixed(3);
     this.deceleration.style.setProperty("--brake-scale", String(0.72 + stats.deceleration * 0.28));
     this.aim.hidden = this.walking || !stats.steering;
-    this.aim.style.transform = `translate3d(${(0.5 + stats.aimX * 0.35) * stats.width}px, ${(0.5 + stats.aimY * 0.35) * stats.height}px, 0) translate(-50%, -50%)`;
+    this.aim.style.transform = `translate3d(${(0.5 + stats.aimX) * stats.width}px, ${(0.5 + stats.aimY) * stats.height}px, 0) translate(-50%, -50%)`;
   }
 }

@@ -17,7 +17,7 @@ test("双星按辐射贡献选择主光，独立遮光且接收点不自遮挡",
 
 test("先降低效果成本，持续超预算才降低画布分辨率，静止恢复清晰度", () => {
   const budget = new RenderBudget();
-  budget.configure("ultra", 1, 800, 600);
+  budget.configure("ultra", 1, 800, 600, 0.5, { renderScale: 1, maxFps: 60, adaptive: true, preset: "ultra" });
   let frames = 0;
   while (budget.effectLevel === 2 && frames++ < 180) budget.sample(0.03);
   expect(budget.effectLevel).toBe(1);

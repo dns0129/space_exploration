@@ -86,7 +86,15 @@ export class FlightControls {
       canvas.setPointerCapture(e.pointerId);
     }) as EventListener);
     on(canvas, "pointermove", ((e: PointerEvent) => {
-      if (e.pointerType === "mouse" && !this.walking) return;
+      if (e.pointerType === "mouse" && !this.walking) {
+        if (this.pointer !== null || document.querySelector("dialog[open]")) return;
+        const bounds = canvas.getBoundingClientRect();
+        if (!bounds.width || !bounds.height) return;
+        this.mouseX = ((e.clientX - bounds.left) / bounds.width - 0.5) * 2;
+        this.mouseY = ((e.clientY - bounds.top) / bounds.height - 0.5) * 2;
+        this.steering = !!(this.deadzone(this.mouseX) || this.deadzone(this.mouseY));
+        return;
+      }
       if (this.pointer !== e.pointerId) return;
       this.mouseX = Math.max(-1, Math.min(1, (e.clientX - this.lastX) / 80));
       this.mouseY = Math.max(-1, Math.min(1, (e.clientY - this.lastY) / 80));
@@ -154,7 +162,11 @@ export class FlightControls {
     this.clear();
     this.walking = active;
   }
-  get aim() { return { x: this.mouseX, y: this.mouseY, active: this.steering }; }
+  get aim() {
+    // Touch drag uses a shorter on-screen throw than absolute mouse steering.
+    const span = this.pointer === null ? 0.5 : 0.35;
+    return { x: this.mouseX * span, y: this.mouseY * span, active: this.steering };
+  }
   private centerSteering() {
     this.mouseX = 0;
     this.mouseY = 0;

@@ -17,12 +17,12 @@ export interface GraphicsSettings {
   bloom: boolean;
 }
 export const GRAPHICS_EVENT = 'voyager-graphics-change';
-const storageKey = 'voyager-graphics-v1';
+const storageKey = 'voyager-graphics-v2';
 let sessionSettings: GraphicsSettings | undefined;
 export function graphicsPreset(quality: RenderQuality): GraphicsSettings {
   const level = quality === 'standard' ? 'low' : quality === 'ultra' ? 'high' : 'medium';
   return { preset: quality, baseQuality: quality, antialias: quality === 'standard' ? 0 : quality === 'high' ? 2 : 4,
-    maxFps: 60, renderScale: 1, adaptive: true,
+    maxFps: 60, renderScale: 1, adaptive: false,
     textures: quality === 'standard' ? 'low' : quality === 'high' ? 'medium' : 'ultra',
     anisotropy: quality === 'standard' ? 4 : quality === 'high' ? 8 : 16,
     shadows: level, reflections: quality === 'standard' ? 'off' : level, atmosphere: level, clouds: level,
@@ -47,7 +47,12 @@ export function normalizeGraphics(value: unknown): GraphicsSettings {
 }
 export function readGraphics(): GraphicsSettings {
   if (sessionSettings) return { ...sessionSettings };
-  try { return normalizeGraphics(JSON.parse(localStorage.getItem(storageKey) ?? 'null')); }
+  try {
+    const current = localStorage.getItem(storageKey);
+    if (current !== null) return normalizeGraphics(JSON.parse(current));
+    const previous = normalizeGraphics(JSON.parse(localStorage.getItem('voyager-graphics-v1') ?? 'null'));
+    return { ...previous, adaptive: false };
+  }
   catch { return graphicsPreset('high'); }
 }
 export function writeGraphics(settings: GraphicsSettings) {

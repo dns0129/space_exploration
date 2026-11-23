@@ -135,8 +135,8 @@
 .flight-toolbar .ui-panel-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .flight-toolbar button, .flight-toolbar select { min-width: 0; width: 100%; }
 .flight-toolbar #starship-helm { grid-column: 1 / -1; }
-.flight-title h2 { margin: 8px 0; font-size: 22px; letter-spacing: 3px; }
-.flight-title .eyebrow { font-size: 8px; letter-spacing: 1px; }
+.ui-workspace-flight .ui-dock-left, .ui-workspace-flight .ui-dock-right { gap: 6px; }
+.observatory .flight-title h2 { margin: 0; font-size: 14px; letter-spacing: 2px; }
 .flight-title #flight-status, .flight-title #flight-system { display: block; margin-top: 6px; font-size: 10px; }
 .observatory #flight-navigation { max-height: none; overflow: visible; }
 .observatory #flight-navigation-summary { position: static; padding: 0; background: transparent; }
@@ -195,8 +195,7 @@
   .ui-dock-bottom { max-height: 46dvh; gap: 6px; }
   .observatory .ui-workspace .ui-panel-toggle { min-height: 32px; padding: 7px 9px; font-size: 10px; letter-spacing: .5px; }
   .ui-dock-left .ui-panel-inner, .ui-dock-right .ui-panel-inner { padding: 9px; }
-  .observatory .flight-title h2 { font-size: 16px; letter-spacing: 1px; }
-  .flight-title .eyebrow { display: none; }
+  .ui-workspace-flight .ui-dock-left, .ui-workspace-flight .ui-dock-right { max-height: min(38dvh, calc(50dvh - var(--ui-header) - 24px)); }
   .observatory .flight-ui button, .observatory .flight-ui select { padding: 8px 5px; font-size: 9px; }
   .observatory .destination-selectors select { padding: 7px 4px; font-size: 10px; }
   .observatory #flight-target { font-size: 12px; }
@@ -226,11 +225,15 @@
   .observatory .flight-touch .ui-panel-inner { padding: 6px 10px; }
   .observatory .footer { padding: 0 12px; }
 }
+@media (min-width: 801px) and (pointer: fine) {
+  .ui-workspace-flight .ui-dock-bottom { width: min(100%, 880px); justify-self: center; }
+  .ui-workspace-flight .flight-instruments .ui-panel-inner { gap: 10px; padding: 8px 16px; }
+}
 @media (max-height: 500px) and (pointer: coarse) {
-  .ui-workspace-flight { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 292px; grid-template-rows: minmax(0, 1fr); }
-  .ui-workspace-flight .ui-dock-right { grid-column: 2; }
+  .ui-workspace-flight { grid-template-columns: minmax(0, 24%) minmax(0, 1fr) minmax(0, 24%); grid-template-rows: minmax(0, 1fr) auto; }
+  .ui-workspace-flight .ui-dock-right { grid-column: 3; }
   .ui-workspace-flight .ui-dock-left, .ui-workspace-flight .ui-dock-right { max-height: none; }
-  .ui-workspace-flight .ui-dock-bottom { grid-column: 3; grid-row: 1; max-height: none; align-content: start; }
+  .ui-workspace-flight .ui-dock-bottom { grid-column: 1 / -1; grid-row: 2; grid-template-columns: 1.2fr 1fr; max-height: 39dvh; align-items: end; }
   .observatory .ui-workspace-flight .flight-touch .ui-panel-inner { padding: 6px; }
   .observatory .ui-workspace-flight .flight-instruments .ui-panel-inner { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
 }

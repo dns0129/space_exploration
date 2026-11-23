@@ -21,24 +21,24 @@ export class PanelLayout {
     this.panel(".altitude", "观测高度", "altitude", this.observe.right);
     this.panel(".surface-placement", "地表探索", "placement", this.observe.right);
     this.settings = this.panel("#control-panel", "观测设置", "settings", this.observe.bottom);
-    this.panel(".flight-title", "航行状态", "status", this.flight.left);
     this.panel(".flight-navigation", "目标与着陆", "navigation", this.flight.left);
-    this.panel("#flight-propulsion", "推进控制", "propulsion", this.flight.left);
     this.panel(".flight-toolbar", "驾驶控制", "toolbar", this.flight.right);
-    this.panel("#warp-engine", "跃迁引擎", "warp", this.flight.right);
+    this.panel("#warp-engine", "跃迁引擎", "warp", this.flight.left);
+    this.panel("#flight-propulsion", "推进控制", "propulsion", this.flight.right);
+    this.panel(".flight-title", "航行状态", "status", this.flight.right);
     this.panel("#flight-surface", "着陆系统", "surface", this.flight.right);
     this.panel("#walking-panel", "探索仪表", "walking", this.flight.right);
     this.panel("#station-map", "舰内导览", "deck-map", this.flight.right);
     this.panel(".flight-instruments", "航行仪表", "instruments", this.flight.bottom);
     this.panel(".flight-touch", "触屏操控", "touch", this.flight.bottom);
-    this.panel(".flight-key-guide", "快捷操作", "keys", this.flight.bottom);
+    this.panel(".flight-key-guide", "快捷操作", "keys", this.flight.right, false);
     this.expand(this.settings, true);
   }
 
   setMode(flying: boolean) {
     const workspace = flying ? this.flight : this.observe;
     workspace.left.prepend(this.bodies);
-    workspace.right.prepend(this.destinations);
+    (flying ? workspace.left : workspace.right).prepend(this.destinations);
     // Mode switches must not leave a panel scrolled out of reach.
     for (const dock of Object.values(workspace)) dock.scrollTop = 0;
   }
@@ -65,7 +65,7 @@ export class PanelLayout {
     return docks;
   }
 
-  private panel(selector: string, title: string, id: string, dock: HTMLElement) {
+  private panel(selector: string, title: string, id: string, dock: HTMLElement, expanded = true) {
     const panel = document.querySelector<HTMLElement>(selector)!;
     panel.classList.add("ui-panel");
     panel.dataset.panel = id;
@@ -90,7 +90,7 @@ export class PanelLayout {
     toggle.addEventListener("click", () => this.expand(panel, panel.dataset.collapsed === "true"));
     panel.append(toggle, body);
     dock.append(panel);
-    this.expand(panel, true);
+    this.expand(panel, expanded);
     return panel;
   }
 

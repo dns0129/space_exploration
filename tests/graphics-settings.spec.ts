@@ -20,7 +20,7 @@ test('失效设置回退，关闭自动调整保留所选分辨率', () => {
   const invalid = normalizeGraphics({ antialias: 64, renderScale: Infinity, maxFps: -1, textures: 'invalid' });
   expect(invalid).toEqual(graphicsPreset('high'));
   expect(textureWidth(graphicsPreset('ultra'), true)).toBe(4096);
-  const settings = { ...graphicsPreset('high'), adaptive: false, renderScale: .75 };
+  const settings = { ...graphicsPreset('high'), renderScale: .75 };
   const budget = new RenderBudget(); budget.configure('high', 1, 800, 600, .5, settings);
   for (let i = 0; i < 300; i++) budget.sample(.1);
   expect(budget.ratio).toBe(.75);
@@ -99,6 +99,8 @@ test('首屏只读取当前地形，普通航行不加载 Rapier，画质设置�
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   page.on('request', request => requests.push(request.url()));
+  await page.addInitScript(() => localStorage.setItem('voyager-graphics-v1',
+    JSON.stringify({ baseQuality: 'high', preset: 'custom', adaptive: true, renderScale: .8 })));
   await page.goto("/#planet=earth");
   await page.locator('#canvas-host[data-ready="true"]').waitFor();
   await page.locator('#pause').click();
@@ -108,6 +110,8 @@ test('首屏只读取当前地形，普通航行不加载 Rapier，画质设置�
   await page.getByRole('button', { name: '画质设置', exact: true }).first().click();
   await expect(page.locator('#graphics-dialog')).toBeVisible();
   await expect(page.getByLabel('垂直同步', { exact: true })).toBeDisabled();
+  await expect(page.locator('#graphics-adaptive')).not.toBeChecked();
+  await expect(page.locator('#graphics-renderScale')).toHaveValue('80');
   await page.locator('#graphics-preset').selectOption('standard');
   await expect(canvas).toHaveAttribute('data-texture-loading', 'false');
   await expect(canvas).toHaveAttribute('data-earth-maps', '2k');
@@ -116,7 +120,7 @@ test('首屏只读取当前地形，普通航行不加载 Rapier，画质设置�
   await page.locator('#graphics-shadows').selectOption('off');
   await page.locator('#graphics-reflections').selectOption('off');
   await page.locator('#graphics-renderScale').fill('50');
-  await page.locator('#graphics-adaptive').uncheck();
+  await expect(page.locator('#graphics-adaptive')).not.toBeChecked();
   await expect(canvas).toHaveAttribute('data-max-fps', '30');
   await expect(canvas).toHaveAttribute('data-shadows-enabled', 'false');
   await expect(canvas).toHaveAttribute('data-reflections', '0');
